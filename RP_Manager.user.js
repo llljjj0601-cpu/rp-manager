@@ -1,13 +1,13 @@
 // ==UserScript==
-// @name         🧠 RP 매니저
+// @name         🪽위시 RP Manager
 // @namespace    local.rp.context.manager
-// @version      0.8.6
+// @version      0.8.9
 // @description  장기 RP용 현재상태·날짜로그·캐릭터 설정·OOC를 관리하고 필요한 컨텍스트를 자동 주입합니다.
 // @author       User
 // @license      All Rights Reserved
-// @homepageURL  https://github.com/YOUR_GITHUB_ID/YOUR_REPOSITORY
-// @updateURL    https://raw.githubusercontent.com/YOUR_GITHUB_ID/YOUR_REPOSITORY/main/RP_Manager.user.js
-// @downloadURL  https://raw.githubusercontent.com/YOUR_GITHUB_ID/YOUR_REPOSITORY/main/RP_Manager.user.js
+// @homepageURL  https://github.com/llljjj0601-cpu/rp-manager
+// @updateURL    https://raw.githubusercontent.com/llljjj0601-cpu/rp-manager/main/RP_Manager.user.js
+// @downloadURL  https://raw.githubusercontent.com/llljjj0601-cpu/rp-manager/main/RP_Manager.user.js
 // @match        https://crack.wrtn.ai/stories/*/episodes/*
 // @match        https://crack.wrtn.ai/characters/*/chats/*
 // @match        https://crack.wrtn.ai/u/*/c/*
@@ -19,23 +19,24 @@
 // ==/UserScript==
 
 // ============================================================
-// RP 매니저
+// 🪽위시 RP Manager
 //
 // 개인 사용 목적으로만 배포합니다.
 // 무단 재배포, 수정본 재배포, 코드 일부를 포함한 재배포를 허용하지 않습니다.
 // 원본 배포처 외의 장소에 파일/코드를 다시 업로드하지 말아주세요.
 // ============================================================
 
+
 (function () {
   'use strict';
 
   // 다른 Tampermonkey 스크립트와의 중복 실행/재주입 충돌 방지
-  if (window.__RP_MANAGER_086_LOADED__) return;
-  window.__RP_MANAGER_086_LOADED__ = true;
+  if (window.__RP_MANAGER_089_LOADED__) return;
+  window.__RP_MANAGER_089_LOADED__ = true;
 
   const APP = {
-    name: 'RP 매니저',
-    version: '0.8.6',
+    name: '🪽위시 RP Manager',
+    version: '0.8.9',
     dbName: 'RPContextManagerDB',
     dbVersion: 2,
     storeName: 'rooms',
@@ -876,7 +877,7 @@ AI가 과거 출력에서 실수한 내용, 사용자에게 정정된 내용, �
 나쁨:
 [5월 10일-복잡한하루·감정변화·여러사건]
 
-RP 매니저의 관련 로그 자동검색에서 다시 찾기 쉬운 표현을 우선한다.
+🪽위시 RP Manager의 관련 로그 자동검색에서 다시 찾기 쉬운 표현을 우선한다.
 
 ━━━━━━━━━━━━━━━━━━━━
 7. 날짜 처리
@@ -1239,7 +1240,7 @@ PRIVATE 감정을 기록했다고 해서 그 감정이 상대에게 전달됐다
 21. 검색 호출을 위한 로그 작성 규칙
 ━━━━━━━━━━━━━━━━━━━━
 
-날짜별 로그는 이후 RP 매니저의 관련 과거 로그 자동호출에 사용될 수 있다.
+날짜별 로그는 이후 🪽위시 RP Manager의 관련 과거 로그 자동호출에 사용될 수 있다.
 
 따라서 검색성을 의식하여 작성한다.
 
@@ -2143,7 +2144,7 @@ NO → 압축한다.
       : reason === 'empty' ? '활성 항목이 없어 종료됨'
       : '모든 유한 유지턴이 끝남';
     const suffix = detail ? ` · ${detail}` : '';
-    notify(`🧠 RP 매니저 주입 종료 · ${reasonText}${suffix}`, reason === 'error' ? 'error' : 'success', 8000);
+    notify(`🪽위시 RP Manager 주입 종료 · ${reasonText}${suffix}`, reason === 'error' ? 'error' : 'success', 8000);
   }
 
   function loadModalPosition() {
@@ -2224,7 +2225,7 @@ NO → 압축한다.
       const safe = (libraries || []).map((lib, index) => ({ lib, index }));
       backdrop.innerHTML = `
         <div class="rpcm-lib-dialog" role="dialog" aria-modal="true">
-          <div class="rpcm-lib-dialog-head"><div><div class="rpcm-lib-dialog-title">${esc(title)}</div><div class="rpcm-lib-dialog-desc">저장 위치와 관계없이 모든 RP 매니저 설정집에서 선택합니다. 선택한 설정집의 이름도 여기서 수정할 수 있습니다.</div></div><button type="button" class="rpcm-lib-close">✕</button></div>
+          <div class="rpcm-lib-dialog-head"><div><div class="rpcm-lib-dialog-title">${esc(title)}</div><div class="rpcm-lib-dialog-desc">저장 위치와 관계없이 모든 🪽위시 RP Manager 설정집에서 선택합니다. 선택한 설정집의 이름도 여기서 수정할 수 있습니다.</div></div><button type="button" class="rpcm-lib-close">✕</button></div>
           <div class="rpcm-lib-list">${safe.map(({lib,index}) => {
             const nm = libraryDisplayName(lib);
             const count = Array.isArray(lib.characters) ? lib.characters.length : 0;
@@ -2430,114 +2431,6 @@ NO → 압축한다.
     };
   }
 
-  function openManualLogSelectionDialog(room) {
-    return new Promise(resolve => {
-      const log = (room.slots || []).find(s => s.id === 'logSummary');
-      const blocks = parseDatedLogBlocks(log?.content || '');
-      if (!blocks.length) {
-        notify('로그요약에서 날짜 블록을 찾지 못했습니다. [YYYY년 M월 D일-사건명] 형식을 권장합니다.', 'warn', 6500);
-        resolve(false);
-        return;
-      }
-
-      const old = document.getElementById('rpcm-log-dialog-backdrop');
-      if (old) old.remove();
-      const backdrop = document.createElement('div');
-      backdrop.id = 'rpcm-log-dialog-backdrop';
-      const manual = new Set((room.manualLogSelectedKeys || []).map(String));
-
-      const grouped = new Map();
-      const unknownBlocks = blocks.filter(b => b.isUnknown);
-      for (const b of blocks.filter(b => !b.isUnknown)) {
-        const y = b.year == null ? '연도 미상' : `${b.year}년`;
-        if (!grouped.has(y)) grouped.set(y, new Map());
-        const months = grouped.get(y);
-        const m = `${b.month}월`;
-        if (!months.has(m)) months.set(m, []);
-        months.get(m).push(b);
-      }
-      const yearEntries = [...grouped.entries()];
-      const latestYearIndex = yearEntries.length - 1;
-
-      const rowHtml = b => `<div class="rpcm-log-row" data-log-key="${esc(b.key)}"><div class="rpcm-log-row-head"><label style="display:flex;align-items:center;gap:7px;flex:1;min-width:0;cursor:pointer"><input type="checkbox" class="rpcm-log-manual" ${manual.has(b.key) ? 'checked' : ''}><strong>${esc(b.titleText)}</strong></label><span>${formatCount(b.raw.length)}자</span></div><div class="rpcm-log-row-reason">${b.isUnknown ? '날짜 미상 · 최신 계산 제외' : `${b.year == null ? '연도 미상' : `${b.year}년`} ${b.month}월 ${b.day}일`} · 직접 선택 시 자동 호출 OFF여도 주입 후보에 포함</div><div class="rpcm-log-row-controls"><button type="button" class="rpcm-lib-small rpcm-log-toggle">내용 보기</button></div><pre class="rpcm-log-content" hidden>${esc(b.raw)}</pre></div>`;
-
-      const datedRowsHtml = yearEntries.map(([yearLabel, months], yi) => {
-        const monthEntries = [...months.entries()];
-        return `<details class="rpcm-log-year" ${yi === latestYearIndex ? 'open' : ''}><summary><strong>${esc(yearLabel)}</strong><span>${[...months.values()].reduce((n,a)=>n+a.length,0)}개 날짜</span></summary>${monthEntries.map(([monthLabel, monthBlocks], mi) => {
-          const weekGroups = [1,2,3,4,5].map(w => ({ w, arr:monthBlocks.filter(b => b.weekOfMonth === w) })).filter(x => x.arr.length);
-          return `<details class="rpcm-log-month" ${yi === latestYearIndex && mi === monthEntries.length - 1 ? 'open' : ''}><summary><strong>${esc(monthLabel)}</strong><span>${monthBlocks.length}개 · ${formatCount(monthBlocks.reduce((n,b)=>n+b.raw.length,0))}자</span></summary><div class="rpcm-log-groupbar"><label><input type="checkbox" class="rpcm-log-group-select" data-keys="${esc(monthBlocks.map(b=>b.key).join('|'))}"> 월 전체 선택</label>${weekGroups.map(g => `<label><input type="checkbox" class="rpcm-log-group-select" data-keys="${esc(g.arr.map(b=>b.key).join('|'))}"> ${g.w}주 (${g.arr.length})</label>`).join('')}</div>${monthBlocks.map(rowHtml).join('')}</details>`;
-        }).join('')}</details>`;
-      }).join('');
-
-      const unknownRowsHtml = unknownBlocks.length ? `<details class="rpcm-log-year"><summary><strong>날짜 미상</strong><span>${unknownBlocks.length}개 블록</span></summary>${unknownBlocks.map(rowHtml).join('')}</details>` : '';
-
-      backdrop.innerHTML = `
-        <div class="rpcm-log-dialog" role="dialog" aria-modal="true">
-          <div class="rpcm-lib-dialog-head"><div><div class="rpcm-lib-dialog-title">주입할 날짜 로그 직접 선택</div><div class="rpcm-lib-dialog-desc">원하는 날짜만 체크해 강제로 주입 후보에 넣습니다. 자동 호출을 꺼도 직접 선택한 날짜는 유지됩니다.</div></div><button type="button" class="rpcm-lib-close">✕</button></div>
-          <div class="rpcm-log-help"><b>직접 선택 로그</b>는 📌 항상 호출 다음 우선순위로 들어갑니다. 이후 최신 로그 → 관련 과거 로그 순으로 45,000자 예산을 채웁니다. 선택이 많아 예산을 넘으면 일부가 이번 주입에서 빠질 수 있으며 원본 로그는 삭제되지 않습니다.</div>
-          <div class="rpcm-log-help" id="rpcm-manual-log-summary"></div>
-          <div class="rpcm-log-list">${datedRowsHtml}${unknownRowsHtml}</div>
-          <div class="rpcm-lib-dialog-actions"><button type="button" class="rpcm-btn secondary" id="rpcm-log-clear-manual">전체 해제</button><div class="rpcm-spacer"></div><button type="button" class="rpcm-btn secondary" data-act="cancel">취소</button><button type="button" class="rpcm-btn primary" data-act="confirm">선택 적용</button></div>
-        </div>`;
-      document.body.appendChild(backdrop);
-
-      const finish = value => { backdrop.remove(); resolve(value); };
-      const summary = backdrop.querySelector('#rpcm-manual-log-summary');
-      const updateSummary = () => {
-        const rows = [...backdrop.querySelectorAll('.rpcm-log-row')];
-        const selectedRows = rows.filter(row => row.querySelector('.rpcm-log-manual')?.checked);
-        const chars = selectedRows.reduce((n, row) => {
-          const key = String(row.dataset.logKey || '');
-          const block = blocks.find(b => String(b.key) === key);
-          return n + String(block?.raw || '').length;
-        }, 0);
-        if (summary) summary.innerHTML = `<b>현재 직접 선택 ${selectedRows.length}개</b> · ${formatCount(chars)}자`;
-        backdrop.querySelectorAll('.rpcm-log-group-select').forEach(group => {
-          const keys = String(group.dataset.keys || '').split('|').filter(Boolean);
-          const states = keys.map(k => !!backdrop.querySelector(`.rpcm-log-row[data-log-key="${CSS.escape(k)}"] .rpcm-log-manual`)?.checked);
-          group.checked = states.length > 0 && states.every(Boolean);
-          group.indeterminate = states.some(Boolean) && !states.every(Boolean);
-        });
-      };
-
-      backdrop.querySelector('.rpcm-lib-close').onclick = () => finish(false);
-      backdrop.querySelector('[data-act="cancel"]').onclick = () => finish(false);
-      backdrop.onclick = e => { if (e.target === backdrop) finish(false); };
-      backdrop.querySelectorAll('.rpcm-log-toggle').forEach(btn => {
-        btn.onclick = () => {
-          const pre = btn.closest('.rpcm-log-row')?.querySelector('.rpcm-log-content');
-          if (!pre) return;
-          pre.hidden = !pre.hidden;
-          btn.textContent = pre.hidden ? '내용 보기' : '내용 닫기';
-        };
-      });
-      backdrop.querySelectorAll('.rpcm-log-manual').forEach(cb => { cb.onchange = updateSummary; });
-      backdrop.querySelectorAll('.rpcm-log-group-select').forEach(group => {
-        group.onchange = () => {
-          const desired = group.checked;
-          for (const key of String(group.dataset.keys || '').split('|').filter(Boolean)) {
-            const cb = backdrop.querySelector(`.rpcm-log-row[data-log-key="${CSS.escape(key)}"] .rpcm-log-manual`);
-            if (cb) cb.checked = desired;
-          }
-          updateSummary();
-        };
-      });
-      backdrop.querySelector('#rpcm-log-clear-manual').onclick = () => {
-        backdrop.querySelectorAll('.rpcm-log-manual').forEach(cb => { cb.checked = false; });
-        updateSummary();
-      };
-      backdrop.querySelector('[data-act="confirm"]').onclick = () => {
-        const nextManual = [];
-        backdrop.querySelectorAll('.rpcm-log-row').forEach(row => {
-          if (row.querySelector('.rpcm-log-manual')?.checked) nextManual.push(String(row.dataset.logKey || ''));
-        });
-        room.manualLogSelectedKeys = [...new Set(nextManual.filter(Boolean))];
-        finish(true);
-      };
-      updateSummary();
-    });
-  }
-
   function openLogRecallManagerDialog(room) {
     return new Promise(resolve => {
       const log = (room.slots || []).find(s => s.id === 'logSummary');
@@ -2586,14 +2479,16 @@ NO → 압축한다.
 
       backdrop.innerHTML = `
         <div class="rpcm-log-dialog" role="dialog" aria-modal="true">
-          <div class="rpcm-lib-dialog-head"><div><div class="rpcm-lib-dialog-title">날짜별 로그 저장소</div><div class="rpcm-lib-dialog-desc">원본 로그 ${blocks.length}개 블록 · ${formatCount(totalChars)}자${unknownBlocks.length ? ` · 날짜 미상 ${unknownBlocks.length}개` : ''}. 전체 원문은 저장만 하고 통째로 주입하지 않습니다. 연도→월→날짜로 펼쳐 직접 선택하거나, 월/주 단위로 묶어 선택할 수 있습니다.</div></div><button type="button" class="rpcm-lib-close">✕</button></div>
+          <div class="rpcm-lib-dialog-head"><div><div class="rpcm-lib-dialog-title">날짜별 로그 저장소 · 주입 선택</div><div class="rpcm-lib-dialog-desc">원본 로그 ${blocks.length}개 블록 · ${formatCount(totalChars)}자${unknownBlocks.length ? ` · 날짜 미상 ${unknownBlocks.length}개` : ''}. 이 창 하나에서 연도→월→날짜별 로그를 보면서 직접 선택·📌항상 호출·🚫자동 제외를 모두 관리합니다.</div></div><button type="button" class="rpcm-lib-close">✕</button></div>
           <div class="rpcm-log-help"><b>직접 선택</b>=선택한 날짜를 다음 주입 후보에 강제 포함 · <b>📌 항상 호출</b>=항상 우선 포함 · <b>🚫 자동 제외</b>=최신/관련 자동호출에서만 제외(직접 선택은 가능) · 자동호출 ON이면 최신 1~2개 + 관련 과거 로그를 추가로 고릅니다.</div>
+          <div class="rpcm-log-help" id="rpcm-log-manager-summary"></div>
           <div class="rpcm-log-list">${rowsHtml}</div>
           <div class="rpcm-lib-dialog-actions"><button type="button" class="rpcm-btn secondary" id="rpcm-log-clear-manual">직접 선택 전체 해제</button><div class="rpcm-spacer"></div><button type="button" class="rpcm-btn secondary" data-act="cancel">취소</button><button type="button" class="rpcm-btn primary" data-act="confirm">적용</button></div>
         </div>`;
       document.body.appendChild(backdrop);
 
       const finish = value => { backdrop.remove(); resolve(value); };
+      const managerSummary = backdrop.querySelector('#rpcm-log-manager-summary');
       const updateGroupState = () => {
         backdrop.querySelectorAll('.rpcm-log-group-select').forEach(group => {
           const keys = String(group.dataset.keys || '').split('|').filter(Boolean);
@@ -2601,6 +2496,13 @@ NO → 압축한다.
           group.checked = states.length > 0 && states.every(Boolean);
           group.indeterminate = states.some(Boolean) && !states.every(Boolean);
         });
+        const selectedRows = [...backdrop.querySelectorAll('.rpcm-log-row')].filter(row => row.querySelector('.rpcm-log-manual')?.checked);
+        const selectedChars = selectedRows.reduce((n, row) => {
+          const key = String(row.dataset.logKey || '');
+          const block = blocks.find(b => String(b.key) === key);
+          return n + String(block?.raw || '').length;
+        }, 0);
+        if (managerSummary) managerSummary.innerHTML = `<b>현재 직접 선택 ${selectedRows.length}개</b> · ${formatCount(selectedChars)}자 · 자동 호출을 꺼도 직접 선택 날짜는 주입 후보에 유지됩니다.`;
       };
       backdrop.querySelector('.rpcm-lib-close').onclick = () => finish(false);
       backdrop.querySelector('[data-act="cancel"]').onclick = () => finish(false);
@@ -2831,7 +2733,7 @@ NO → 압축한다.
     state.autoSaveTimer = setTimeout(async () => {
       state.autoSaveTimer = null;
       try { await saveRoom(room); }
-      catch (e) { updateSaveStatusUi('error'); console.warn('[RP 매니저] 자동저장 실패', e); }
+      catch (e) { updateSaveStatusUi('error'); console.warn('[🪽위시 RP Manager] 자동저장 실패', e); }
     }, delay);
   }
 
@@ -3854,7 +3756,7 @@ NO → 압축한다.
       }
       if (n.parentElement?.closest('#rpcm-overlay,#rpcm-toast-wrap,#rpcm-lib-dialog-backdrop')) continue;
       const before = n.nodeValue || '';
-      // RP 매니저는 자기 마커가 포함된 흔적만 정리합니다.
+      // 🪽위시 RP Manager는 자기 마커가 포함된 흔적만 정리합니다.
       // 빈 <!----> 자체는 Crack/다른 확장이 사용할 수 있으므로 전역 삭제하지 않습니다.
       const beforeNorm = String(before || '');
       const after = /RP_CONTEXT_MANAGER(?:_START|_END)?/i.test(beforeNorm)
@@ -4013,7 +3915,7 @@ NO → 압축한다.
     state.fab.style.display = visible ? 'inline-flex' : 'none';
     const armed = !!state.currentRoom?.pending;
     state.fab.classList.toggle('rpcm-armed', armed);
-    state.fab.title = armed ? `RP 매니저 · 자동 유지 중 (${pendingProgressText(state.currentRoom.pending)})` : 'RP 매니저';
+    state.fab.title = armed ? `🪽위시 RP Manager · 자동 유지 중 (${pendingProgressText(state.currentRoom.pending)})` : '🪽위시 RP Manager';
     state.fab.setAttribute('aria-label', state.fab.title);
   }
 
@@ -4174,7 +4076,7 @@ NO → 압축한다.
       <div id="rpcm-modal-wrap">
         <div id="rpcm-modal">
           <div class="rpcm-header">
-            <div><div class="rpcm-title">🧠 ${esc(APP.name)}</div><div class="rpcm-sub">${esc(room.label || '현재 채팅방')} · 방별 독립 · ID ${esc(shortId(room.chatId))}</div></div>
+            <div><div class="rpcm-title">${esc(APP.name)}</div><div class="rpcm-sub">${esc(room.label || '현재 채팅방')} · 방별 독립 · ID ${esc(shortId(room.chatId))}</div></div>
             <div class="rpcm-spacer"></div>
             <button class="rpcm-iconbtn" id="rpcm-close">✕</button>
           </div>
@@ -4194,7 +4096,7 @@ NO → 압축한다.
             <div class="rpcm-section">
               <div class="rpcm-section-head"><div><div class="rpcm-section-title">기본 메모</div><div class="rpcm-section-desc">현재상태는 HOT MEMORY로 통째 유지합니다. 로그요약 원문은 날짜 블록 저장소로만 보관하고, 직접 선택·최신·관련·고정 날짜 블록만 45,000자 예산 안에서 골라 주입합니다.</div></div></div>
               <div id="rpcm-current-state-slot"></div>
-              <div class="rpcm-auto-panel"><label><input type="checkbox" id="rpcm-auto-log" ${room.autoLogRecallEnabled ? 'checked' : ''}> 날짜별 로그 자동 호출</label><label>최신 <select id="rpcm-auto-log-recent"><option value="1" ${Number(room.autoLogRecentBlocks)===1?'selected':''}>1개</option><option value="2" ${Number(room.autoLogRecentBlocks)!==1?'selected':''}>2개</option></select></label><label>관련 과거 최대 <select id="rpcm-auto-log-related"><option value="1" ${Number(room.autoLogRelatedBlocks)===1?'selected':''}>1개</option><option value="2" ${Number(room.autoLogRelatedBlocks)===2?'selected':''}>2개</option><option value="3" ${Number(room.autoLogRelatedBlocks)===3?'selected':''}>3개</option><option value="4" ${Number(room.autoLogRelatedBlocks)===4?'selected':''}>4개</option></select></label><button type="button" class="rpcm-lib-small" id="rpcm-log-manual-select">☑ 날짜 직접 선택${manualLogStats.count ? ` (${manualLogStats.count})` : ''}</button><button type="button" class="rpcm-lib-small" id="rpcm-log-date-fix">🛠 날짜 수정</button><button type="button" class="rpcm-lib-small" id="rpcm-log-manage">🗓️ 로그 저장소</button></div>${manualLogStats.count ? `<div class="rpcm-log-help"><b>직접 선택 중</b> ${manualLogStats.count}개 · ${formatCount(manualLogStats.chars)}자 · 자동 호출을 꺼도 선택한 날짜 로그는 주입 후보에 유지됩니다.</div>` : ''}
+              <div class="rpcm-auto-panel"><label><input type="checkbox" id="rpcm-auto-log" ${room.autoLogRecallEnabled ? 'checked' : ''}> 날짜별 로그 자동 호출</label><label>최신 <select id="rpcm-auto-log-recent"><option value="1" ${Number(room.autoLogRecentBlocks)===1?'selected':''}>1개</option><option value="2" ${Number(room.autoLogRecentBlocks)!==1?'selected':''}>2개</option></select></label><label>관련 과거 최대 <select id="rpcm-auto-log-related"><option value="1" ${Number(room.autoLogRelatedBlocks)===1?'selected':''}>1개</option><option value="2" ${Number(room.autoLogRelatedBlocks)===2?'selected':''}>2개</option><option value="3" ${Number(room.autoLogRelatedBlocks)===3?'selected':''}>3개</option><option value="4" ${Number(room.autoLogRelatedBlocks)===4?'selected':''}>4개</option></select></label><button type="button" class="rpcm-lib-small" id="rpcm-log-date-fix">🛠 날짜 수정</button><button type="button" class="rpcm-lib-small" id="rpcm-log-manage">🗓️ 로그 저장소 · 주입 선택${manualLogStats.count ? ` (직접 ${manualLogStats.count})` : ''}</button></div>${manualLogStats.count ? `<div class="rpcm-log-help"><b>직접 선택 중</b> ${manualLogStats.count}개 · ${formatCount(manualLogStats.chars)}자 · 로그 저장소에서 직접 선택·📌항상 호출·🚫자동 제외를 한 번에 관리합니다. 자동 호출을 꺼도 직접 선택한 날짜는 유지됩니다.</div>` : ''}
               <div id="rpcm-log-summary-slot"></div>
             </div>
 
@@ -4483,22 +4385,6 @@ NO → 압축한다.
       catch (e) { notify(`관련 로그 개수 반영 실패: ${e.message}`, 'error', 6000); }
       refreshStatsOnly();
     };
-    const logManualSelectBtn = overlay.querySelector('#rpcm-log-manual-select');
-    if (logManualSelectBtn) logManualSelectBtn.onclick = async () => {
-      readModalIntoRoom();
-      const changed = await openManualLogSelectionDialog(room);
-      if (!changed) return;
-      try {
-        if (room.pending) await rebuildPendingLogItems(room, 'log-manual-select');
-        await saveRoom(room);
-        const stats = manualLogSelectionStats(room);
-        notify(`날짜 로그 직접 선택을 반영했습니다. · ${stats.count}개 · ${formatCount(stats.chars)}자`, 'success', 4400);
-        renderModalIfOpen();
-      } catch (e) {
-        notify(`날짜 로그 직접 선택 반영 실패: ${e.message}`, 'error', 6500);
-      }
-    };
-
     const logDateFixBtn = overlay.querySelector('#rpcm-log-date-fix');
     if (logDateFixBtn) logDateFixBtn.onclick = async () => {
       readModalIntoRoom();
@@ -4654,7 +4540,7 @@ NO → 압축한다.
       readModalIntoRoom();
       updateSaveStatusUi('saving');
       await saveRoom(room);
-      notify('RP 매니저 저장 완료', 'success');
+      notify('🪽위시 RP Manager 저장 완료', 'success');
       renderModalIfOpen();
     };
 
@@ -4725,7 +4611,7 @@ NO → 압축한다.
       if (!f) return;
       try {
         const data = JSON.parse(await f.text());
-        if (!data?._rpContextManagerBackup || !Array.isArray(data.rooms)) throw new Error('RP 매니저 백업 파일이 아닙니다.');
+        if (!data?._rpContextManagerBackup || !Array.isArray(data.rooms)) throw new Error('🪽위시 RP Manager 백업 파일이 아닙니다.');
         if (!confirm(`백업의 ${data.rooms.length}개 RP 데이터를 불러올까요? 같은 채팅방 ID는 덮어씁니다.`)) return;
         for (const r of data.rooms) {
           if (!r?.chatId) continue;
@@ -4749,7 +4635,7 @@ NO → 압축한다.
 
     overlay.querySelector('#rpcm-reset').onclick = async () => {
       if (room.pending) { notify('먼저 임시 주입을 복원해 주세요.', 'warn'); return; }
-      if (!confirm('현재 채팅방의 RP 매니저 데이터만 초기화할까요?')) return;
+      if (!confirm('현재 채팅방의 🪽위시 RP Manager 데이터만 초기화할까요?')) return;
       await clearCurrentRoom(room.chatId);
       await ensureCurrentRoom(apiChatIdOf(room), true);
       notify('현재 RP 데이터 초기화 완료', 'success');
@@ -4887,10 +4773,10 @@ NO → 압축한다.
       setInterval(() => recoveryTick().catch(console.warn), APP.pollMs);
       // 새로고침 후에도 활성 자동 유지 세션을 이어가기 위한 즉시 복구 패스입니다.
       recoveryTick().catch(console.warn);
-      console.log(`[RP매니저] ${APP.name} v${APP.version} loaded`);
+      console.log(`[위시RPManager] ${APP.name} v${APP.version} loaded`);
     } catch (e) {
       console.error('[RP매니저] init failed', e);
-      notify(`RP 매니저 초기화 실패: ${e.message}`, 'error', 7000);
+      notify(`🪽위시 RP Manager 초기화 실패: ${e.message}`, 'error', 7000);
     }
   }
 
