@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🪽위시 RP Manager
 // @namespace    local.rp.context.manager
-// @version      0.8.9
+// @version      0.8.11
 // @description  장기 RP용 현재상태·날짜로그·캐릭터 설정·OOC를 관리하고 필요한 컨텍스트를 자동 주입합니다.
 // @author       User
 // @license      All Rights Reserved
@@ -31,12 +31,16 @@
   'use strict';
 
   // 다른 Tampermonkey 스크립트와의 중복 실행/재주입 충돌 방지
-  if (window.__RP_MANAGER_089_LOADED__) return;
-  window.__RP_MANAGER_089_LOADED__ = true;
+  // 버전별 키를 쓰면 구버전과 신버전이 동시에 설치됐을 때 둘 다 실행될 수 있습니다.
+  // 모든 버전이 공유하는 고정 키로 중복 실행을 막습니다.
+  if (window.__WISH_RP_MANAGER_LOADED__) return;
+  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.8.11', loadedAt: Date.now() };
+  // 같은 페이지에 남아 있는 v0.8.10 복사본이 뒤늦게 시작되는 경우도 차단합니다.
+  window.__RP_MANAGER_0810_LOADED__ = true;
 
   const APP = {
     name: '🪽위시 RP Manager',
-    version: '0.8.9',
+    version: '0.8.11',
     dbName: 'RPContextManagerDB',
     dbVersion: 2,
     storeName: 'rooms',
@@ -45,6 +49,7 @@
     safeChars: 42000,
     absoluteUiMax: 45000,
     pollMs: 2000,
+    idleAutoScanMs: 10000,
     defaultRetentionTurns: 5,
     allowedRetentionTurns: [1, 3, 5, 10, 0], // 0 = 직접 해제 전까지
     reanchorDelayMs: 800,
@@ -57,6 +62,7 @@
     legacyMarkerStart: '<rp_context_manager',
     legacyMarkerEnd: '</rp_context_manager>',
     modalPosKey: 'RPCM_modal_position_v1',
+    logRecallRevision: 2, // v0.8.10: 실제 날짜 기준 최근로그 + 주입 중 로그 편집 즉시 재선정
   };
 
 
@@ -1391,7 +1397,9 @@ NO → 압축한다.
     domObserver: null,
     domSanitizeTimer: null,
     domSanitizing: false,
-    autoSaveTimer: null,
+    autoSaveTimers: new Map(),
+    idleAutoScanAt: new Map(),
+    routeEpoch: 0,
     lastSavedAt: 0,
     saveStatus: 'saved',
   };
@@ -1632,7 +1640,8 @@ NO → 압축한다.
   }
 
   function messageIdOf(m) {
-    return m?._id || m?.id || m?.messageId || m?.chatId || null;
+    // chatId는 방 ID일 수 있으므로 메시지 ID의 폴백으로 사용하지 않습니다.
+    return m?._id || m?.id || m?.messageId || null;
   }
 
   function messageRoleOf(m) {
@@ -1814,6 +1823,37 @@ NO → 압축한다.
         sourceEnd: end,
       };
     });
+  }
+
+  // 최신 로그는 저장소에서 뒤에 붙은 순서가 아니라 확정된 실제 날짜를 우선해 고릅니다.
+  // 연도가 없는 [M월 D일-...] 블록은 연도를 추측하지 않습니다.
+  // 연도 없는 블록만 있는 경우에는 기존 저장소 순서를 유지하고,
+  // 연도가 확정된 로그 뒤에 연도 없는 블록이 새로 붙은 경우에만 그 뒤쪽 블록을 안전한 후보로 봅니다.
+  function selectRecentLogBlocks(blocks, count) {
+    const n = Math.max(0, Number(count) || 0);
+    if (!n) return [];
+    const dated = (blocks || []).filter(b => b && !b.isUnknown);
+    if (!dated.length) return [];
+
+    const withYear = dated.filter(b => Number.isInteger(b.year));
+    if (!withYear.length) return dated.slice(-n);
+
+    const knownSorted = [...withYear].sort((a, b) =>
+      Number(a.year) - Number(b.year) ||
+      Number(a.month) - Number(b.month) ||
+      Number(a.day) - Number(b.day) ||
+      Number(a.index) - Number(b.index)
+    );
+    const latestKnown = knownSorted[knownSorted.length - 1];
+
+    // 연도 없는 로그가 '실제 날짜 기준 최신 로그'보다 저장소 뒤쪽에 새로 붙어 있다면
+    // 연도를 임의 추정하지 않고 그 뒤쪽 순서를 보조 안전장치로 사용합니다.
+    const trailingNoYear = dated.filter(b => b.year == null && Number(b.index) > Number(latestKnown.index));
+    if (!trailingNoYear.length) return knownSorted.slice(-n);
+
+    const unknownTail = trailingNoYear.slice(-n);
+    const remaining = Math.max(0, n - unknownTail.length);
+    return [...(remaining ? knownSorted.slice(-remaining) : []), ...unknownTail];
   }
 
   function formatNormalizedLogHeading(block, year = null, month = null, day = null) {
@@ -2048,7 +2088,7 @@ NO → 압축한다.
     if (room.autoLogRecallEnabled) {
       const occupied = new Set([...pinnedKeys, ...manualKeys]);
       const recentCount = Math.max(1, Math.min(2, Number(room.autoLogRecentBlocks) || APP.defaultRecentLogBlocks));
-      const recent = eligibleAuto.filter(b => !b.isUnknown && !occupied.has(b.key)).slice(-recentCount);
+      const recent = selectRecentLogBlocks(eligibleAuto.filter(b => !occupied.has(b.key)), recentCount);
       for (const b of recent) put(makeLogRecallItem(b, slot, 'recent-log', '최근로그', '최신 날짜 기본 유지'));
       const skip = new Set([...excludedKeys, ...occupied, ...recent.map(b => b.key)]);
       const relatedCount = Math.max(1, Math.min(4, Number(room.autoLogRelatedBlocks) || APP.defaultRelatedLogBlocks));
@@ -2728,13 +2768,16 @@ NO → 압축한다.
 
   function queueRoomAutoSave(room, delay = 500) {
     if (!room) return;
-    if (state.autoSaveTimer) clearTimeout(state.autoSaveTimer);
+    const key = String(room.chatId || '');
+    const previous = state.autoSaveTimers.get(key);
+    if (previous) clearTimeout(previous);
     updateSaveStatusUi('saving');
-    state.autoSaveTimer = setTimeout(async () => {
-      state.autoSaveTimer = null;
+    const timer = setTimeout(async () => {
+      state.autoSaveTimers.delete(key);
       try { await saveRoom(room); }
       catch (e) { updateSaveStatusUi('error'); console.warn('[🪽위시 RP Manager] 자동저장 실패', e); }
     }, delay);
+    state.autoSaveTimers.set(key, timer);
   }
 
   async function saveRoom(room) {
@@ -3210,18 +3253,35 @@ NO → 압축한다.
     const currentText = messageTextOf(current);
     const stripped = stripOurContextBlock(currentText);
     if (stripped.found) {
-      return { found: true, original: p.originalText || stripped.text || '', currentText };
+      // Refiner가 주입 중인 메시지의 가시 본문을 교정했을 수 있습니다.
+      // 세션 시작 때 저장한 p.originalText보다 서버의 최신 가시 본문을 우선합니다.
+      return { found: true, original: stripped.text, currentText };
     }
-    return { found: false, original: p.originalText || currentText || '', currentText };
+    return { found: false, original: currentText, currentText };
+  }
+
+  async function verifyCarrierClean(room, messageId, expectedText, attempts = 3) {
+    for (let i = 0; i < attempts; i++) {
+      if (i) await sleep([250, 600][Math.min(i - 1, 1)]);
+      const current = await fetchMessage(apiChatIdOf(room), messageId);
+      if (!current) return { clean: true, reason: 'message_missing' };
+      const text = messageTextOf(current);
+      if (!stripOurContextBlock(text).found && normalizeLineBreaks(text) === normalizeLineBreaks(expectedText)) {
+        return { clean: true, reason: 'verified' };
+      }
+    }
+    return { clean: false, reason: 'verify_failed' };
   }
 
   async function restoreCarrierOnly(room, p) {
     const info = await carrierOriginalFromServer(room, p);
     if (!info.currentText) return { restored: false, reason: 'message_missing' };
     if (!stripOurContextBlock(info.currentText).found) return { restored: false, reason: 'already_clean' };
-    const restoreText = p.originalText || loadPendingBackup(room.chatId)?.originalText || info.original || '';
-    if (!restoreText) throw new Error('복원할 AI 원문 백업을 찾지 못했습니다.');
+    const restoreText = info.original;
+    if (restoreText == null) throw new Error('복원할 최신 AI 원문을 찾지 못했습니다.');
     await patchMessage(apiChatIdOf(room), p.messageId, restoreText);
+    const verification = await verifyCarrierClean(room, p.messageId, restoreText);
+    if (!verification.clean) throw new Error('AI 원문 복원 후 서버 재검증에 실패했습니다. 복구 정보는 유지됩니다.');
     return { restored: true, reason: 'ok' };
   }
 
@@ -3276,6 +3336,10 @@ NO → 압축한다.
   async function syncPendingCarrier(room, reason = 'update') {
     const p = room.pending;
     if (!p) return { active: 0, cleared: false };
+    // 다른 확프(예: Lore Refiner)가 carrier의 가시 본문을 수정했다면 그 최신값을 기준으로
+    // 숨김 블록을 다시 붙입니다. 과거 p.originalText로 교정 결과를 덮어쓰지 않습니다.
+    const live = await carrierOriginalFromServer(room, p);
+    if (live.currentText) p.originalText = live.original;
     ensureDirectReleasePendingItems(room, p);
     let active = activePendingItems(p);
     const nonLogs = active.filter(i => i.sourceSlotId !== 'logSummary' && i.group !== 'log-auto' && i.slotId !== 'logSummary');
@@ -3322,11 +3386,23 @@ NO → 압축한다.
   function replacePendingLogItems(room) {
     if (!room.pending) return 0;
     const p = room.pending;
+    const previousLogs = activePendingItems(p).filter(i => i.slotId === 'logSummary' || i.sourceSlotId === 'logSummary' || i.group === 'log-auto');
+    const previousBySource = new Map(previousLogs.map(i => [String(i.sourceKey || i.slotId || ''), i]));
     p.items = (Array.isArray(p.items) ? p.items : []).filter(i => i.slotId !== 'logSummary' && i.sourceSlotId !== 'logSummary' && i.group !== 'log-auto');
     const slot = (room.slots || []).find(s => s.id === 'logSummary');
     if (!slot?.enabled || !String(slot.content || '').trim()) return 0;
+    const blocks = parseDatedLogBlocks(slot.content);
+    if (blocks.length) pruneLogSelectionKeys(room, blocks);
     const base = activePendingItems(p).filter(i => i.slotId !== 'logSummary' && i.sourceSlotId !== 'logSummary' && i.group !== 'log-auto');
     const next = logRecallItems(room, room.autoRecallContextText || '', base, contextBudgetForCarrier(room, String(p.originalText || '').length));
+    for (const item of next) {
+      const prev = previousBySource.get(String(item.sourceKey || item.slotId || ''));
+      if (!prev) continue;
+      // 같은 날짜 블록이 재선정되면 이미 사용한 유지턴은 그대로 이어갑니다.
+      // 새로 생긴 날짜 블록만 0턴부터 시작합니다.
+      item.usedTurns = Number(prev.usedTurns || 0);
+      item.totalTurns = normalizeRetentionTurns(slot.retentionTurns);
+    }
     p.items.push(...next);
     return next.length;
   }
@@ -3335,6 +3411,34 @@ NO → 압축한다.
     if (!room.pending) return;
     replacePendingLogItems(room);
     await syncPendingCarrier(room, reason);
+  }
+
+  async function syncEditedSlotIntoPending(room, slot, reason = 'slot-content-edit') {
+    if (!room?.pending || !slot) return false;
+    if (slot.id === 'logSummary') {
+      await rebuildPendingLogItems(room, reason === 'slot-content-edit' ? 'log-content-edit' : reason);
+      return true;
+    }
+
+    const items = Array.isArray(room.pending.items) ? room.pending.items : (room.pending.items = []);
+    const idx = items.findIndex(i => i.slotId === slot.id && (Number(i.totalTurns || 0) === 0 || Number(i.usedTurns || 0) < Number(i.totalTurns || 0)));
+    if (idx < 0) return false;
+
+    if (!String(slot.content || '').trim()) {
+      items.splice(idx, 1);
+      await syncPendingCarrier(room, reason);
+      return true;
+    }
+
+    // 본문을 수정해도 기존 유지턴 진행도는 리셋하지 않습니다.
+    items[idx] = {
+      ...items[idx],
+      title: String(slot.title || slot.id || '메모').trim(),
+      group: slot.group || items[idx].group || 'extra',
+      content: String(slot.content || '').trim(),
+    };
+    await syncPendingCarrier(room, reason);
+    return true;
   }
 
   async function setSlotEnabledDuringPending(room, slot, enabled) {
@@ -3463,7 +3567,7 @@ NO → 압축한다.
     const pinnedKeys = new Set((room.autoLogPinnedKeys || []).map(String));
     const eligible = blocks.filter(b => !excludedKeys.has(b.key));
     const recentCount = Math.max(1, Math.min(2, Number(room.autoLogRecentBlocks) || APP.defaultRecentLogBlocks));
-    const recent = eligible.filter(b => !pinnedKeys.has(b.key)).slice(-recentCount);
+    const recent = selectRecentLogBlocks(eligible.filter(b => !pinnedKeys.has(b.key)), recentCount);
     const skip = new Set([...excludedKeys, ...pinnedKeys, ...recent.map(b => b.key)]);
     const relatedCount = Math.max(1, Math.min(4, Number(room.autoLogRelatedBlocks) || APP.defaultRelatedLogBlocks));
     const related = scoreRelatedLogBlocks(eligible, contextText, skip, room).slice(0, relatedCount);
@@ -3486,6 +3590,7 @@ NO → 압축한다.
 
   async function refreshAutomaticMemories(room, recentMessages, freshMessages = null) {
     const fresh = freshMessages || newMessagesSinceLastScan(room, recentMessages);
+    if (!fresh.length) return { detected: [], added: 0, reset: 0, logAdded: 0, freshCount: 0 };
     const cleanFreshText = fresh.map(m => stripAutomationNoise(messageTextOf(m))).filter(Boolean).join('\n');
     if (cleanFreshText) room.autoRecallContextText = cleanFreshText.slice(-12000);
     const charResult = await autoDetectCharacters(room, fresh);
@@ -3531,6 +3636,7 @@ NO → 압축한다.
       injectedChars: contextBlock.length, originalChars: cleanOriginal.length, carrierChars: injectedText.length,
       carrierRole: 'assistant', mode: 'append-hidden-html-comment-reanchor-per-item',
       verified: false, verifiedAt: null, serverChars: 0,
+      logRecallRevision: APP.logRecallRevision,
       contextBlock, items,
     };
 
@@ -3538,9 +3644,17 @@ NO → 압축한다.
     await patchMessage(apiChatIdOf(room), targetId, injectedText);
     const verification = await verifyInjectedCarrier(room, pending, injectedText);
     if (!verification.verified) {
-      try { await patchMessage(apiChatIdOf(room), targetId, cleanOriginal); } catch (_) {}
-      clearPendingBackup(room.chatId);
-      throw new Error('서버 재확인에서 숨김 컨텍스트를 확인하지 못했습니다. 안전을 위해 AI 원문 복원을 시도했습니다.');
+      try {
+        await restoreCarrierOnly(room, pending);
+        clearPendingBackup(room.chatId);
+      } catch (rollbackError) {
+        // 롤백을 확인하지 못한 경우 복구 가능한 pending/백업을 반드시 남깁니다.
+        room.pending = pending;
+        savePendingBackup(room.chatId, pending);
+        await saveRoom(room);
+        throw new Error(`서버 주입 검증과 원문 롤백 확인에 실패했습니다. 복구 정보는 유지했습니다: ${rollbackError.message}`);
+      }
+      throw new Error('서버 재확인에서 숨김 컨텍스트를 확인하지 못해 AI 원문으로 안전 복원했습니다.');
     }
     pending.verified = true; pending.verifiedAt = Date.now(); pending.serverChars = verification.serverChars;
     savePendingBackup(room.chatId, pending);
@@ -3555,14 +3669,12 @@ NO → 압축한다.
     const p = room.pending;
     if (!p) return { restored: false, reason: 'none' };
 
-    let result = { restored: false, reason: 'already_clean' };
-    try {
-      result = await restoreCarrierOnly(room, p);
-    } finally {
-      room.pending = null;
-      clearPendingBackup(room.chatId);
-      await saveRoom(room);
-    }
+    // 네트워크/PATCH 오류 때 finally에서 백업을 지우면 서버에는 숨김 블록이 남고
+    // 복원 정보만 사라질 수 있습니다. 복원 또는 이미 정리됨이 확인된 뒤에만 해제합니다.
+    const result = await restoreCarrierOnly(room, p);
+    room.pending = null;
+    clearPendingBackup(room.chatId);
+    await saveRoom(room);
 
     if (room.chatId === state.currentChatId) {
       state.currentRoom = room;
@@ -3590,6 +3702,10 @@ NO → 압축한다.
       const total = Number(item.totalTurns || 0);
       if (total !== 0 && Number(item.usedTurns || 0) < total) item.usedTurns = Number(item.usedTurns || 0) + 1;
     }
+
+    // v0.8.9에서 이어진 pending은 최근로그가 저장소 뒤쪽 순서로 고정되어 있을 수 있습니다.
+    // 새 carrier로 옮기기 전에 한 번만 현재 로그 저장소 기준으로 다시 선정합니다.
+    if (Number(p.logRecallRevision || 0) < APP.logRecallRevision) replacePendingLogItems(room);
 
     // 방금 완료된 USER→AI 흐름에서 새 등장 캐릭터/관련 과거로그를 찾아 다음 응답용 컨텍스트에 추가합니다.
     const recentForAuto = await fetchRecentMessages(apiChatIdOf(room), APP.autoScanMessageLimit);
@@ -3633,14 +3749,23 @@ NO → 압축한다.
 
     const nextPending = { ...p, messageId: newId, originalText: newOriginal, baselineAssistantId: newId,
       armedAt: Date.now(), carrierArmedAt: Date.now(), originalChars: newOriginal.length, carrierChars: nextInjected.length,
-      verified: false, verifiedAt: null, serverChars: 0, contextBlock, injectedChars: contextBlock.length, items };
+      verified: false, verifiedAt: null, serverChars: 0, logRecallRevision: APP.logRecallRevision, contextBlock, injectedChars: contextBlock.length, items: p.items };
 
     await patchMessage(apiChatIdOf(room), newId, nextInjected);
     const verification = await verifyInjectedCarrier(room, nextPending, nextInjected);
     if (!verification.verified) {
-      try { await patchMessage(apiChatIdOf(room), newId, newOriginal); } catch (_) {}
-      room.pending = null; clearPendingBackup(room.chatId); await saveRoom(room);
-      throw new Error('새 AI 응답으로 컨텍스트를 옮긴 뒤 서버 검증에 실패해 자동 유지를 종료했습니다.');
+      try {
+        await restoreCarrierOnly(room, nextPending);
+        room.pending = null;
+        clearPendingBackup(room.chatId);
+        await saveRoom(room);
+      } catch (rollbackError) {
+        room.pending = nextPending;
+        savePendingBackup(room.chatId, nextPending);
+        await saveRoom(room);
+        throw new Error(`새 carrier 검증과 원문 롤백 확인에 실패했습니다. 복구 정보는 유지했습니다: ${rollbackError.message}`);
+      }
+      throw new Error('새 carrier 서버 검증에 실패해 새 AI 원문으로 안전 복원하고 자동 유지를 종료했습니다.');
     }
     nextPending.verified = true; nextPending.verifiedAt = Date.now(); nextPending.serverChars = verification.serverChars;
     room.pending = nextPending; savePendingBackup(room.chatId, nextPending); await saveRoom(room);
@@ -3665,6 +3790,18 @@ NO → 압축한다.
     if (!latestAssistantId) return;
 
     if (latestAssistantId === p.baselineAssistantId) {
+      // v0.8.9에서 이어진 활성 주입은 새 버전에서 한 번만 로그 후보를 다시 계산합니다.
+      // 따라서 업데이트 직후에도 사용자가 로그 칸을 다시 건드리지 않아도 최신 날짜가 반영됩니다.
+      if (Number(p.logRecallRevision || 0) < APP.logRecallRevision) {
+        replacePendingLogItems(room);
+        await syncPendingCarrier(room, 'log-recall-upgrade');
+        if (room.pending) {
+          room.pending.logRecallRevision = APP.logRecallRevision;
+          savePendingBackup(room.chatId, room.pending);
+          await saveRoom(room);
+        }
+        return;
+      }
       // 새로고침/렌더링 재구성 후에도 현재 carrier의 서버 주입이 살아있는지 가볍게 확인합니다.
       try {
         const carrier = await fetchMessage(apiChatIdOf(room), p.messageId);
@@ -3672,10 +3809,15 @@ NO → 압축한다.
         if (carrierText && !stripOurContextBlock(carrierText).found) {
           const active = activePendingItems(p);
           const contextBlock = buildContextBlockFromItems(active);
-          if (contextBlock && p.originalText) {
-            const injected = buildInjectedMessage(p.originalText, contextBlock);
+          if (contextBlock) {
+            // Refiner가 마커 없이 최신 교정문을 저장했을 수 있으므로 현재 서버 본문을 새 원문으로 채택합니다.
+            p.originalText = carrierText;
+            const injected = buildInjectedMessage(carrierText, contextBlock);
             await patchMessage(apiChatIdOf(room), p.messageId, injected);
-            p.contextBlock = contextBlock; p.carrierChars = injected.length; p.verified = true; p.verifiedAt = Date.now();
+            const reapplied = await verifyInjectedCarrier(room, p, injected, 3);
+            if (!reapplied.verified) throw new Error('carrier 재주입 서버 검증 실패');
+            p.contextBlock = contextBlock; p.carrierChars = injected.length; p.serverChars = reapplied.serverChars;
+            p.verified = true; p.verifiedAt = Date.now();
             savePendingBackup(room.chatId, p); await saveRoom(room);
           }
         }
@@ -3684,23 +3826,33 @@ NO → 압축한다.
     }
 
     if (latestAssistantId !== p.baselineAssistantId) {
+      const beforeReanchor = { ...p, items: clonePendingItems(p.items) };
       try {
         await reanchorAfterResponse(room, latestAssistant);
       } catch (e) {
         console.warn('[RP매니저] reanchor failed:', room.chatId, e);
-        // 이전 carrier는 이미 복원했을 가능성이 높습니다. 새 carrier에 마커가 남았다면 가능한 한 정리합니다.
-        try {
-          const fresh = await fetchMessage(apiChatIdOf(room), latestAssistantId);
-          const text = messageTextOf(fresh);
-          const stripped = stripOurContextBlock(text);
-          if (stripped.found) await patchMessage(apiChatIdOf(room), latestAssistantId, stripped.text);
-        } catch (_) {}
-        room.pending = null;
-        clearPendingBackup(room.chatId);
+        // 실패 시 이전/새 carrier 양쪽이 깨끗한지 확인합니다. 네트워크 오류로 확인하지 못했다면
+        // pending과 이중 백업을 남겨 다음 recoveryTick 또는 수동 해제로 재시도할 수 있게 합니다.
+        let cleanupConfirmed = true;
+        for (const messageId of [...new Set([beforeReanchor.messageId, latestAssistantId].filter(Boolean))]) {
+          try { await restoreCarrierOnly(room, { ...beforeReanchor, messageId }); }
+          catch (cleanupError) {
+            cleanupConfirmed = false;
+            console.warn('[RP매니저] reanchor cleanup not confirmed:', messageId, cleanupError);
+          }
+        }
+        if (cleanupConfirmed) {
+          room.pending = null;
+          clearPendingBackup(room.chatId);
+        } else {
+          room.pending = room.pending || beforeReanchor;
+          savePendingBackup(room.chatId, room.pending);
+        }
         await saveRoom(room);
         if (room.chatId === state.currentChatId) {
           state.currentRoom = room;
-          notifyInjectionEnded(room, 'error', e.message);
+          if (cleanupConfirmed) notifyInjectionEnded(room, 'error', e.message);
+          else notify(`자동 이동 오류 · 복구 확인 전이라 주입 백업을 유지했습니다: ${e.message}`, 'error', 7500);
           renderModalIfOpen();
         }
       }
@@ -3717,6 +3869,9 @@ NO → 압축한다.
           normalizeRoomSlots(room);
           // 자동 캐릭터 감지는 주입 전에도 현재 방에서 동작해 다음 주입 준비를 해둡니다.
           if (!room.pending && (room.autoCharacterDetection || room.autoLogRecallEnabled) && room.chatId === state.currentChatId) {
+            const lastScanAt = Number(state.idleAutoScanAt.get(room.chatId) || 0);
+            if (Date.now() - lastScanAt < APP.idleAutoScanMs) continue;
+            state.idleAutoScanAt.set(room.chatId, Date.now());
             const recent = await fetchRecentMessages(apiChatIdOf(room), APP.autoScanMessageLimit);
             const auto = await refreshAutomaticMemories(room, recent);
             if (auto.detected?.length && room.chatId === state.currentChatId) {
@@ -3841,7 +3996,7 @@ NO → 압축한다.
       if (!relevant) return;
       state.domSanitizing = true;
       try {
-        // MutationObserver 콜백은 렌더 페인트 전에 실행되므로 7초 UI 지연과 무관하게 즉시 제거합니다.
+        // MutationObserver 콜백은 렌더 페인트 전에 실행되므로 UI 초기화와 무관하게 즉시 제거합니다.
         sanitizeRenderedContextBlocks(document.body || document.documentElement || document);
       } finally {
         state.domSanitizing = false;
@@ -3862,6 +4017,8 @@ NO → 압축한다.
       #rpcm-fab.rpcm-armed{background:rgba(244,114,182,.26)!important;border-color:#fb7185!important;color:#fff!important;box-shadow:0 0 0 1px rgba(251,113,133,.18)!important}
       #rpcm-fab .rpcm-dot{position:relative!important;right:auto!important;top:auto!important;width:7px!important;height:7px!important;border-radius:50%!important;background:#f9a8d4!important;border:0!important;flex:0 0 auto!important}
       #rpcm-fab.rpcm-armed .rpcm-dot{background:#22c55e!important;box-shadow:0 0 0 2px rgba(34,197,94,.16)!important}
+      #rpcm-fab[hidden]{display:none!important}
+      #rpcm-fab.rpcm-fallback{position:fixed!important;right:12px!important;z-index:2147483645!important;height:34px!important;margin:0!important;border-radius:999px!important;box-shadow:0 4px 14px rgba(0,0,0,.35)!important;backdrop-filter:blur(8px)!important}
       @media (prefers-color-scheme:light){#rpcm-fab{background:#fff1f7!important;color:#b84f7e!important;border-color:#df6298!important}#rpcm-fab:hover{background:#ffe4ef!important;color:#9f416e!important}}
       #rpcm-overlay{position:fixed;inset:0;z-index:9998;background:transparent;display:block;padding:0;pointer-events:none;font-family:-apple-system,BlinkMacSystemFont,"Pretendard",sans-serif}
       #rpcm-modal{width:100%;max-height:calc(100vh - 140px);background:#181818;color:#eee;border:1px solid #3a3a3a;border-radius:16px;box-shadow:0 25px 80px rgba(0,0,0,.6);display:flex;flex-direction:column;overflow:hidden}
@@ -3897,22 +4054,132 @@ NO → 압축한다.
     const wanted = String(label || '').trim().toLowerCase();
     const candidates = [...document.querySelectorAll('button, [role="button"]')];
     return candidates.find(el => {
-      if (el.closest('#rpcm-overlay')) return false;
+      if (el.id === 'rpcm-fab' || el.closest('#rpcm-overlay')) return false;
       const t = String(el.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
       return t === wanted;
     }) || null;
   }
 
-  function stripFrameworkAttrs(el) {
-    if (!el) return;
-    ['data-state','aria-expanded','aria-controls','aria-haspopup','data-radix-collection-item'].forEach(a => el.removeAttribute(a));
-    [...(el.attributes || [])].forEach(a => { if (/^data-radix/i.test(a.name)) el.removeAttribute(a.name); });
+  function isElementVisible(el) {
+    if (!el?.getBoundingClientRect || !el.isConnected) return false;
+    const r = el.getBoundingClientRect();
+    if (r.width <= 0 || r.height <= 0) return false;
+    const cs = getComputedStyle(el);
+    return cs.display !== 'none' && cs.visibility !== 'hidden';
+  }
+
+  function visibleButtonLikes(root = document) {
+    const scope = root?.querySelectorAll ? root : document;
+    return [...scope.querySelectorAll('button,a,[role="button"]')]
+      .filter(el => el.id !== 'rpcm-fab' && !el.closest('#rpcm-overlay') && isElementVisible(el));
+  }
+
+  function inlineAnchorTarget(anchor) {
+    if (!anchor?.parentElement || !isElementVisible(anchor)) return null;
+    if (anchor.parentElement === document.body || getComputedStyle(anchor).position === 'fixed') return null;
+    return { host: anchor.parentElement, before: anchor.nextSibling, kind: 'named-action' };
+  }
+
+  function findLegacyBannerTarget() {
+    const isStory = /^\/stories\//.test(location.pathname) || /^\/u\//.test(location.pathname);
+    const panels = document.getElementsByClassName(isStory ? 'css-1c5w7et' : 'css-l8r172');
+    if (!panels?.length) return null;
+    try {
+      const divs = panels[0].childNodes[panels.length - 1]?.getElementsByTagName?.('div');
+      if (!divs?.length) return null;
+      const list = divs[0].children?.[0]?.children;
+      const top = list?.[list.length - 1];
+      return top ? { host: top, before: top.childNodes[0] || null, kind: 'legacy-banner' } : null;
+    } catch (_) { return null; }
+  }
+
+  function findModernHeaderTarget() {
+    const minLeft = Math.max(260, Math.floor(window.innerWidth * .35));
+    const controls = visibleButtonLikes(document)
+      .filter(el => {
+        const r = el.getBoundingClientRect();
+        return r.top >= 40 && r.top <= 135 && r.left >= minLeft && r.right <= window.innerWidth + 8;
+      })
+      .sort((a, b) => b.getBoundingClientRect().right - a.getBoundingClientRect().right);
+    for (const control of controls) {
+      let node = control.parentElement;
+      while (node && node !== document.body) {
+        const r = node.getBoundingClientRect();
+        if (r.top >= 32 && r.top <= 140 && r.height >= 28 && r.height <= 76 &&
+            r.width > 28 && r.width <= Math.min(720, window.innerWidth * .62) && r.right >= window.innerWidth * .52) {
+          const children = visibleButtonLikes(node)
+            .filter(child => child.getBoundingClientRect().top >= 32 && child.getBoundingClientRect().top <= 140)
+            .sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left);
+          if (children.length) return { host: node, before: children[0], kind: 'modern-header' };
+        }
+        node = node.parentElement;
+      }
+    }
+    return null;
+  }
+
+  function findComposerToolbarTarget() {
+    const editors = [...document.querySelectorAll('[contenteditable="true"],.ProseMirror')]
+      .filter(isElementVisible)
+      .sort((a, b) => b.getBoundingClientRect().bottom - a.getBoundingClientRect().bottom);
+    for (const editor of editors) {
+      let node = editor.parentElement;
+      while (node && node !== document.body) {
+        const r = node.getBoundingClientRect();
+        if (r.bottom >= window.innerHeight - 180 && r.height <= 240 && r.width >= 280) {
+          const controls = visibleButtonLikes(node)
+            .filter(child => child.getBoundingClientRect().top >= editor.getBoundingClientRect().bottom - 4)
+            .sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left);
+          if (controls.length) return { host: controls[0].parentElement || node, before: controls[0], kind: 'composer-toolbar' };
+        }
+        node = node.parentElement;
+      }
+    }
+    return null;
+  }
+
+  function findManagerButtonTarget() {
+    const loreEntry = document.getElementById('lore-inj-entry-button') || document.querySelector('[data-lore-inj-entry="true"]');
+    return inlineAnchorTarget(loreEntry) ||
+      inlineAnchorTarget(findTopActionButton('Lore')) ||
+      inlineAnchorTarget(findTopActionButton('기억 삽입')) ||
+      findLegacyBannerTarget() ||
+      findModernHeaderTarget() ||
+      findComposerToolbarTarget();
+  }
+
+  function createManagerButton() {
+    const fab = document.createElement('button');
+    fab.type = 'button';
+    fab.id = 'rpcm-fab';
+    fab.innerHTML = `Manager<span class="rpcm-dot" aria-hidden="true"></span>`;
+    fab.onmousedown = e => e.stopPropagation();
+    fab.onclick = e => {
+      e.preventDefault();
+      e.stopPropagation();
+      openModal().catch(err => notify(err.message, 'error'));
+    };
+    return fab;
+  }
+
+  function mountManagerFallback(fab) {
+    if (!document.body) return false;
+    fab.classList.add('rpcm-fallback');
+    const lore = document.getElementById('lore-inj-entry-button');
+    let bottom = 76;
+    if (isElementVisible(lore) && getComputedStyle(lore).position === 'fixed') {
+      const r = lore.getBoundingClientRect();
+      bottom = Math.max(bottom, Math.ceil(window.innerHeight - r.top + 8));
+    }
+    fab.style.setProperty('bottom', `calc(${bottom}px + env(safe-area-inset-bottom, 0px))`, 'important');
+    if (fab.parentElement !== document.body) document.body.appendChild(fab);
+    return true;
   }
 
   function updateFab() {
     if (!state.fab) return;
     const visible = !!state.currentChatId;
-    state.fab.style.display = visible ? 'inline-flex' : 'none';
+    state.fab.hidden = !visible;
     const armed = !!state.currentRoom?.pending;
     state.fab.classList.toggle('rpcm-armed', armed);
     state.fab.title = armed ? `🪽위시 RP Manager · 자동 유지 중 (${pendingProgressText(state.currentRoom.pending)})` : '🪽위시 RP Manager';
@@ -3921,39 +4188,23 @@ NO → 압축한다.
 
   function ensureManagerButton() {
     if (!state.currentChatId) {
-      if (state.fab?.isConnected) state.fab.style.display = 'none';
+      if (state.fab) state.fab.hidden = true;
       return false;
     }
 
-    const loreBtn = findTopActionButton('Lore');
-    const memoryBtn = findTopActionButton('기억 삽입');
-    const anchor = loreBtn || memoryBtn;
-    if (!anchor || !anchor.parentElement) return false;
-
-    // React가 상단 액션바를 다시 그렸다면 예전 버튼은 버리고 새 부모에 재주입합니다.
-    if (state.fab?.isConnected && state.fab.parentElement === anchor.parentElement) {
-      if (loreBtn && loreBtn.nextElementSibling !== state.fab) loreBtn.insertAdjacentElement('afterend', state.fab);
-      updateFab();
-      return true;
+    const fab = state.fab || createManagerButton();
+    const target = findManagerButtonTarget();
+    if (target?.host?.isConnected) {
+      fab.classList.remove('rpcm-fallback');
+      fab.style.removeProperty('bottom');
+      const requestedBefore = target.before === fab ? fab.nextSibling : target.before;
+      const before = requestedBefore?.parentElement === target.host ? requestedBefore : null;
+      if (fab.parentElement !== target.host || fab.nextSibling !== before) target.host.insertBefore(fab, before);
+      fab.dataset.rpcmPlacement = target.kind;
+    } else {
+      mountManagerFallback(fab);
+      fab.dataset.rpcmPlacement = 'fixed-fallback';
     }
-    if (state.fab?.isConnected) state.fab.remove();
-
-    const fab = document.createElement('button');
-    // 사이트 버튼의 기본 높이/폰트 리듬을 최대한 따라가되, 프레임워크 상태 속성은 복제하지 않습니다.
-    if (anchor instanceof HTMLButtonElement) fab.className = anchor.className || '';
-    fab.type = 'button';
-    fab.id = 'rpcm-fab';
-    fab.innerHTML = `Manager<span class="rpcm-dot" aria-hidden="true"></span>`;
-    stripFrameworkAttrs(fab);
-    fab.onmousedown = (e) => { e.stopPropagation(); };
-    fab.onclick = (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      openModal().catch(err => notify(err.message, 'error'));
-    };
-
-    if (loreBtn) loreBtn.insertAdjacentElement('afterend', fab);
-    else memoryBtn.insertAdjacentElement('afterend', fab);
     state.fab = fab;
     updateFab();
     return true;
@@ -4321,12 +4572,23 @@ NO → 압축한다.
           queueRoomAutoSave(room);
         };
       }
+      const syncPendingContentEdit = debounce(async () => {
+        if (!room.pending) return;
+        try {
+          // 주입 중 본문이 바뀌면 현재 carrier의 복사본도 갱신합니다.
+          // 로그요약은 최신/관련/직접/고정 날짜 후보를 다시 계산합니다.
+          await syncEditedSlotIntoPending(room, slot, slot.id === 'logSummary' ? 'log-content-edit' : 'slot-content-edit');
+        } catch (e) {
+          notify(`현재 주입 내용 갱신 실패: ${e.message}`, 'error', 6500);
+        }
+      }, 700);
       ta.oninput = debounce(() => {
         slot.content = ta.value;
         count.textContent = `${formatCount(ta.value.length)}자`;
         refreshStatsOnly();
         refreshAutoTerms();
         queueRoomAutoSave(room);
+        syncPendingContentEdit();
       }, 100);
 
       const del = d.querySelector('.rpcm-delete-btn');
@@ -4706,22 +4968,27 @@ NO → 압축한다.
   // ---------------------------------------------------------------------------
 
   async function ensureCurrentRoom(apiChatId, force = false) {
+    const epoch = ++state.routeEpoch;
     if (!apiChatId) {
       state.currentChatId = null; state.currentApiChatId = null; state.currentRoom = null; updateFab(); return;
     }
     const roomKey = getRoomScopeKey(apiChatId);
     if (!force && state.currentChatId === roomKey && state.currentRoom) return;
     state.currentChatId = roomKey; state.currentApiChatId = apiChatId;
+    // 방 메타 API가 느려도 진입 버튼부터 즉시 표시합니다. 실제 모달 데이터는 아래 초기화 완료 후 엽니다.
+    ensureManagerButton(); updateFab();
     const room = await getRoom(roomKey, apiChatId);
     room.apiChatId = apiChatId;
     room.maxChars = APP.defaultMaxChars;
     const characterId = getCharacterIdFromPath();
     if (characterId && room.characterScopeId !== characterId) room.characterScopeId = characterId;
     const meta = await fetchRoomMeta(apiChatId);
+    if (epoch !== state.routeEpoch || getRoomScopeKey(getChatIdFromPath(), location.href) !== roomKey) return;
     if (!room.label && meta.label) room.label = meta.label;
     const ids = [...new Set([characterId, room.characterScopeId, ...(room.characterScopeIds || []), ...(meta.characterScopeIds || [])].filter(Boolean).map(String))];
     room.characterScopeIds = ids;
     await saveRoom(room);
+    if (epoch !== state.routeEpoch || getRoomScopeKey(getChatIdFromPath(), location.href) !== roomKey) return;
     state.currentRoom = room;
     ensureManagerButton(); updateFab(); sanitizeRenderedContextSoon();
   }
@@ -4735,7 +5002,9 @@ NO → 압축한다.
       await ensureCurrentRoom(apiChatId, true);
       if (state.modal) closeModal();
     }
-    ensureManagerButton(); sanitizeRenderedContextSoon();
+    // 버튼은 React 재렌더에 대비해 가볍게 재배치하지만, 전체 채팅 DOM 스캔은
+    // 관련 Mutation과 실제 라우트 변경 때만 수행합니다.
+    ensureManagerButton();
   }
 
   async function cleanOrphanMarkerInCurrentRoom() {
@@ -4781,11 +5050,12 @@ NO → 압축한다.
   }
 
   function startCompat() {
-    // 템플릿/OOC 퀵버튼 스크립트가 먼저 툴바를 구성하도록 충분히 기다린 뒤 시작합니다.
-    setTimeout(() => init(), 7000);
+    // 독립 폴백 버튼으로 먼저 열 수 있게 하고, 다른 확프/React 툴바가 준비되면
+    // routeTick이 충돌 없는 상단 위치로 자동 이동시킵니다.
+    setTimeout(() => init(), 250);
   }
 
-  // 화면 숨김 필터는 Manager UI보다 먼저 시작합니다. UI는 기존 호환성을 위해 7초 지연 유지.
+  // 화면 숨김 필터는 Manager UI보다 먼저 시작합니다.
   startRenderedContextObserver();
 
   if (document.readyState === 'loading') {
