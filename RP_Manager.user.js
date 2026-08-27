@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🪽위시 RP Manager
 // @namespace    local.rp.context.manager
-// @version      0.8.11
+// @version      0.8.13
 // @description  장기 RP용 현재상태·날짜로그·캐릭터 설정·OOC를 관리하고 필요한 컨텍스트를 자동 주입합니다.
 // @author       User
 // @license      All Rights Reserved
@@ -34,13 +34,13 @@
   // 버전별 키를 쓰면 구버전과 신버전이 동시에 설치됐을 때 둘 다 실행될 수 있습니다.
   // 모든 버전이 공유하는 고정 키로 중복 실행을 막습니다.
   if (window.__WISH_RP_MANAGER_LOADED__) return;
-  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.8.11', loadedAt: Date.now() };
+  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.8.13', loadedAt: Date.now() };
   // 같은 페이지에 남아 있는 v0.8.10 복사본이 뒤늦게 시작되는 경우도 차단합니다.
   window.__RP_MANAGER_0810_LOADED__ = true;
 
   const APP = {
     name: '🪽위시 RP Manager',
-    version: '0.8.11',
+    version: '0.8.13',
     dbName: 'RPContextManagerDB',
     dbVersion: 2,
     storeName: 'rooms',
@@ -4162,17 +4162,32 @@ NO → 압축한다.
     return fab;
   }
 
-  function mountManagerFallback(fab) {
+  // 기본은 기존 위치를 그대로 사용합니다. 다만 다른 확프/React 재렌더가
+  // 이미 꽂힌 Manager 버튼을 실제로 지워버린 것이 감지되면 그 페이지 세션에서는
+  // 안전한 body 직속 fixed 위치로 전환합니다. 새로고침/다른 채팅방 이동 시 다시 기존 위치부터 시도합니다.
+  let managerPlacementRoute = '';
+  let managerInlineMounted = false;
+  let managerFallbackLocked = false;
+
+  function currentManagerPlacementRoute() {
+    return `${location.pathname}${location.search}`;
+  }
+
+  function resetManagerPlacementGuardIfNeeded() {
+    const route = currentManagerPlacementRoute();
+    if (route === managerPlacementRoute) return;
+    managerPlacementRoute = route;
+    managerInlineMounted = false;
+    managerFallbackLocked = false;
+  }
+
+  function mountManagerFallback(fab, locked = false) {
     if (!document.body) return false;
     fab.classList.add('rpcm-fallback');
-    const lore = document.getElementById('lore-inj-entry-button');
-    let bottom = 76;
-    if (isElementVisible(lore) && getComputedStyle(lore).position === 'fixed') {
-      const r = lore.getBoundingClientRect();
-      bottom = Math.max(bottom, Math.ceil(window.innerHeight - r.top + 8));
-    }
-    fab.style.setProperty('bottom', `calc(${bottom}px + env(safe-area-inset-bottom, 0px))`, 'important');
+    // 폴백은 Lore 버튼을 따라다니지 않는 독립 위치입니다.
+    fab.style.setProperty('bottom', 'calc(82px + env(safe-area-inset-bottom, 0px))', 'important');
     if (fab.parentElement !== document.body) document.body.appendChild(fab);
+    fab.dataset.rpcmPlacement = locked ? 'fixed-conflict-fallback' : 'fixed-awaiting-target';
     return true;
   }
 
@@ -4187,23 +4202,45 @@ NO → 압축한다.
   }
 
   function ensureManagerButton() {
+    resetManagerPlacementGuardIfNeeded();
     if (!state.currentChatId) {
       if (state.fab) state.fab.hidden = true;
       return false;
     }
 
     const fab = state.fab || createManagerButton();
+
+    // 기존 위치에 정상적으로 한 번 올라간 버튼이 이후 DOM에서 사라지거나 부모와 함께 숨겨졌다면
+    // React/다른 확프가 해당 영역을 다시 그린 충돌로 봅니다. 같은 페이지에서는 다시 그 DOM 안으로
+    // 억지로 집어넣지 않고 독립 폴백으로 고정해 반복 삭제 루프를 막습니다.
+    const previousPlacement = String(fab.dataset.rpcmPlacement || '');
+    const wasInline = managerInlineMounted && previousPlacement && !previousPlacement.startsWith('fixed-');
+    if (wasInline && (!fab.isConnected || !isElementVisible(fab))) {
+      managerFallbackLocked = true;
+      managerInlineMounted = false;
+    }
+
+    if (managerFallbackLocked) {
+      mountManagerFallback(fab, true);
+      state.fab = fab;
+      updateFab();
+      return true;
+    }
+
     const target = findManagerButtonTarget();
     if (target?.host?.isConnected) {
+      // 평소에는 v0.8.11까지 쓰던 원래 위치/모양 그대로 둡니다.
       fab.classList.remove('rpcm-fallback');
       fab.style.removeProperty('bottom');
       const requestedBefore = target.before === fab ? fab.nextSibling : target.before;
       const before = requestedBefore?.parentElement === target.host ? requestedBefore : null;
       if (fab.parentElement !== target.host || fab.nextSibling !== before) target.host.insertBefore(fab, before);
       fab.dataset.rpcmPlacement = target.kind;
+      managerInlineMounted = true;
     } else {
-      mountManagerFallback(fab);
-      fab.dataset.rpcmPlacement = 'fixed-fallback';
+      // 화면 로딩 초기에 원래 위치가 아직 없을 때만 임시 폴백. 대상이 생기면 routeTick이 원래 위치로 복귀시킵니다.
+      managerInlineMounted = false;
+      mountManagerFallback(fab, false);
     }
     state.fab = fab;
     updateFab();
@@ -4211,8 +4248,7 @@ NO → 압축한다.
   }
 
   function createFab() {
-    // 상단 ‘기억 삽입 / Lore’ 액션바가 늦게 렌더링될 수 있으므로 여기서는 주입을 시도만 하고,
-    // routeTick에서도 계속 가볍게 확인해 사라졌을 때 자동 복구합니다.
+    // 기본 위치를 먼저 시도하고, 충돌로 실제 삭제되는 경우에만 독립 폴백으로 전환합니다.
     ensureManagerButton();
   }
 
@@ -5050,8 +5086,8 @@ NO → 압축한다.
   }
 
   function startCompat() {
-    // 독립 폴백 버튼으로 먼저 열 수 있게 하고, 다른 확프/React 툴바가 준비되면
-    // routeTick이 충돌 없는 상단 위치로 자동 이동시킵니다.
+    // 기본은 기존 상단 위치를 사용합니다. 해당 DOM이 아직 준비되지 않았으면 임시 폴백을 쓰고,
+    // 실제 충돌로 버튼이 제거되는 경우에만 그 페이지 세션에서 독립 폴백으로 전환합니다.
     setTimeout(() => init(), 250);
   }
 
