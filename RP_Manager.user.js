@@ -5148,9 +5148,26 @@ NO → 압축한다.
       .filter(el => el.id !== 'rpcm-fab' && !el.closest('#rpcm-overlay') && isElementVisible(el));
   }
 
-  function inlineAnchorTarget(anchor) {
+  function isComposerAreaElement(el) {
+    if (!el?.getBoundingClientRect || !isElementVisible(el)) return false;
+    const rect = el.getBoundingClientRect();
+    // 데스크톱 입력창 하단 툴바 안으로 Manager가 따라 들어가는 것을 막습니다.
+    // Lore/기억 삽입 버튼이 입력창 쪽으로 이동해도 Manager는 그 위치를 앵커로 사용하지 않습니다.
+    if (rect.top >= Math.max(0, window.innerHeight - 260)) return true;
+    let node = el.parentElement;
+    let depth = 0;
+    while (node && node !== document.body && depth < 6) {
+      if (node.querySelector?.('[contenteditable="true"],.ProseMirror')) return true;
+      node = node.parentElement;
+      depth++;
+    }
+    return false;
+  }
+
+  function inlineAnchorTarget(anchor, { rejectComposer = false } = {}) {
     if (!anchor?.parentElement || !isElementVisible(anchor)) return null;
     if (anchor.parentElement === document.body || getComputedStyle(anchor).position === 'fixed') return null;
+    if (rejectComposer && isComposerAreaElement(anchor)) return null;
     return { host: anchor.parentElement, before: anchor.nextSibling, kind: 'named-action' };
   }
 
@@ -5213,13 +5230,20 @@ NO → 압축한다.
   }
 
   function findManagerButtonTarget() {
+    // 데스크톱은 원래 상단/배너 계열 위치를 우선합니다.
+    // Lore 버튼이 하단 입력 툴바로 이동했을 때 그 옆으로 Manager가 끌려 내려가는 회귀를 방지합니다.
+    const stableTopTarget = findLegacyBannerTarget() || findModernHeaderTarget();
+    if (stableTopTarget) return stableTopTarget;
+
     const loreEntry = document.getElementById('lore-inj-entry-button') || document.querySelector('[data-lore-inj-entry="true"]');
-    return inlineAnchorTarget(loreEntry) ||
-      inlineAnchorTarget(findTopActionButton('Lore')) ||
-      inlineAnchorTarget(findTopActionButton('기억 삽입')) ||
-      findLegacyBannerTarget() ||
-      findModernHeaderTarget() ||
-      findComposerToolbarTarget();
+    const namedTopTarget = inlineAnchorTarget(loreEntry, { rejectComposer:true }) ||
+      inlineAnchorTarget(findTopActionButton('Lore'), { rejectComposer:true }) ||
+      inlineAnchorTarget(findTopActionButton('기억 삽입'), { rejectComposer:true });
+    if (namedTopTarget) return namedTopTarget;
+
+    // 입력창 툴바는 Crack 기본 UI를 밀거나 줄바꿈을 만들 수 있으므로
+    // 더 이상 데스크톱 Manager의 최종 삽입 위치로 사용하지 않습니다.
+    return null;
   }
 
   function createManagerButton() {
@@ -5462,7 +5486,8 @@ NO → 압축한다.
       fab.dataset.rpcmPlacement = target.kind;
       managerInlineMounted = true;
     } else {
-      // 화면 로딩 초기에 원래 위치가 아직 없을 때만 임시 폴백. 대상이 생기면 routeTick이 원래 위치로 복귀시킵니다.
+      // 화면 로딩 초기에 원래 상단 위치가 아직 없거나, 하단 입력툴바만 감지될 때는 임시 독립 폴백을 사용합니다.
+      // 이후 안정적인 상단/배너 대상이 생기면 routeTick이 원래 위치로 복귀시킵니다.
       managerInlineMounted = false;
       mountManagerFallback(fab, false);
     }
