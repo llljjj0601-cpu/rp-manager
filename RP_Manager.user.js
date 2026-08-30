@@ -5120,7 +5120,7 @@ NO → 압축한다.
       #rpcm-toast-wrap{position:fixed;z-index:9999;top:18px;left:50%;transform:translateX(-50%);display:flex;flex-direction:column;gap:7px;pointer-events:none}.rpcm-toast{background:#202020;color:#eee;border:1px solid #3c3c3c;border-radius:9px;padding:10px 14px;box-shadow:0 8px 26px rgba(0,0,0,.38);font-size:12px;opacity:0;transform:translateY(-8px);transition:.22s;max-width:min(580px,90vw)}.rpcm-toast.show{opacity:1;transform:translateY(0)}.rpcm-toast.success{border-color:#166534}.rpcm-toast.error{border-color:#991b1b}.rpcm-toast.warn{border-color:#92400e}
       #rpcm-modal.rpcm-density-compact .rpcm-body{padding-top:10px}#rpcm-modal.rpcm-density-compact .rpcm-slot summary{padding:8px 10px}#rpcm-modal.rpcm-density-compact .rpcm-edit{padding:0 10px 10px}#rpcm-modal.rpcm-density-compact .rpcm-section{margin-top:11px}#rpcm-modal.rpcm-density-compact .rpcm-section-desc{display:none}
       @keyframes rpcm-fade-in{from{opacity:0}to{opacity:1}}@media(prefers-reduced-motion:reduce){#rpcm-modal *{scroll-behavior:auto!important;transition:none!important;animation:none!important}}
-      @media(max-width:680px){#rpcm-overlay,#rpcm-lib-dialog-backdrop,#rpcm-log-dialog-backdrop,#rpcm-dup-dialog-backdrop,#rpcm-preview-backdrop,#rpcm-import-backdrop,#rpcm-raw-viewer{inset:auto 0 auto 0!important;top:var(--rpcm-vv-top,0px)!important;width:100vw!important;height:var(--rpcm-vvh,100vh)!important;max-height:var(--rpcm-vvh,100vh)!important;box-sizing:border-box!important}#rpcm-overlay{padding:0;pointer-events:none}#rpcm-modal-wrap{top:0;right:0;width:100vw;max-height:var(--rpcm-vvh,100vh);height:var(--rpcm-vvh,100vh);pointer-events:auto}#rpcm-modal{width:100vw;max-height:var(--rpcm-vvh,100vh);height:var(--rpcm-vvh,100vh);border-radius:0}.rpcm-body{padding:12px 12px calc(120px + env(safe-area-inset-bottom,0px));-webkit-overflow-scrolling:touch}.rpcm-header{padding:calc(12px + env(safe-area-inset-top,0px)) 12px 12px}.rpcm-quickbar{top:-12px}.rpcm-search-box{order:2;flex-basis:100%;min-width:0}.rpcm-summary-head{display:block}.rpcm-summary-side{justify-content:flex-start;margin-top:7px}.rpcm-breakdown{grid-template-columns:1fr}.rpcm-footer{padding:10px 12px calc(10px + env(safe-area-inset-bottom,0px));flex-wrap:wrap}.rpcm-footnote{width:100%;flex-basis:100%}.rpcm-btn{flex:1;min-height:42px}.rpcm-iconbtn{min-width:42px;min-height:42px;touch-action:manipulation}.rpcm-search-nav{width:36px;height:36px;touch-action:manipulation}.rpcm-editor-action.rpcm-focus-toggle{margin-left:0}.rpcm-preview-meta{display:none}.rpcm-preview-dialog,.rpcm-import-dialog{width:100vw;max-height:var(--rpcm-vvh,100vh);height:var(--rpcm-vvh,100vh);border-radius:0}.rpcm-lib-dialog,.rpcm-log-dialog,.rpcm-dup-dialog{max-height:calc(var(--rpcm-vvh,100vh) - 20px)}.rpcm-raw-card{height:calc(var(--rpcm-vvh,100vh) - 20px);max-height:calc(var(--rpcm-vvh,100vh) - 20px)}.rpcm-import-toolbar{flex-wrap:wrap}}
+      @media(max-width:680px){#rpcm-overlay,#rpcm-lib-dialog-backdrop,#rpcm-log-dialog-backdrop,#rpcm-dup-dialog-backdrop,#rpcm-preview-backdrop,#rpcm-import-backdrop,#rpcm-raw-viewer{inset:auto 0 auto 0!important;top:var(--rpcm-vv-top,0px)!important;width:100vw!important;height:var(--rpcm-vvh,100vh)!important;max-height:var(--rpcm-vvh,100vh)!important;box-sizing:border-box!important}#rpcm-overlay{padding:0;pointer-events:none}#rpcm-modal-wrap{position:absolute!important;top:12px!important;left:10px!important;right:10px!important;width:auto!important;max-height:calc(100% - 24px)!important;height:calc(100% - 24px)!important;pointer-events:auto}#rpcm-modal{width:100%!important;max-height:100%!important;height:100%!important;border-radius:16px!important;box-sizing:border-box!important}.rpcm-body{padding:12px 12px calc(120px + env(safe-area-inset-bottom,0px));-webkit-overflow-scrolling:touch}.rpcm-header{padding:12px}.rpcm-quickbar{top:-12px}.rpcm-search-box{order:2;flex-basis:100%;min-width:0}.rpcm-summary-head{display:block}.rpcm-summary-side{justify-content:flex-start;margin-top:7px}.rpcm-breakdown{grid-template-columns:1fr}.rpcm-footer{padding:10px 12px calc(10px + env(safe-area-inset-bottom,0px));flex-wrap:wrap}.rpcm-footnote{width:100%;flex-basis:100%}.rpcm-btn{flex:1;min-height:42px}.rpcm-iconbtn{min-width:42px;min-height:42px;touch-action:manipulation}.rpcm-search-nav{width:36px;height:36px;touch-action:manipulation}.rpcm-editor-action.rpcm-focus-toggle{margin-left:0}.rpcm-preview-meta{display:none}.rpcm-preview-dialog,.rpcm-import-dialog{width:100vw;max-height:var(--rpcm-vvh,100vh);height:var(--rpcm-vvh,100vh);border-radius:0}.rpcm-lib-dialog,.rpcm-log-dialog,.rpcm-dup-dialog{max-height:calc(var(--rpcm-vvh,100vh) - 20px)}.rpcm-raw-card{height:calc(var(--rpcm-vvh,100vh) - 20px);max-height:calc(var(--rpcm-vvh,100vh) - 20px)}.rpcm-import-toolbar{flex-wrap:wrap}}
     `);
   }
 
@@ -5242,6 +5242,11 @@ NO → 압축한다.
   let managerPlacementRoute = '';
   let managerInlineMounted = false;
   let managerFallbackLocked = false;
+  const MANAGER_MOBILE_HOST_ID = 'rpcm-mobile-button-host';
+  let managerMobileHost = null;
+  let managerMobileMount = null;
+  let managerMobileHostGuard = null;
+  let managerMobileRestoreQueued = false;
 
   function currentManagerPlacementRoute() {
     return `${location.pathname}${location.search}`;
@@ -5257,6 +5262,7 @@ NO → 압축한다.
 
   function mountManagerFallback(fab, locked = false) {
     if (!document.body) return false;
+    hideManagerMobileHost();
     fab.classList.add('rpcm-fallback');
     // 폴백은 Lore 버튼을 따라다니지 않는 독립 위치입니다.
     fab.style.setProperty('bottom', 'calc(82px + env(safe-area-inset-bottom, 0px))', 'important');
@@ -5265,13 +5271,132 @@ NO → 압축한다.
     return true;
   }
 
+  function mobileManagerButtonStyles() {
+    return `
+      :host{all:initial}
+      #mount{width:48px;height:48px;pointer-events:none}
+      button{all:unset;box-sizing:border-box!important;position:relative!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;width:48px!important;height:48px!important;min-width:48px!important;min-height:48px!important;border:1px solid #f472b6!important;border-radius:50%!important;background:rgba(36,24,31,.94)!important;color:#f9a8d4!important;box-shadow:0 6px 20px rgba(0,0,0,.42)!important;font-family:-apple-system,BlinkMacSystemFont,"Pretendard",sans-serif!important;cursor:pointer!important;user-select:none!important;touch-action:manipulation!important;-webkit-tap-highlight-color:transparent!important;pointer-events:auto!important}
+      button:focus-visible{outline:2px solid #f9a8d4!important;outline-offset:3px!important}
+      button[hidden]{display:none!important}
+      .rpcm-fab-label{display:none!important}
+      .rpcm-fab-wing{display:inline!important;font-size:22px!important;line-height:1!important}
+      .rpcm-dot{position:absolute!important;right:5px!important;top:5px!important;width:8px!important;height:8px!important;border:1px solid rgba(24,24,24,.9)!important;border-radius:50%!important;background:#f9a8d4!important}
+      button.rpcm-armed{background:rgba(85,36,61,.96)!important;border-color:#fb7185!important;color:#fff!important}
+      button.rpcm-armed .rpcm-dot{background:#22c55e!important;box-shadow:0 0 0 2px rgba(34,197,94,.16)!important}
+      @media(prefers-color-scheme:light){button{background:#fff1f7!important;color:#b84f7e!important;border-color:#df6298!important}}
+    `;
+  }
+
+  function setImportantStyle(el, name, value) {
+    try { el?.style?.setProperty(name, value, 'important'); } catch (_) {}
+  }
+
+  function mobileManagerBottomOffset() {
+    const viewportWidth = Math.max(1, window.innerWidth || document.documentElement.clientWidth || 1);
+    const viewportHeight = Math.max(1, window.visualViewport?.height || window.innerHeight || document.documentElement.clientHeight || 1);
+    const size = 48;
+    const right = 14;
+    const gap = 10;
+    let bottom = 88;
+    let obstacles = [];
+    try {
+      obstacles = visibleButtonLikes(document).filter(el => {
+        if (el === state.fab || el.closest?.(`#${MANAGER_MOBILE_HOST_ID}`)) return false;
+        const style = getComputedStyle(el);
+        if (style.position !== 'fixed' && style.position !== 'sticky') return false;
+        const rect = el.getBoundingClientRect();
+        return rect.width >= 24 && rect.height >= 24 && rect.width <= 180 && rect.height <= 180 &&
+          rect.right >= viewportWidth - 150 && rect.bottom >= viewportHeight - 360;
+      }).map(el => el.getBoundingClientRect());
+    } catch (_) {}
+
+    for (let pass = 0; pass < 8; pass++) {
+      const target = {
+        left: viewportWidth - right - size,
+        right: viewportWidth - right,
+        top: viewportHeight - bottom - size,
+        bottom: viewportHeight - bottom,
+      };
+      const overlap = obstacles.find(rect =>
+        target.left < rect.right + gap && target.right > rect.left - gap &&
+        target.top < rect.bottom + gap && target.bottom > rect.top - gap
+      );
+      if (!overlap) break;
+      bottom = Math.min(Math.max(bottom + size + gap, viewportHeight - overlap.top + gap), Math.max(88, viewportHeight - size - gap));
+    }
+    return Math.round(bottom);
+  }
+
+  function ensureManagerMobileHostGuard() {
+    if (managerMobileHostGuard || !document.documentElement) return;
+    managerMobileHostGuard = new MutationObserver(() => {
+      if (!isMobileManagerLayout() || !state.currentChatId || managerMobileHost?.isConnected) return;
+      if (managerMobileRestoreQueued) return;
+      managerMobileRestoreQueued = true;
+      queueMicrotask(() => {
+        managerMobileRestoreQueued = false;
+        if (!isMobileManagerLayout() || !state.currentChatId) return;
+        managerMobileHost = null;
+        managerMobileMount = null;
+        ensureManagerButton();
+      });
+    });
+    managerMobileHostGuard.observe(document.documentElement, { childList: true });
+  }
+
+  function ensureManagerMobileHost() {
+    if (!document.documentElement) return null;
+    if (!managerMobileHost?.isConnected || !managerMobileHost.shadowRoot) {
+      const existing = document.getElementById(MANAGER_MOBILE_HOST_ID);
+      if (existing?.shadowRoot) {
+        managerMobileHost = existing;
+        managerMobileMount = existing.shadowRoot.getElementById('mount');
+      } else {
+        const host = document.createElement('div');
+        host.id = MANAGER_MOBILE_HOST_ID;
+        host.setAttribute('aria-hidden', 'false');
+        const root = host.attachShadow({ mode: 'open' });
+        const style = document.createElement('style');
+        style.textContent = mobileManagerButtonStyles();
+        const mount = document.createElement('div');
+        mount.id = 'mount';
+        root.append(style, mount);
+        document.documentElement.appendChild(host);
+        managerMobileHost = host;
+        managerMobileMount = mount;
+      }
+    }
+
+    const bottom = mobileManagerBottomOffset();
+    setImportantStyle(managerMobileHost, 'position', 'fixed');
+    setImportantStyle(managerMobileHost, 'width', '48px');
+    setImportantStyle(managerMobileHost, 'height', '48px');
+    setImportantStyle(managerMobileHost, 'right', '14px');
+    setImportantStyle(managerMobileHost, 'bottom', `calc(${bottom}px + env(safe-area-inset-bottom, 0px))`);
+    setImportantStyle(managerMobileHost, 'z-index', '2147483646');
+    setImportantStyle(managerMobileHost, 'pointer-events', 'none');
+    setImportantStyle(managerMobileHost, 'contain', 'layout style paint');
+    setImportantStyle(managerMobileHost, 'visibility', 'visible');
+    setImportantStyle(managerMobileHost, 'opacity', '1');
+    setImportantStyle(managerMobileHost, 'display', 'block');
+    ensureManagerMobileHostGuard();
+    return managerMobileMount;
+  }
+
+  function hideManagerMobileHost() {
+    if (!managerMobileHost) return;
+    setImportantStyle(managerMobileHost, 'display', 'none');
+  }
+
   function mountManagerMobile(fab) {
-    if (!document.body) return false;
-    // 모바일에서는 Crack 상단 헤더 폭을 절대 차지하지 않고 독립 플로팅 버튼만 사용합니다.
+    const mount = ensureManagerMobileHost();
+    if (!mount) return false;
+    // 모바일 버튼은 페이지/다른 확프 CSS가 닿지 않는 Shadow DOM 안에 둡니다.
+    // 호스트는 body 밖 documentElement 직속이라 React가 body를 다시 그려도 유지됩니다.
     fab.classList.add('rpcm-fallback', 'rpcm-mobile-fab');
-    fab.style.setProperty('bottom', 'calc(88px + env(safe-area-inset-bottom, 0px))', 'important');
-    if (fab.parentElement !== document.body) document.body.appendChild(fab);
-    fab.dataset.rpcmPlacement = 'fixed-mobile';
+    fab.style.removeProperty('bottom');
+    if (fab.parentNode !== mount) mount.appendChild(fab);
+    fab.dataset.rpcmPlacement = 'shadow-mobile';
     managerInlineMounted = false;
     return true;
   }
@@ -5284,12 +5409,16 @@ NO → 압축한다.
     state.fab.classList.toggle('rpcm-armed', armed);
     state.fab.title = armed ? `🪽위시 RP Manager · 자동 유지 중 (${pendingProgressText(state.currentRoom.pending)})` : '🪽위시 RP Manager';
     state.fab.setAttribute('aria-label', state.fab.title);
+    if (managerMobileHost?.isConnected && isMobileManagerLayout()) {
+      setImportantStyle(managerMobileHost, 'visibility', visible ? 'visible' : 'hidden');
+    }
   }
 
   function ensureManagerButton() {
     resetManagerPlacementGuardIfNeeded();
     if (!state.currentChatId) {
       if (state.fab) state.fab.hidden = true;
+      hideManagerMobileHost();
       return false;
     }
 
@@ -5324,6 +5453,7 @@ NO → 압축한다.
     const target = findManagerButtonTarget();
     if (target?.host?.isConnected) {
       // 평소에는 v0.8.11까지 쓰던 원래 위치/모양 그대로 둡니다.
+      hideManagerMobileHost();
       fab.classList.remove('rpcm-fallback', 'rpcm-mobile-fab');
       fab.style.removeProperty('bottom');
       const requestedBefore = target.before === fab ? fab.nextSibling : target.before;
