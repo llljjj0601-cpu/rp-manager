@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🪽위시 RP Manager × 에리 로어 인젝터 호환 확프
 // @namespace    local.wish.rp.lore.compat
-// @version      0.1.1
+// @version      0.1.2
 // @description  에리의 크랙 로어 인젝터 Refiner가 🪽위시 RP Manager 숨김 블록을 화면에 빈 주석으로 렌더링하는 현상만 정리합니다.
 // @author       User
 // @license      All Rights Reserved
@@ -31,14 +31,20 @@
 
   const _w="undefined"!=typeof unsafeWindow?unsafeWindow:window;
   if(_w.__WishRpcmLoreCompat?.loaded)return;
-  _w.__WishRpcmLoreCompat={loaded:true,version:"0.1.1",loadedAt:Date.now()};
+  _w.__WishRpcmLoreCompat={loaded:true,version:"0.1.2",loadedAt:Date.now()};
 
   // 서버/React 저장값은 건드리지 않고 Refiner의 DOM refresh 인수와 화면 잔여물만 정리합니다.
   const RP_BLOCK_RE=/\\?<!--RP_CONTEXT_MANAGER_START[\s\S]*?RP_CONTEXT_MANAGER_END-->/gi;
   const RP_LEGACY_RE=/\\?<rp_context_manager\b[\s\S]*?<\/rp_context_manager>/gi;
   const RP_ENCODED_RE=/\\?&lt;!--RP_CONTEXT_MANAGER_START[\s\S]*?RP_CONTEXT_MANAGER_END--&gt;/gi;
-  const EMPTY_COMMENT_RE=/^\\?<!-{2,}\s*>$/;
+
+  // v0.1.2: Refiner/Markdown 렌더러가 숨김 블록을 지운 뒤 남기는 빈 HTML 주석을
+  // raw / HTML entity / 백슬래시 escape 형태까지 모두 화면에서만 제거합니다.
   const ZERO_WIDTH_RE=/[\u200B-\u200D\u2060\uFEFF]/g;
+  const EMPTY_COMMENT_RAW_RE=/\\?<!--[\s\u200B-\u200D\u2060\uFEFF]*-->/gi;
+  const EMPTY_COMMENT_ENCODED_RE=/\\?&lt;!--(?:\s|&nbsp;|&#160;|\u00a0|[\u200B-\u200D\u2060\uFEFF])*--&gt;/gi;
+  const EMPTY_COMMENT_EXACT_RE=/^(?:\\?<!--[\s\u200B-\u200D\u2060\uFEFF]*-->|\\?&lt;!--(?:\s|&nbsp;|&#160;|\u00a0|[\u200B-\u200D\u2060\uFEFF])*--&gt;)$/i;
+
   const pendingRoots=new Set;
   let observer=null;
   let cleanFrame=0;
@@ -47,39 +53,77 @@
     return String(value||"").replace(ZERO_WIDTH_RE,"").trim();
   }
 
+  function stripEmptyCommentResiduals(value){
+    return String(value==null?"":value)
+      .replace(EMPTY_COMMENT_RAW_RE,"")
+      .replace(EMPTY_COMMENT_ENCODED_RE,"");
+  }
+
   function stripRpcmForRender(value){
     let s=String(value==null?"":value);
     s=s.replace(RP_BLOCK_RE,"").replace(RP_LEGACY_RE,"").replace(RP_ENCODED_RE,"");
-    s=s.split("\n").filter(line=>!EMPTY_COMMENT_RE.test(normalizeResidual(line))).join("\n");
+    s=stripEmptyCommentResiduals(s);
     return s.replace(/\n{3,}/g,"\n\n").replace(/\s+$/,"");
   }
 
   function isProtectedLiteral(node){
-    return !!node?.parentElement?.closest("pre,code,kbd,samp,#rpcm-overlay,#rpcm-raw-viewer");
+    return !!node?.parentElement?.closest("pre,code,kbd,samp,#rpcm-overlay,#rpcm-raw-viewer,#rpcm-detached-backdrop");
   }
 
-  function cleanExactResiduals(root){
-    if(!root||!root.isConnected)return 0;
+  function markdownScopesForRoot(root){
+    if(!root||!root.isConnected)return[];
+    const scopes=[];
+    try{
+      if(root.matches?.(".wrtn-markdown"))scopes.push(root);
+      for(const md of root.querySelectorAll?.(".wrtn-markdown")||[])scopes.push(md);
+      // Refiner 마커가 붙은 메시지인데 Markdown 클래스가 바뀐 경우에도 그 메시지 안에서만 정리합니다.
+      if(!scopes.length&&root.matches?.("[data-lore-refiner-message-id]"))scopes.push(root);
+    }catch(_){}
+    return [...new Set(scopes)];
+  }
+
+  function cleanScope(scope){
+    if(!scope||!scope.isConnected)return 0;
     let changed=0;
     try{
-      const markdowns=root.matches?.(".wrtn-markdown")
-        ?[root]
-        :Array.from(root.querySelectorAll?.(".wrtn-markdown")||[]);
-      for(const md of markdowns){
-        const walker=document.createTreeWalker(md,NodeFilter.SHOW_TEXT);
-        const textNodes=[];
-        let node;
-        while((node=walker.nextNode())){
-          if(isProtectedLiteral(node))continue;
-          if(EMPTY_COMMENT_RE.test(normalizeResidual(node.nodeValue)))textNodes.push(node);
-        }
-        for(const textNode of textNodes){textNode.nodeValue="";changed++}
-        for(const el of Array.from(md.querySelectorAll("span,p"))){
-          if(el.children.length||el.closest("pre,code,kbd,samp"))continue;
-          if(EMPTY_COMMENT_RE.test(normalizeResidual(el.textContent))){el.remove();changed++}
+      // 실제 DOM Comment 노드(<!-- -->)로 남는 경우 제거합니다.
+      const commentWalker=document.createTreeWalker(scope,NodeFilter.SHOW_COMMENT);
+      const comments=[];
+      let comment;
+      while((comment=commentWalker.nextNode())){
+        if(normalizeResidual(comment.nodeValue)==="")comments.push(comment);
+      }
+      for(const node of comments){node.remove();changed++}
+
+      // 문자 그대로 <!----> / &lt;!----&gt;가 남는 경우, 노드 전체가 아니어도 해당 부분만 제거합니다.
+      const textWalker=document.createTreeWalker(scope,NodeFilter.SHOW_TEXT);
+      const textNodes=[];
+      let node;
+      while((node=textWalker.nextNode())){
+        if(isProtectedLiteral(node))continue;
+        const before=String(node.nodeValue||"");
+        const after=stripEmptyCommentResiduals(before);
+        if(after!==before)textNodes.push({node,after});
+      }
+      for(const item of textNodes){item.node.nodeValue=item.after;changed++}
+
+      // 빈 주석만 담고 있던 wrapper가 남아 줄 하나를 차지하는 경우 같이 정리합니다.
+      for(const el of Array.from(scope.querySelectorAll?.("span,p,div")||[])){
+        if(el===scope||el.children.length||el.closest("pre,code,kbd,samp,#rpcm-overlay,#rpcm-raw-viewer,#rpcm-detached-backdrop"))continue;
+        const text=normalizeResidual(el.textContent);
+        if(!text||EMPTY_COMMENT_EXACT_RE.test(text)){
+          // 일반적인 빈 layout div까지 지우지 않도록, 빈 주석 흔적이 있었던 요소만 대상으로 좁힙니다.
+          const html=String(el.innerHTML||"");
+          if(/<!-{2,}|&lt;!-{2,}/i.test(html)){el.remove();changed++}
         }
       }
     }catch(_){}
+    return changed;
+  }
+
+  function cleanExactResiduals(root){
+    let changed=0;
+    for(const scope of markdownScopesForRoot(root))changed+=cleanScope(scope);
     return changed;
   }
 
@@ -116,6 +160,7 @@
     setTimeout(run,0);
     setTimeout(run,120);
     setTimeout(run,500);
+    setTimeout(run,1200);
   }
 
   function wrapRefiner(){
@@ -148,6 +193,7 @@
         function wrappedRemember(messageId,text){
           const container=currentRemember.call(this,messageId,stripRpcmForRender(text));
           if(container)queueRoot(container);
+          queueMessageClean(messageId);
           return container;
         }
         Object.defineProperty(wrappedRemember,"__wishRpcmRememberWrapper",{value:true});
@@ -158,33 +204,49 @@
     return found;
   }
 
+  function rootFromMutationNode(node){
+    const el=node?.nodeType===1?node:node?.parentElement;
+    if(!el)return null;
+    return el.closest?.("[data-lore-refiner-message-id],.wrtn-markdown")||null;
+  }
+
   function startScopedObserver(){
     if(observer||!document.documentElement)return;
     observer=new MutationObserver(mutations=>{
       for(const mutation of mutations){
-        const target=mutation.target?.nodeType===1?mutation.target:mutation.target?.parentElement;
-        const marked=target?.closest?.("[data-lore-refiner-message-id]");
-        if(marked)queueRoot(marked);
+        const targetRoot=rootFromMutationNode(mutation.target);
+        if(targetRoot)queueRoot(targetRoot);
+
         for(const added of mutation.addedNodes||[]){
+          const own=rootFromMutationNode(added);
+          if(own)queueRoot(own);
           const el=added?.nodeType===1?added:added?.parentElement;
           if(!el)continue;
-          const own=el.closest?.("[data-lore-refiner-message-id]");
-          if(own)queueRoot(own);
-          for(const child of el.querySelectorAll?.("[data-lore-refiner-message-id]")||[])queueRoot(child);
+          for(const child of el.querySelectorAll?.("[data-lore-refiner-message-id],.wrtn-markdown")||[])queueRoot(child);
         }
       }
     });
     observer.observe(document.documentElement,{childList:true,subtree:true,characterData:true});
   }
 
+  function sweepExistingMarkdown(){
+    try{
+      for(const md of document.querySelectorAll?.(".wrtn-markdown")||[])queueRoot(md);
+      for(const marked of document.querySelectorAll?.("[data-lore-refiner-message-id]")||[])queueRoot(marked);
+    }catch(_){}
+  }
+
   function startDomPart(){
     startScopedObserver();
     wrapRefiner();
+    sweepExistingMarkdown();
+    setTimeout(sweepExistingMarkdown,300);
+    setTimeout(sweepExistingMarkdown,1200);
   }
 
   // Refiner가 늦게 로드되거나 SPA 이동 중 함수를 교체해도 새 함수를 다시 감쌉니다.
   wrapRefiner();
-  setInterval(wrapRefiner,2000);
+  setInterval(()=>{wrapRefiner();sweepExistingMarkdown()},2000);
   if(document.documentElement)startDomPart();
   else document.addEventListener("DOMContentLoaded",startDomPart,{once:true});
 }();
