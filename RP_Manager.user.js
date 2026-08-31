@@ -5309,31 +5309,14 @@ NO → 압축한다.
   }
 
   function positionManagerSafeFallback(fab) {
-    const anchor = managerFallbackAnchor();
-    // 독립 폴백은 전체 Manager 글자를 띄우지 않고 작은 🪽 버튼으로만 보여서
-    // Crack 검색창/상단 패널을 가리지 않게 합니다.
-    fab.classList.add('rpcm-compact-fallback');
-    fab.style.removeProperty('bottom');
+    // v0.9.0 안정화: Crack/Lore DOM의 위치를 따라다니지 않습니다.
+    // 다른 확프나 React 재렌더링으로 Lore/검색창 위치가 바뀌어도 Manager는
+    // 같은 화면 좌표에 고정하여 “버튼이 돌아다니는” 현상을 원천 차단합니다.
+    fab.classList.remove('rpcm-compact-fallback');
     fab.style.removeProperty('left');
-    fab.style.removeProperty('right');
     fab.style.removeProperty('top');
-
-    const size = 42;
-    const gap = 8;
-    if (anchor) {
-      const r = anchor.getBoundingClientRect();
-      let left = r.right + gap;
-      if (left + size > window.innerWidth - 8) left = r.left - size - gap;
-      const top = Math.max(8, Math.min(window.innerHeight - size - 8, r.top + (r.height - size) / 2));
-      if (left >= 8) {
-        fab.style.setProperty('left', `${Math.round(left)}px`, 'important');
-        fab.style.setProperty('top', `${Math.round(top)}px`, 'important');
-        return;
-      }
-    }
-    // 유효한 상단 앵커가 없으면 우측 상단 가장자리의 작은 아이콘으로 대기합니다.
-    fab.style.setProperty('right', '14px', 'important');
-    fab.style.setProperty('top', 'max(70px, calc(54px + env(safe-area-inset-top, 0px)))', 'important');
+    fab.style.setProperty('right', '18px', 'important');
+    fab.style.setProperty('bottom', '118px', 'important');
   }
 
   function mountManagerFallback(fab, locked = false) {
@@ -5526,23 +5509,12 @@ NO → 압축한다.
       return true;
     }
 
-    const target = findManagerButtonTarget();
-    if (target?.host?.isConnected) {
-      // 평소에는 v0.8.11까지 쓰던 원래 위치/모양 그대로 둡니다.
-      hideManagerMobileHost();
-      fab.classList.remove('rpcm-fallback', 'rpcm-mobile-fab', 'rpcm-compact-fallback');
-      fab.style.removeProperty('bottom');
-      const requestedBefore = target.before === fab ? fab.nextSibling : target.before;
-      const before = requestedBefore?.parentElement === target.host ? requestedBefore : null;
-      if (fab.parentElement !== target.host || fab.nextSibling !== before) target.host.insertBefore(fab, before);
-      fab.dataset.rpcmPlacement = target.kind;
-      managerInlineMounted = true;
-    } else {
-      // 화면 로딩 초기에 원래 상단 위치가 아직 없거나, 하단 입력툴바만 감지될 때는 임시 독립 폴백을 사용합니다.
-      // 이후 안정적인 상단/배너 대상이 생기면 routeTick이 원래 위치로 복귀시킵니다.
-      managerInlineMounted = false;
-      mountManagerFallback(fab, false);
-    }
+    // v0.9.0 안정화: 데스크톱도 Crack/Lore DOM에 직접 삽입하지 않습니다.
+    // 상단 버튼/검색창/팝오버가 수시로 재배치되는 현재 Crack UI에서는
+    // DOM 앵커를 추적할수록 Manager가 이동하는 회귀가 생기므로 독립 고정 위치를 사용합니다.
+    managerInlineMounted = false;
+    managerFallbackLocked = true;
+    mountManagerFallback(fab, true);
     state.fab = fab;
     updateFab();
     return true;
