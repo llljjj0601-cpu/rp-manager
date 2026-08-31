@@ -944,7 +944,7 @@ AI가 과거 출력에서 실수한 내용, 사용자에게 정정된 내용, �
 - 날짜별 로그 끝에 “최신 T120은...”, “현재 최신 장면은...”, “이 날짜의 마지막 장면은...” 같은 메타 장면정리 문장을 붙이지 않는다.
 - 최신 턴·장소·WITH·진행 중 행동은 현재상태 문서에서 관리한다.
 
-연도가 직접 확정되어 있으면 [YYYY년 M월 D일-...] 형식을 우선한다.
+연도가 직접 확정되어 있으면 [714년 6월 15일-...]·[2026년 8월 31일-...]처럼 실제 연도 자릿수를 그대로 사용한다.
 특히 여러 해가 흐르는 장기 RP에서는 같은 월·일의 중복을 피하기 위해 연도가 확인되는 모든 날짜 블록에 연도를 반드시 포함한다.
 연도가 확정되지 않았다면 임의로 만들지 말고 [M월 D일-...]을 유지한다.
 날짜 자체가 정사상 미상인 사건은 [날짜 미상-사건명] 형식으로 유지할 수 있으며 임의 날짜를 창작하지 않는다.
@@ -1952,7 +1952,7 @@ NO → 압축한다.
     // 권장: [2025년 3월 15일-사건명] / 호환: [3월 15일-사건명]
     // 명시적 날짜 미상도 하나의 독립 로그 블록으로 보존합니다.
     // 지원 예: [날짜 미상-사건명] [날짜미정-사건명] [날짜 불명] [날짜 없음-사건명]
-    const re = /^[ \t]*\[((?:(\d{4})년[ \t]*)?(\d{1,2})월[ \t]*(\d{1,2})일|날짜[ \t]*(미상|미정|불명|없음))(?:[ \t]*[-–—|｜][ \t]*([^\]]+))?\][ \t]*$/gm;
+    const re = /^[ \t]*\[((?:(\d{1,6})년[ \t]*)?(\d{1,2})월[ \t]*(\d{1,2})일|날짜[ \t]*(미상|미정|불명|없음))(?:[ \t]*[-–—|｜][ \t]*([^\]]+))?\][ \t]*$/gm;
     const hits = [];
     let m;
     while ((m = re.exec(src))) {
@@ -2629,11 +2629,11 @@ NO → 압축한다.
           <div class="rpcm-log-groupbar">
             <button type="button" class="rpcm-lib-small" id="rpcm-date-select-all">전체 선택</button>
             <button type="button" class="rpcm-lib-small" id="rpcm-date-select-none">전체 해제</button>
-            <label>선택 연도 <input id="rpcm-date-bulk-year" type="number" min="1000" max="9999" step="1" placeholder="2025" style="width:82px"></label>
+            <label>선택 연도 <input id="rpcm-date-bulk-year" type="number" min="1" max="999999" step="1" placeholder="714 / 2025" style="width:96px"></label>
             <button type="button" class="rpcm-lib-small" id="rpcm-date-apply-year">선택에 연도 적용</button>
             <button type="button" class="rpcm-lib-small" id="rpcm-date-clear-year">선택 연도 비우기</button>
           </div>
-          ${dated.map(b => `<div class="rpcm-log-row rpcm-date-row" data-log-index="${b.index}"><div class="rpcm-log-row-head"><label style="display:flex;align-items:center;gap:7px;flex:1;min-width:0"><input type="checkbox" class="rpcm-date-select"><strong>${esc(b.titleText)}</strong></label><div style="display:flex;align-items:center;gap:4px;flex-wrap:nowrap"><input class="rpcm-date-year" type="number" min="1000" max="9999" step="1" value="${b.year || ''}" placeholder="연도" style="width:76px" title="비우면 연도 없는 날짜로 변경"><span style="font-size:10px;color:#777">년</span><input class="rpcm-date-month" type="number" min="1" max="12" step="1" value="${b.month}" style="width:48px"><span style="font-size:10px;color:#777">월</span><input class="rpcm-date-day" type="number" min="1" max="31" step="1" value="${b.day}" style="width:48px"><span style="font-size:10px;color:#777">일</span></div></div><div class="rpcm-log-row-reason">원문: ${esc(b.heading)}</div></div>`).join('')}
+          ${dated.map(b => `<div class="rpcm-log-row rpcm-date-row" data-log-index="${b.index}"><div class="rpcm-log-row-head"><label style="display:flex;align-items:center;gap:7px;flex:1;min-width:0"><input type="checkbox" class="rpcm-date-select"><strong>${esc(b.titleText)}</strong></label><div style="display:flex;align-items:center;gap:4px;flex-wrap:nowrap"><input class="rpcm-date-year" type="number" min="1" max="999999" step="1" value="${b.year || ''}" placeholder="연도" style="width:86px" title="비우면 연도 없는 날짜로 변경"><span style="font-size:10px;color:#777">년</span><input class="rpcm-date-month" type="number" min="1" max="12" step="1" value="${b.month}" style="width:48px"><span style="font-size:10px;color:#777">월</span><input class="rpcm-date-day" type="number" min="1" max="31" step="1" value="${b.day}" style="width:48px"><span style="font-size:10px;color:#777">일</span></div></div><div class="rpcm-log-row-reason">원문: ${esc(b.heading)}</div></div>`).join('')}
         </details>` : '';
 
       const unknownHtml = unknown.length ? `
@@ -2664,7 +2664,7 @@ NO → 압축한다.
       if (noneBtn) noneBtn.onclick = () => backdrop.querySelectorAll('.rpcm-date-select').forEach(cb => { cb.checked = false; });
       if (applyYearBtn) applyYearBtn.onclick = () => {
         const year = Number(backdrop.querySelector('#rpcm-date-bulk-year')?.value || 0);
-        if (!Number.isInteger(year) || year < 1000 || year > 9999) { notify('적용할 연도를 4자리 숫자로 입력해 주세요.', 'warn', 3800); return; }
+        if (!Number.isInteger(year) || year < 1 || year > 999999) { notify('적용할 연도를 1~6자리 숫자로 입력해 주세요.', 'warn', 3800); return; }
         const selected = [...backdrop.querySelectorAll('.rpcm-date-row')].filter(row => row.querySelector('.rpcm-date-select')?.checked);
         if (!selected.length) { notify('연도를 적용할 날짜를 먼저 선택해 주세요.', 'warn', 3800); return; }
         selected.forEach(row => { const input = row.querySelector('.rpcm-date-year'); if (input) input.value = String(year); });
@@ -2690,7 +2690,7 @@ NO → 압축한다.
           const year = rawYear ? Number(rawYear) : null;
           const month = Number(rawMonth);
           const day = Number(rawDay);
-          if (year != null && (!Number.isInteger(year) || year < 1000 || year > 9999)) { invalidMessage = `${block.titleText}: 연도를 4자리 숫자로 입력해 주세요.`; return; }
+          if (year != null && (!Number.isInteger(year) || year < 1 || year > 999999)) { invalidMessage = `${block.titleText}: 연도를 1~6자리 숫자로 입력해 주세요.`; return; }
           if (!Number.isInteger(month) || month < 1 || month > 12) { invalidMessage = `${block.titleText}: 월은 1~12 사이여야 합니다.`; return; }
           const checkYear = year || 2000;
           const maxDay = new Date(checkYear, month, 0).getDate();
@@ -2740,7 +2740,7 @@ NO → 압축한다.
     return new Promise(resolve => {
       const log = (room.slots || []).find(s => s.id === 'logSummary');
       const blocks = parseDatedLogBlocks(log?.content || '');
-      if (!blocks.length) { notify('로그요약에서 날짜 블록을 찾지 못했습니다. [YYYY년 M월 D일-사건명] 형식을 권장합니다.', 'warn', 6500); resolve(false); return; }
+      if (!blocks.length) { notify('로그요약에서 날짜 블록을 찾지 못했습니다. [714년 6월 15일-사건명] 또는 [2026년 8월 31일-사건명] 형식을 권장합니다.', 'warn', 6500); resolve(false); return; }
       const old = document.getElementById('rpcm-log-dialog-backdrop');
       if (old) old.remove();
       const backdrop = document.createElement('div');
@@ -3544,7 +3544,7 @@ NO → 압축한다.
     const warnings = [];
     const log = (room.slots || []).find(x => x.id === 'logSummary');
     const blocks = parseDatedLogBlocks(log?.content || '');
-    if (String(log?.content || '').trim() && !blocks.length && String(log.content || '').length > APP.legacyWholeLogFallbackMax) warnings.push('로그요약이 길지만 날짜 블록을 감지하지 못해 통짜 주입을 차단함. [YYYY년 M월 D일-사건명] 형식을 사용해 주세요.');
+    if (String(log?.content || '').trim() && !blocks.length && String(log.content || '').length > APP.legacyWholeLogFallbackMax) warnings.push('로그요약이 길지만 날짜 블록을 감지하지 못해 통짜 주입을 차단함. [714년 6월 15일-사건명]처럼 실제 연도 자릿수를 사용해 주세요.');
     if (blocks.length) {
       const noYearCount = blocks.filter(b => !b.isUnknown && b.year == null).length;
       const unknownCount = blocks.filter(b => b.isUnknown).length;
