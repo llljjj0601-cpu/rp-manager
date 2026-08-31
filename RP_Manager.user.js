@@ -4407,40 +4407,6 @@ NO → 압축한다.
     return next.length;
   }
 
-  async function rebuildPendingFromCurrentSelection(room, reason = 'manual-selection-resync') {
-    if (!room?.pending) return { active: 0, cleared: false };
-    const p = room.pending;
-    const previousItems = clonePendingItems(p.items);
-    const previousActive = activePendingItems(p);
-    const previousBySlot = new Map(previousActive
-      .filter(i => i.sourceSlotId !== 'logSummary' && i.group !== 'log-auto' && i.slotId !== 'logSummary')
-      .map(i => [String(i.slotId || ''), i]));
-    const previousLogs = previousActive.filter(i => i.sourceSlotId === 'logSummary' || i.group === 'log-auto' || i.slotId === 'logSummary');
-
-    const nextNonLogs = selectedSlots(room)
-      .filter(slot => slot.id !== 'logSummary')
-      .map(slot => {
-        const next = slotToPendingItem(slot);
-        const previous = previousBySlot.get(String(slot.id || ''));
-        if (previous) {
-          next.usedTurns = Number(previous.usedTurns || 0);
-          next.totalTurns = normalizeRetentionTurns(slot.retentionTurns);
-          if (next.totalTurns !== 0 && next.usedTurns >= next.totalTurns) next.usedTurns = 0;
-        }
-        return next;
-      });
-
-    p.items = [...nextNonLogs, ...previousLogs];
-    try {
-      replacePendingLogItems(room);
-      return await syncPendingCarrier(room, reason);
-    } catch (error) {
-      if (room.pending) room.pending.items = previousItems;
-      await saveRoom(room);
-      throw error;
-    }
-  }
-
   async function rebuildPendingLogItems(room, reason = 'log-mode-change') {
     if (!room.pending) return;
     replacePendingLogItems(room);
@@ -4759,22 +4725,9 @@ NO → 압축한다.
 
     // AI 응답 1회마다 기존 활성 항목을 독립적으로 1턴 차감합니다.
     const items = Array.isArray(p.items) ? p.items : [];
-    const expiredSlotIds = new Set();
     for (const item of items) {
       const total = Number(item.totalTurns || 0);
-      const used = Number(item.usedTurns || 0);
-      if (total !== 0 && used < total) {
-        item.usedTurns = used + 1;
-        const isLogItem = item.sourceSlotId === 'logSummary' || item.group === 'log-auto' || item.slotId === 'logSummary';
-        if (!isLogItem && item.usedTurns >= total) expiredSlotIds.add(String(item.slotId || ''));
-      }
-    }
-    // 유지턴이 끝난 항목은 체크도 함께 해제해, 체크는 켜져 있는데 실제 carrier에는 없는
-    // 혼동 상태를 만들지 않습니다. 자동감지 캐릭터는 다음 실제 등장 때 다시 켜질 수 있습니다.
-    for (const slotId of expiredSlotIds) {
-      if (activePendingItems(p).some(item => String(item.slotId || '') === slotId)) continue;
-      const slot = (room.slots || []).find(item => String(item.id || '') === slotId);
-      if (slot) slot.enabled = false;
+      if (total !== 0 && Number(item.usedTurns || 0) < total) item.usedTurns = Number(item.usedTurns || 0) + 1;
     }
 
     // v0.8.9에서 이어진 pending은 최근로그가 저장소 뒤쪽 순서로 고정되어 있을 수 있습니다.
@@ -5129,11 +5082,7 @@ NO → 압축한다.
       #rpcm-fab.rpcm-armed .rpcm-dot{background:#22c55e!important;box-shadow:0 0 0 2px rgba(34,197,94,.16)!important}
       #rpcm-fab[hidden]{display:none!important}
       #rpcm-fab .rpcm-fab-wing{display:none!important}
-      #rpcm-fab.rpcm-fallback{position:fixed!important;z-index:2147483645!important;height:34px!important;margin:0!important;border-radius:9px!important;box-shadow:0 4px 14px rgba(0,0,0,.35)!important;backdrop-filter:blur(8px)!important}
-      #rpcm-fab.rpcm-compact-fallback{width:42px!important;min-width:42px!important;padding:0!important}
-      #rpcm-fab.rpcm-compact-fallback .rpcm-fab-label{display:none!important}
-      #rpcm-fab.rpcm-compact-fallback .rpcm-fab-wing{display:inline!important;font-size:18px!important;line-height:1!important}
-      #rpcm-fab.rpcm-modal-open{box-shadow:0 0 0 2px rgba(255,102,153,.2),0 4px 14px rgba(0,0,0,.35)!important}
+      #rpcm-fab.rpcm-fallback{position:fixed!important;z-index:2147483645!important;height:34px!important;margin:0!important;border-radius:999px!important;box-shadow:0 4px 14px rgba(0,0,0,.35)!important;backdrop-filter:blur(8px)!important}#rpcm-fab.rpcm-compact-fallback{width:42px!important;min-width:42px!important;padding:0!important}#rpcm-fab.rpcm-compact-fallback .rpcm-fab-label{display:none!important}#rpcm-fab.rpcm-compact-fallback .rpcm-fab-wing{display:inline!important;font-size:18px!important;line-height:1!important}
       #rpcm-fab.rpcm-mobile-fab{width:48px!important;min-width:48px!important;height:48px!important;min-height:48px!important;padding:0!important;border-radius:50%!important;right:14px!important;touch-action:manipulation!important;-webkit-tap-highlight-color:transparent!important;box-shadow:0 6px 20px rgba(0,0,0,.42)!important}
       #rpcm-fab.rpcm-mobile-fab .rpcm-fab-label{display:none!important}
       #rpcm-fab.rpcm-mobile-fab .rpcm-fab-wing{display:inline!important;font-size:22px!important;line-height:1!important}
@@ -5152,7 +5101,7 @@ NO → 압축한다.
       .rpcm-slot{border:1px solid #333;background:#1f1f1f;border-radius:11px;margin-bottom:9px;overflow:hidden}
       .rpcm-slot summary{list-style:none;display:flex;align-items:center;gap:10px;padding:11px 12px;cursor:pointer;user-select:none}.rpcm-slot summary::-webkit-details-marker{display:none}.rpcm-slot summary:hover{background:#252525}
       #rpcm-modal input[type=checkbox],#rpcm-lib-dialog-backdrop input[type=checkbox],#rpcm-log-dialog-backdrop input[type=checkbox],#rpcm-dup-dialog-backdrop input[type=radio]{accent-color:#df6298}
-      .rpcm-enable{width:18px;height:18px;accent-color:#df6298}.rpcm-slot-name{font-size:13px;font-weight:750;flex:1}.rpcm-slot-character .rpcm-slot-name{flex:0 1 auto}.rpcm-slot-character .rpcm-slot-count{margin-left:auto}.rpcm-character-retention{display:inline-flex;align-items:center;gap:5px;color:#888;font-size:10px;white-space:nowrap;cursor:default}.rpcm-character-retention select{height:28px;border:1px solid #444;border-radius:7px;background:#232323;color:#eee;padding:0 7px;font:10px/1 inherit;cursor:pointer}.rpcm-slot-count{font-size:11px;color:#888}.rpcm-chevron{font-size:12px;color:#666}.rpcm-slot[open] .rpcm-chevron{transform:rotate(90deg)}
+      .rpcm-enable{width:18px;height:18px;accent-color:#df6298}.rpcm-slot-name{font-size:13px;font-weight:750;flex:1;min-width:0}.rpcm-slot.rpcm-slot-inline-retention .rpcm-slot-name{flex:0 1 auto}.rpcm-slot.rpcm-slot-inline-retention .rpcm-slot-count{margin-left:auto}.rpcm-inline-retention{display:inline-flex;align-items:center;gap:5px;color:#888;font-size:10px;white-space:nowrap;cursor:default}.rpcm-inline-retention select{height:28px;border:1px solid #444;border-radius:7px;background:#232323;color:#eee;padding:0 7px;font:10px/1 inherit;cursor:pointer}.rpcm-slot-count{font-size:11px;color:#888}.rpcm-chevron{font-size:12px;color:#666}.rpcm-slot[open] .rpcm-chevron{transform:rotate(90deg)}
       .rpcm-edit{padding:0 12px 12px}.rpcm-title-input{width:100%;box-sizing:border-box;background:#111;color:#eee;border:1px solid #3b3b3b;border-radius:8px;padding:8px 10px;font-size:12px;margin-bottom:8px}.rpcm-textarea{width:100%;box-sizing:border-box;min-height:160px;max-height:1200px;resize:vertical;background:#101010;color:#e6e6e6;border:1px solid #3b3b3b;border-radius:8px;padding:11px;font-size:13px;line-height:1.55;outline:none}.rpcm-textarea:focus,.rpcm-title-input:focus{border-color:#df6298;box-shadow:0 0 0 2px rgba(223,98,152,.16)}.rpcm-slot[data-slot-id="currentState"] .rpcm-textarea:focus,.rpcm-slot[data-slot-id="logSummary"] .rpcm-textarea:focus{overscroll-behavior:contain}.rpcm-slot.is-search-hit{border-color:#7b5a9b;box-shadow:0 0 0 2px rgba(155,125,227,.14)}
       .rpcm-editor-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:0 0 8px}.rpcm-editor-action{border:1px solid #383838;background:#222;color:#999;border-radius:7px;padding:5px 8px;font-size:10px;cursor:pointer}.rpcm-editor-action:hover{color:#eee;background:#2d2d2d}.rpcm-editor-action:disabled{opacity:.38;cursor:default}.rpcm-editor-action.rpcm-focus-toggle{margin-left:auto;color:#d7a3bd;border-color:#5d3149}.rpcm-editor-hint{color:#666;font-size:10px}
       #rpcm-detached-backdrop{position:fixed;inset:0;z-index:2147483646;background:rgba(0,0,0,.64);display:flex;align-items:center;justify-content:center;padding:3vh 3vw;box-sizing:border-box;font-family:-apple-system,BlinkMacSystemFont,"Pretendard",sans-serif}
@@ -5186,7 +5135,7 @@ NO → 압축한다.
     const wanted = String(label || '').trim().toLowerCase();
     const candidates = [...document.querySelectorAll('button, [role="button"]')];
     return candidates.find(el => {
-      if (el.id === 'rpcm-fab' || el.closest('#rpcm-overlay') || !isElementVisible(el)) return false;
+      if (el.id === 'rpcm-fab' || el.closest('#rpcm-overlay')) return false;
       const t = String(el.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
       return t === wanted;
     }) || null;
@@ -5212,13 +5161,12 @@ NO → 압축한다.
     // 데스크톱 입력창 하단 툴바 안으로 Manager가 따라 들어가는 것을 막습니다.
     // Lore/기억 삽입 버튼이 입력창 쪽으로 이동해도 Manager는 그 위치를 앵커로 사용하지 않습니다.
     if (rect.top >= Math.max(0, window.innerHeight - 260)) return true;
-    // 큰 공통 레이아웃 조상 안에 입력창이 있다는 이유만으로 상단 버튼까지
-    // composer로 오인하지 않습니다. 실제 입력창과 좌표가 가까운 경우만 제외합니다.
-    for (const editor of [...document.querySelectorAll('[contenteditable="true"],.ProseMirror')].filter(isElementVisible)) {
-      const er = editor.getBoundingClientRect();
-      const horizontalOverlap = rect.right >= er.left - 80 && rect.left <= er.right + 80;
-      const verticalNear = rect.bottom >= er.top - 90 && rect.top <= er.bottom + 150;
-      if (horizontalOverlap && verticalNear) return true;
+    let node = el.parentElement;
+    let depth = 0;
+    while (node && node !== document.body && depth < 6) {
+      if (node.querySelector?.('[contenteditable="true"],.ProseMirror')) return true;
+      node = node.parentElement;
+      depth++;
     }
     return false;
   }
@@ -5227,6 +5175,8 @@ NO → 압축한다.
     if (!anchor?.parentElement || !isElementVisible(anchor)) return null;
     if (anchor.parentElement === document.body || getComputedStyle(anchor).position === 'fixed') return null;
     if (rejectComposer && isComposerAreaElement(anchor)) return null;
+    // 검색 드롭다운/팝오버/메뉴 안의 임시 버튼을 상단 Manager 앵커로 오인하지 않습니다.
+    if (anchor.closest?.('[role="dialog"],[aria-modal="true"],[role="menu"],[role="listbox"],[data-radix-popper-content-wrapper]')) return null;
     return { host: anchor.parentElement, before: anchor.nextSibling, kind: 'named-action' };
   }
 
@@ -5239,72 +5189,31 @@ NO → 압축한다.
       if (!divs?.length) return null;
       const list = divs[0].children?.[0]?.children;
       const top = list?.[list.length - 1];
-      return top && isElementVisible(top) && !isComposerAreaElement(top)
-        ? { host: top, before: top.childNodes[0] || null, kind: 'legacy-banner' }
-        : null;
+      return top ? { host: top, before: top.childNodes[0] || null, kind: 'legacy-banner' } : null;
     } catch (_) { return null; }
   }
 
   function findModernHeaderTarget() {
-    const minLeft = Math.max(120, Math.floor(window.innerWidth * .18));
+    const minLeft = Math.max(260, Math.floor(window.innerWidth * .35));
     const controls = visibleButtonLikes(document)
       .filter(el => {
         const r = el.getBoundingClientRect();
-        return r.top >= 0 && r.top <= 190 && r.left >= minLeft && r.right <= window.innerWidth + 8 &&
-          r.width <= 300 && r.height >= 22 && r.height <= 80 && !isComposerAreaElement(el);
+        return r.top >= 40 && r.top <= 135 && r.left >= minLeft && r.right <= window.innerWidth + 8;
       })
       .sort((a, b) => b.getBoundingClientRect().right - a.getBoundingClientRect().right);
     for (const control of controls) {
       let node = control.parentElement;
       while (node && node !== document.body) {
         const r = node.getBoundingClientRect();
-        if (r.top >= 0 && r.top <= 190 && r.height >= 26 && r.height <= 110 &&
-            r.width > 28 && r.width <= Math.min(900, window.innerWidth * .82) && r.right >= window.innerWidth * .35 &&
-            !isComposerAreaElement(node)) {
+        if (r.top >= 32 && r.top <= 140 && r.height >= 28 && r.height <= 76 &&
+            r.width > 28 && r.width <= Math.min(720, window.innerWidth * .62) && r.right >= window.innerWidth * .52) {
           const children = visibleButtonLikes(node)
-            .filter(child => {
-              const cr = child.getBoundingClientRect();
-              return cr.top >= 0 && cr.top <= 190 && !isComposerAreaElement(child);
-            })
+            .filter(child => child.getBoundingClientRect().top >= 32 && child.getBoundingClientRect().top <= 140)
             .sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left);
           if (children.length) return { host: node, before: children[0], kind: 'modern-header' };
         }
         node = node.parentElement;
       }
-    }
-    return null;
-  }
-
-  function findSemanticHeaderTarget() {
-    const minLeft = Math.max(120, Math.floor(window.innerWidth * .18));
-    const headers = Array.from(document.querySelectorAll('header,[role="banner"]'))
-      .filter(header => {
-        if (!isElementVisible(header) || header.closest('#rpcm-overlay,#rpcm-floating-host')) return false;
-        const r = header.getBoundingClientRect();
-        return r.top < 190 && r.bottom > 20 && r.height >= 28 && r.height <= 190 &&
-          r.width >= Math.min(260, window.innerWidth * .55);
-      })
-      .sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top);
-
-    for (const header of headers) {
-      const controls = visibleButtonLikes(header)
-        .filter(el => {
-          const r = el.getBoundingClientRect();
-          return r.top >= 0 && r.top <= 190 && r.left >= minLeft && r.width <= 300 && r.height >= 22 && r.height <= 80 &&
-            !isComposerAreaElement(el);
-        })
-        .sort((a, b) => b.getBoundingClientRect().right - a.getBoundingClientRect().right);
-      if (!controls.length) continue;
-
-      const first = controls[0];
-      let host = first.parentElement;
-      while (host && host.parentElement && host.parentElement !== header) {
-        const parent = host.parentElement;
-        const r = parent.getBoundingClientRect();
-        if (r.height > 110 || r.top < 0 || r.bottom > 200 || isComposerAreaElement(parent)) break;
-        host = parent;
-      }
-      if (host && host !== document.body) return { host, before: first, kind: 'semantic-header' };
     }
     return null;
   }
@@ -5332,17 +5241,14 @@ NO → 압축한다.
   function findManagerButtonTarget() {
     // 데스크톱은 원래 상단/배너 계열 위치를 우선합니다.
     // Lore 버튼이 하단 입력 툴바로 이동했을 때 그 옆으로 Manager가 끌려 내려가는 회귀를 방지합니다.
-    const legacyTopTarget = findLegacyBannerTarget();
-    if (legacyTopTarget) return legacyTopTarget;
+    const stableTopTarget = findLegacyBannerTarget() || findModernHeaderTarget();
+    if (stableTopTarget) return stableTopTarget;
 
     const loreEntry = document.getElementById('lore-inj-entry-button') || document.querySelector('[data-lore-inj-entry="true"]');
-    const namedTopTarget = inlineAnchorTarget(findTopActionButton('기억 삽입'), { rejectComposer:true }) ||
-      inlineAnchorTarget(loreEntry, { rejectComposer:true }) ||
-      inlineAnchorTarget(findTopActionButton('Lore'), { rejectComposer:true });
+    const namedTopTarget = inlineAnchorTarget(loreEntry, { rejectComposer:true }) ||
+      inlineAnchorTarget(findTopActionButton('Lore'), { rejectComposer:true }) ||
+      inlineAnchorTarget(findTopActionButton('기억 삽입'), { rejectComposer:true });
     if (namedTopTarget) return namedTopTarget;
-
-    const stableTopTarget = findSemanticHeaderTarget() || findModernHeaderTarget();
-    if (stableTopTarget) return stableTopTarget;
 
     // 입력창 툴바는 Crack 기본 UI를 밀거나 줄바꿈을 만들 수 있으므로
     // 더 이상 데스크톱 Manager의 최종 삽입 위치로 사용하지 않습니다.
@@ -5363,8 +5269,9 @@ NO → 압축한다.
     return fab;
   }
 
-  // 기본은 기존 상단 위치를 사용합니다. React 재렌더 중 상단을 잠시 찾지 못하면
-  // 우측 상단의 독립 위치로 피했다가 안정적인 상단 컨테이너가 돌아오는 즉시 복귀합니다.
+  // 기본은 기존 위치를 그대로 사용합니다. 다만 다른 확프/React 재렌더가
+  // 이미 꽂힌 Manager 버튼을 실제로 지워버린 것이 감지되면 그 페이지 세션에서는
+  // 안전한 body 직속 fixed 위치로 전환합니다. 새로고침/다른 채팅방 이동 시 다시 기존 위치부터 시도합니다.
   let managerPlacementRoute = '';
   let managerInlineMounted = false;
   let managerFallbackLocked = false;
@@ -5386,56 +5293,47 @@ NO → 압축한다.
     managerFallbackLocked = false;
   }
 
-  function managerTopRowAnchor() {
+  function managerFallbackAnchor() {
     const loreEntry = document.getElementById('lore-inj-entry-button') || document.querySelector('[data-lore-inj-entry="true"]');
     const candidates = [loreEntry, findTopActionButton('Lore'), findTopActionButton('기억 삽입')]
       .filter((el, index, list) => el && list.indexOf(el) === index && isElementVisible(el))
+      .filter(el => !isComposerAreaElement(el))
       .filter(el => {
+        // 검색창/팝오버/메뉴 안에 잠깐 나타난 Lore류 버튼은 Manager 위치 기준으로 쓰지 않습니다.
+        if (el.closest?.('[role="dialog"],[aria-modal="true"],[role="menu"],[role="listbox"],[data-radix-popper-content-wrapper]')) return false;
         const r = el.getBoundingClientRect();
-        return r.top >= 0 && r.top <= 190 && r.bottom <= 230;
+        return r.top >= 0 && r.top <= 210 && r.bottom <= 250;
       })
       .sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left);
     return candidates[0] || null;
   }
 
-  function positionManagerTopFallback(fab) {
-    const anchor = managerTopRowAnchor();
-    fab.classList.remove('rpcm-compact-fallback');
+  function positionManagerSafeFallback(fab) {
+    const anchor = managerFallbackAnchor();
+    // 독립 폴백은 전체 Manager 글자를 띄우지 않고 작은 🪽 버튼으로만 보여서
+    // Crack 검색창/상단 패널을 가리지 않게 합니다.
+    fab.classList.add('rpcm-compact-fallback');
     fab.style.removeProperty('bottom');
     fab.style.removeProperty('left');
     fab.style.removeProperty('right');
+    fab.style.removeProperty('top');
 
-    if (!anchor) {
-      fab.style.setProperty('top', 'max(70px, calc(54px + env(safe-area-inset-top, 0px)))', 'important');
-      fab.style.setProperty('right', '14px', 'important');
-      return;
-    }
-
-    const anchorRect = anchor.getBoundingClientRect();
+    const size = 42;
     const gap = 8;
-    let fabRect = fab.getBoundingClientRect();
-    let width = Math.max(42, fabRect.width || 112);
-    let left = anchorRect.left - width - gap;
-
-    // 첫 버튼 왼쪽에 전체 Manager가 안 들어가면 🪽 아이콘으로 줄여서 배치합니다.
-    if (left < 8) {
-      fab.classList.add('rpcm-compact-fallback');
-      fabRect = fab.getBoundingClientRect();
-      width = Math.max(42, fabRect.width || 42);
-      left = anchorRect.left - width - gap;
+    if (anchor) {
+      const r = anchor.getBoundingClientRect();
+      let left = r.right + gap;
+      if (left + size > window.innerWidth - 8) left = r.left - size - gap;
+      const top = Math.max(8, Math.min(window.innerHeight - size - 8, r.top + (r.height - size) / 2));
+      if (left >= 8) {
+        fab.style.setProperty('left', `${Math.round(left)}px`, 'important');
+        fab.style.setProperty('top', `${Math.round(top)}px`, 'important');
+        return;
+      }
     }
-
-    const height = Math.max(34, fabRect.height || 34);
-    const top = Math.max(8, Math.min(window.innerHeight - height - 8,
-      anchorRect.top + (anchorRect.height - height) / 2));
-
-    if (left >= 8) {
-      fab.style.setProperty('left', `${Math.round(left)}px`, 'important');
-    } else {
-      // 극단적으로 좁은 화면에서는 줄을 침범하지 않고 상단 좌측 안전 여백에 둡니다.
-      fab.style.setProperty('left', '8px', 'important');
-    }
-    fab.style.setProperty('top', `${Math.round(top)}px`, 'important');
+    // 유효한 상단 앵커가 없으면 우측 상단 가장자리의 작은 아이콘으로 대기합니다.
+    fab.style.setProperty('right', '14px', 'important');
+    fab.style.setProperty('top', 'max(70px, calc(54px + env(safe-area-inset-top, 0px)))', 'important');
   }
 
   function mountManagerFallback(fab, locked = false) {
@@ -5443,9 +5341,8 @@ NO → 압축한다.
     hideManagerMobileHost();
     fab.classList.add('rpcm-fallback');
     if (fab.parentElement !== document.body) document.body.appendChild(fab);
-    // 하단 고정 확프와 겹치지 않도록 Lore가 있는 상단 줄의 왼쪽 빈칸에 독립 배치합니다.
-    positionManagerTopFallback(fab);
-    fab.dataset.rpcmPlacement = locked ? 'fixed-top-recovery' : 'fixed-top-awaiting-target';
+    positionManagerSafeFallback(fab);
+    fab.dataset.rpcmPlacement = locked ? 'fixed-safe-recovery' : 'fixed-safe-awaiting-target';
     return true;
   }
 
@@ -5574,9 +5471,6 @@ NO → 압축한다.
     fab.classList.add('rpcm-fallback', 'rpcm-mobile-fab');
     fab.classList.remove('rpcm-compact-fallback');
     fab.style.removeProperty('bottom');
-    fab.style.removeProperty('top');
-    fab.style.removeProperty('left');
-    fab.style.removeProperty('right');
     if (fab.parentNode !== mount) mount.appendChild(fab);
     fab.dataset.rpcmPlacement = 'shadow-mobile';
     managerInlineMounted = false;
@@ -5585,15 +5479,11 @@ NO → 압축한다.
 
   function updateFab() {
     if (!state.fab) return;
-    const visible = !!state.currentChatId;
+    const visible = !!state.currentChatId && !state.modal;
     state.fab.hidden = !visible;
     const armed = !!state.currentRoom?.pending;
     state.fab.classList.toggle('rpcm-armed', armed);
-    state.fab.classList.toggle('rpcm-modal-open', !!state.modal);
-    state.fab.setAttribute('aria-expanded', state.modal ? 'true' : 'false');
-    state.fab.title = state.modal
-      ? '🪽위시 RP Manager 닫기'
-      : (armed ? `🪽위시 RP Manager · 자동 유지 중 (${pendingProgressText(state.currentRoom.pending)})` : '🪽위시 RP Manager');
+    state.fab.title = armed ? `🪽위시 RP Manager · 자동 유지 중 (${pendingProgressText(state.currentRoom.pending)})` : '🪽위시 RP Manager';
     state.fab.setAttribute('aria-label', state.fab.title);
     if (managerMobileHost?.isConnected && isMobileManagerLayout()) {
       setImportantStyle(managerMobileHost, 'visibility', visible ? 'visible' : 'hidden');
@@ -5619,8 +5509,9 @@ NO → 압축한다.
       return true;
     }
 
-    // 기존 상단 영역이 React 재렌더로 사라진 동안에는 아래 target 탐색이 실패해
-    // 독립 상단 폴백을 사용합니다. 새 상단 영역이 생기면 다음 tick에 다시 복귀합니다.
+    // 기존 위치에 정상적으로 한 번 올라간 버튼이 이후 DOM에서 사라지거나 부모와 함께 숨겨졌다면
+    // React/다른 확프가 해당 영역을 다시 그린 충돌로 봅니다. 같은 페이지에서는 다시 그 DOM 안으로
+    // 억지로 집어넣지 않고 독립 폴백으로 고정해 반복 삭제 루프를 막습니다.
     const previousPlacement = String(fab.dataset.rpcmPlacement || '');
     const wasInline = managerInlineMounted && previousPlacement && !previousPlacement.startsWith('fixed-');
     if (wasInline && (!fab.isConnected || !isElementVisible(fab))) {
@@ -5628,8 +5519,6 @@ NO → 압축한다.
       managerInlineMounted = false;
     }
 
-    // 상단 React 영역이 Manager를 실제로 지운 경우에는 같은 방에서 재삽입을 반복하지 않습니다.
-    // 대신 독립 우측 상단에 안정적으로 유지하고, 다른 채팅방으로 이동할 때 상단 배치를 다시 시도합니다.
     if (managerFallbackLocked) {
       mountManagerFallback(fab, true);
       state.fab = fab;
@@ -5639,14 +5528,10 @@ NO → 압축한다.
 
     const target = findManagerButtonTarget();
     if (target?.host?.isConnected) {
-      // React가 상단을 잠깐 다시 그렸더라도 새 상단 자리가 확인되면 즉시 복귀합니다.
       // 평소에는 v0.8.11까지 쓰던 원래 위치/모양 그대로 둡니다.
       hideManagerMobileHost();
       fab.classList.remove('rpcm-fallback', 'rpcm-mobile-fab', 'rpcm-compact-fallback');
       fab.style.removeProperty('bottom');
-      fab.style.removeProperty('top');
-      fab.style.removeProperty('left');
-      fab.style.removeProperty('right');
       const requestedBefore = target.before === fab ? fab.nextSibling : target.before;
       const before = requestedBefore?.parentElement === target.host ? requestedBefore : null;
       if (fab.parentElement !== target.host || fab.nextSibling !== before) target.host.insertBefore(fab, before);
@@ -5675,10 +5560,7 @@ NO → 압축한다.
       return;
     }
     await ensureCurrentRoom(chatId, true);
-    if (state.modal) {
-      closeModal();
-      return;
-    }
+    if (state.modal) closeModal();
 
     const overlay = document.createElement('div');
     overlay.id = 'rpcm-overlay';
@@ -5806,7 +5688,7 @@ NO → 압축한다.
             <button class="rpcm-iconbtn" id="rpcm-close">✕</button>
           </div>
           <div class="rpcm-body">
-            ${pending ? `<div class="rpcm-pending"><div>🟠 <strong>${pending.verified ? '서버 주입 확인됨 ✓' : '서버 주입 확인 필요'}</strong><br>${esc(pendingProgressText(pending))}<br>현재 carrier AI ${esc(shortId(pending.messageId))} · 숨김 컨텍스트 ${formatCount(pending.injectedChars)}자 · 서버 raw ${formatCount(pending.serverChars || pending.carrierChars)}자</div><div class="rpcm-spacer"></div><button class="rpcm-btn secondary" id="rpcm-show-raw">주입 내용 확인</button><button class="rpcm-btn secondary" id="rpcm-resync-selected">체크 항목 반영</button><button class="rpcm-btn secondary" id="rpcm-reverify">서버 재검증</button><button class="rpcm-btn warn" id="rpcm-restore-now">지금 해제</button></div>` : ''}
+            ${pending ? `<div class="rpcm-pending"><div>🟠 <strong>${pending.verified ? '서버 주입 확인됨 ✓' : '서버 주입 확인 필요'}</strong><br>${esc(pendingProgressText(pending))}<br>현재 carrier AI ${esc(shortId(pending.messageId))} · 숨김 컨텍스트 ${formatCount(pending.injectedChars)}자 · 서버 raw ${formatCount(pending.serverChars || pending.carrierChars)}자</div><div class="rpcm-spacer"></div><button class="rpcm-btn secondary" id="rpcm-show-raw">주입 내용 확인</button><button class="rpcm-btn secondary" id="rpcm-reverify">서버 재검증</button><button class="rpcm-btn warn" id="rpcm-restore-now">지금 해제</button></div>` : ''}
             <div class="rpcm-quickbar">
               <button type="button" class="rpcm-jump" data-jump="rpcm-section-basic">기본 메모</button><button type="button" class="rpcm-jump" data-jump="rpcm-section-character">캐릭터</button><button type="button" class="rpcm-jump" data-jump="rpcm-section-extra">기타</button><button type="button" class="rpcm-jump" data-jump="rpcm-section-tools">도구</button>
               <div class="rpcm-search-box"><input class="rpcm-search-input" id="rpcm-search-input" placeholder="현재상태·로그·캐릭터·기타 검색"><button type="button" class="rpcm-search-nav" id="rpcm-search-prev" aria-label="이전 검색 결과">↑</button><button type="button" class="rpcm-search-nav" id="rpcm-search-next" aria-label="다음 검색 결과">↓</button><span class="rpcm-search-count" id="rpcm-search-count">0 / 0</span><div class="rpcm-search-results" id="rpcm-search-results" hidden></div></div>
@@ -5904,7 +5786,8 @@ NO → 압축한다.
 
     function createSlotCard(slot, openDefault = false) {
       const d = document.createElement('details');
-      d.className = `rpcm-slot${slot.group === 'character' ? ' rpcm-slot-character' : ''}`;
+      const inlineRetention = slot.group === 'character' || slot.group === 'extra' || slot.id === 'currentState';
+      d.className = `rpcm-slot${inlineRetention ? ' rpcm-slot-inline-retention' : ''}`;
       d.dataset.slotId = slot.id;
       d.open = hadPreviousRender ? previouslyOpenSlots.has(String(slot.id)) : openDefault;
       const deletable = slot.group === 'character' || slot.group === 'extra';
@@ -5914,7 +5797,7 @@ NO → 압축한다.
         <summary>
           <input class="rpcm-enable" type="checkbox" ${slot.enabled ? 'checked' : ''}>
           <span class="rpcm-slot-name">${slot.id === 'currentState' ? '🧭 ' : slot.id === 'logSummary' ? '🗓️ ' : ''}${esc(slot.title)}</span>
-          ${slot.group === 'character' ? `<label class="rpcm-character-retention" title="앞으로 몇 번의 AI 응답에 매번 유지할지 선택"><span>유지</span><select class="rpcm-slot-retention" aria-label="${esc(slot.title)} 유지 턴">${retentionOptionsHtml(slot.retentionTurns)}</select></label>` : ''}
+          ${inlineRetention ? `<label class="rpcm-inline-retention" title="앞으로 몇 번의 AI 응답에 매번 유지할지 선택"><span>유지</span><select class="rpcm-slot-retention" aria-label="${esc(slot.title)} 유지 턴">${retentionOptionsHtml(slot.retentionTurns)}</select></label>` : ''}
           ${DEFAULT_GUIDES[slot.id] ? `<button class="rpcm-guide-toggle" type="button" title="GPT/Gemini에 복사해 쓸 수 있는 업데이트 지침">지침</button>` : ''}
           ${pendingItem ? `<span class="rpcm-slot-remain">${esc(remainingLabelForItem(pendingItem))}</span>` : ''}
           <span class="rpcm-slot-count">${formatCount(String(slot.content || '').length)}자</span>
@@ -5924,7 +5807,7 @@ NO → 압축한다.
         <div class="rpcm-edit">
           ${titleEditable ? `<input class="rpcm-title-input" value="${esc(slot.title)}" placeholder="항목 이름">` : `<div class="rpcm-fixed-note">${slot.id === 'currentState' ? '다음 RP에 필요한 최신 상태·관계·정보격차·비밀·미해결 후크·현재 부상/소유물 등 현재 유효한 HOT MEMORY를 넣습니다. 통째로 주입합니다.' : '날짜별 사건 요약 전체를 붙여넣습니다. 원문은 저장소로 보관하고, 날짜 블록 단위로 분해해 직접 선택·최신·관련·고정 로그만 골라 주입합니다.'}</div>${DEFAULT_GUIDES[slot.id] ? `<div class="rpcm-guide-panel" hidden><div class="rpcm-guide-head"><span>GPT / Gemini용 업데이트 지침 · 수정 내용은 이 브라우저에 자동 저장됩니다.</span><button class="rpcm-guide-icon" type="button" data-guide-copy title="지침 복사" aria-label="지침 복사">${GUIDE_COPY_ICON}</button><button class="rpcm-guide-reset" type="button" data-guide-reset>기본값 복원</button></div><textarea class="rpcm-guide-textarea" data-rpcm-editor="true" spellcheck="false"></textarea></div>` : ''}`}
           ${slot.group === 'character' ? `<div class="rpcm-auto-terms"><strong>자동 감지어</strong> · ${esc(characterAutomaticTerms(slot).slice(0, 10).join(' · ') || '캐릭터 이름을 입력하면 자동 생성됩니다.')}${characterAutomaticTerms(slot).length > 10 ? ' · …' : ''}</div><div class="rpcm-alias-row"><input class="rpcm-alias-input" value="${esc((slot.aliases || []).join(', '))}" placeholder="추가 별칭 (선택): 애칭·약칭·호칭"><label class="rpcm-auto-pin"><input type="checkbox" class="rpcm-auto-pinned" ${slot.autoPinned ? 'checked' : ''}> 📌 자동 고정</label><label class="rpcm-auto-exclude"><input type="checkbox" class="rpcm-auto-excluded" ${slot.autoExcluded ? 'checked' : ''}> 🚫 자동감지 제외</label></div>` : ''}
-          ${slot.group !== 'character' ? `<div class="rpcm-slot-options"><span>이 항목 유지</span><select class="rpcm-slot-retention">${retentionOptionsHtml(slot.retentionTurns)}</select><span>AI 응답마다 이 항목만 개별 차감</span></div>` : ''}
+          ${slot.id === 'logSummary' ? `<div class="rpcm-slot-options"><span>이 항목 유지</span><select class="rpcm-slot-retention">${retentionOptionsHtml(slot.retentionTurns)}</select><span>AI 응답마다 날짜 로그 항목을 개별 차감</span></div>` : ''}
           <div class="rpcm-editor-actions"><button type="button" class="rpcm-editor-action" data-editor-copy>내용 복사</button><button type="button" class="rpcm-editor-action" data-editor-select>전체 선택</button><button type="button" class="rpcm-editor-action" data-editor-clean>붙여넣기 정리</button><span class="rpcm-editor-hint">Ctrl+Z로 편집 되돌리기</span>${slot.group !== 'extra' ? `<button type="button" class="rpcm-editor-action rpcm-focus-toggle" data-editor-focus>크게 편집</button>` : ''}</div>
           <textarea class="rpcm-textarea" data-rpcm-editor="true" style="height:${editorHeightPreference(slot)}px" placeholder="여기에 ${esc(slot.title)} 내용을 붙여넣으세요."></textarea>
         </div>`;
@@ -6041,12 +5924,6 @@ NO → 압축한다.
       };
 
       cb.onclick = e => e.stopPropagation();
-      if (retentionInput) {
-        retentionInput.onclick = e => e.stopPropagation();
-        retentionInput.onpointerdown = e => e.stopPropagation();
-      }
-      const characterRetention = d.querySelector('.rpcm-character-retention');
-      if (characterRetention) characterRetention.onclick = e => e.stopPropagation();
       cb.onchange = async () => {
         // debounce 저장 전에 바로 체크한 경우에도 현재 화면의 최신 입력값으로 carrier를 재구성합니다.
         slot.content = ta.value;
@@ -6532,17 +6409,11 @@ NO → 압축한다.
 
     overlay.querySelector('#rpcm-close').onclick = closeModal;
     overlay.querySelector('#rpcm-save').onclick = async () => {
-      try {
-        readModalIntoRoom();
-        updateSaveStatusUi('saving');
-        if (room.pending) await rebuildPendingFromCurrentSelection(room, 'save-selection-resync');
-        else await saveRoom(room);
-        notify(room.pending ? '저장 완료 · 현재 체크 항목을 서버 주입에도 반영했습니다.' : '🪽위시 RP Manager 저장 완료', 'success', 4600);
-        renderModalIfOpen();
-      } catch (e) {
-        updateSaveStatusUi('error');
-        notify(`저장/주입 반영 실패: ${e.message}`, 'error', 6500);
-      }
+      readModalIntoRoom();
+      updateSaveStatusUi('saving');
+      await saveRoom(room);
+      notify('🪽위시 RP Manager 저장 완료', 'success');
+      renderModalIfOpen();
     };
 
     overlay.querySelector('#rpcm-arm').onclick = async () => {
@@ -6563,19 +6434,6 @@ NO → 압축한다.
       overlay.querySelector('#rpcm-show-raw').onclick = async () => {
         try { await showInjectedRaw(room); }
         catch (e) { notify(`확인 실패: ${e.message}`, 'error', 6000); }
-      };
-      overlay.querySelector('#rpcm-resync-selected').onclick = async () => {
-        const button = overlay.querySelector('#rpcm-resync-selected');
-        try {
-          button.disabled = true;
-          readModalIntoRoom();
-          await rebuildPendingFromCurrentSelection(room, 'manual-selection-resync');
-          notify('현재 체크 항목을 carrier에 다시 반영했습니다. ‘주입 내용 확인’에서 확인할 수 있습니다.', 'success', 5200);
-          renderModalIfOpen();
-        } catch (e) {
-          button.disabled = false;
-          notify(`체크 항목 반영 실패: ${e.message}`, 'error', 6500);
-        }
       };
       overlay.querySelector('#rpcm-reverify').onclick = async () => {
         try {
