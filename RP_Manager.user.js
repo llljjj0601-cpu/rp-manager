@@ -5255,6 +5255,83 @@ NO → 압축한다.
     return null;
   }
 
+  function modelSelectorText(el) {
+    return String(el?.textContent || '').replace(/\s+/g, ' ').trim();
+  }
+
+  function findModelSelectorButton() {
+    // v0.9.0: 데스크톱 Manager는 Crack의 "모델 선택" 버튼 바로 옆을 기준 위치로 사용합니다.
+    // 우선 Lore와 같은 상단 행에서 넓은 드롭다운 버튼을 찾습니다.
+    const loreCandidates = [
+      document.getElementById('lore-inj-entry-button'),
+      document.querySelector('[data-lore-inj-entry="true"]'),
+      findTopActionButton('Lore'),
+      findTopActionButton('기억 삽입'),
+    ].filter((el, i, arr) => el && arr.indexOf(el) === i && isElementVisible(el) && !isComposerAreaElement(el));
+
+    const badText = /^(manager|lore|기억\s*삽입|설정|요약)$/i;
+    const modelWord = /(프로챗|프리챗|pro\s*chat|chat|챗|gpt|claude|gemini|sonnet|opus|flash|pro\b)/i;
+
+    const rankCandidate = (el, sameRowTop = null) => {
+      if (!el || el === state.fab || !isElementVisible(el) || isComposerAreaElement(el)) return -1e9;
+      if (el.closest?.('[role="dialog"],[aria-modal="true"],[role="menu"],[role="listbox"],[data-radix-popper-content-wrapper]')) return -1e9;
+      const r = el.getBoundingClientRect();
+      if (r.width < 105 || r.width > 380 || r.height < 28 || r.height > 90) return -1e9;
+      if (r.top < 55 || r.top > 230) return -1e9;
+      const t = modelSelectorText(el);
+      if (!t || badText.test(t)) return -1e9;
+      let score = 0;
+      if (sameRowTop != null) {
+        const delta = Math.abs(r.top - sameRowTop);
+        if (delta > 24) return -1e9;
+        score += 70 - delta * 2;
+      }
+      if (modelWord.test(t)) score += 120;
+      if (el.getAttribute('aria-haspopup')) score += 45;
+      if (el.getAttribute('aria-expanded') != null) score += 18;
+      if (r.width >= 145) score += 25;
+      if (r.left >= window.innerWidth * .35) score += 12;
+      // 단순 아이콘 버튼/검색 버튼보다는 텍스트가 있는 선택 컨트롤을 우선합니다.
+      if (t.length >= 3 && t.length <= 36) score += 14;
+      return score;
+    };
+
+    for (const lore of loreCandidates) {
+      const lr = lore.getBoundingClientRect();
+      let node = lore.parentElement;
+      for (let depth = 0; node && node !== document.body && depth < 5; depth++, node = node.parentElement) {
+        const buttons = visibleButtonLikes(node)
+          .filter(el => el !== lore && el.getBoundingClientRect().left > lr.right - 2)
+          .map(el => ({ el, score: rankCandidate(el, lr.top) }))
+          .filter(x => x.score > 0)
+          .sort((a, b) => b.score - a.score || a.el.getBoundingClientRect().left - b.el.getBoundingClientRect().left);
+        if (buttons.length) return buttons[0].el;
+      }
+    }
+
+    // Lore가 없거나 다른 확프로 감춰진 경우: 상단의 드롭다운형 텍스트 버튼 중 가장 모델 선택에 가까운 것을 선택합니다.
+    const global = visibleButtonLikes(document)
+      .map(el => ({ el, score: rankCandidate(el, null) }))
+      .filter(x => x.score >= 80)
+      .sort((a, b) => b.score - a.score || b.el.getBoundingClientRect().width - a.el.getBoundingClientRect().width);
+    return global[0]?.el || null;
+  }
+
+  function mountManagerNextToModelSelector(fab) {
+    const modelButton = findModelSelectorButton();
+    const host = modelButton?.parentElement;
+    if (!modelButton || !host || host === document.body) return false;
+    hideManagerMobileHost();
+    fab.classList.remove('rpcm-fallback', 'rpcm-compact-fallback', 'rpcm-mobile-fab');
+    for (const prop of ['left','right','top','bottom','position','margin']) fab.style.removeProperty(prop);
+    // 모델 선택 버튼의 바로 왼쪽에 고정합니다. React가 상단 바를 다시 그려도 다음 검사에서 같은 자리로만 복구합니다.
+    if (fab.parentElement !== host || fab.nextSibling !== modelButton) host.insertBefore(fab, modelButton);
+    fab.dataset.rpcmPlacement = 'model-selector-inline';
+    managerInlineMounted = true;
+    managerFallbackLocked = false;
+    return true;
+  }
+
   function createManagerButton() {
     const fab = document.createElement('button');
     fab.type = 'button';
@@ -5316,7 +5393,8 @@ NO → 압축한다.
     fab.style.removeProperty('left');
     fab.style.removeProperty('top');
     fab.style.setProperty('right', '18px', 'important');
-    fab.style.setProperty('bottom', '118px', 'important');
+    fab.style.setProperty('top', '112px', 'important');
+    fab.style.removeProperty('bottom');
   }
 
   function mountManagerFallback(fab, locked = false) {
@@ -5492,29 +5570,19 @@ NO → 압축한다.
       return true;
     }
 
-    // 기존 위치에 정상적으로 한 번 올라간 버튼이 이후 DOM에서 사라지거나 부모와 함께 숨겨졌다면
-    // React/다른 확프가 해당 영역을 다시 그린 충돌로 봅니다. 같은 페이지에서는 다시 그 DOM 안으로
-    // 억지로 집어넣지 않고 독립 폴백으로 고정해 반복 삭제 루프를 막습니다.
-    const previousPlacement = String(fab.dataset.rpcmPlacement || '');
-    const wasInline = managerInlineMounted && previousPlacement && !previousPlacement.startsWith('fixed-');
-    if (wasInline && (!fab.isConnected || !isElementVisible(fab))) {
-      managerFallbackLocked = true;
-      managerInlineMounted = false;
-    }
-
-    if (managerFallbackLocked) {
-      mountManagerFallback(fab, true);
+    // 데스크톱은 모델 선택 버튼(예: "프로챗 1.0") 바로 왼쪽 한 자리만 사용합니다.
+    // Lore/검색창/메뉴 등 여러 후보를 따라다니지 않으므로 Manager가 화면 여기저기로 이동하지 않습니다.
+    if (mountManagerNextToModelSelector(fab)) {
       state.fab = fab;
       updateFab();
       return true;
     }
 
-    // v0.9.0 안정화: 데스크톱도 Crack/Lore DOM에 직접 삽입하지 않습니다.
-    // 상단 버튼/검색창/팝오버가 수시로 재배치되는 현재 Crack UI에서는
-    // DOM 앵커를 추적할수록 Manager가 이동하는 회귀가 생기므로 독립 고정 위치를 사용합니다.
+    // 상단 모델 선택 버튼이 아직 렌더링되지 않은 순간에만 임시 고정 위치를 사용합니다.
+    // managerFallbackLocked를 켜지 않으므로 모델 버튼이 나타나면 다음 검사에서 정확한 자리로 한 번만 이동합니다.
     managerInlineMounted = false;
-    managerFallbackLocked = true;
-    mountManagerFallback(fab, true);
+    managerFallbackLocked = false;
+    mountManagerFallback(fab, false);
     state.fab = fab;
     updateFab();
     return true;
