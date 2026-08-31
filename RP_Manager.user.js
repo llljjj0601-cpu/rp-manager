@@ -5259,70 +5259,63 @@ NO → 압축한다.
     return String(el?.textContent || '').replace(/\s+/g, ' ').trim();
   }
 
-  function findModelSelectorButton() {
-    // v0.9.0: 모델 선택 버튼만 직접 찾습니다.
-    // "파티챗" 같은 좌측 내비게이션의 챗 버튼을 모델 선택기로 오인하지 않도록
-    // 데스크톱 화면의 오른쪽 절반 + 상단 액션 행에 있는 텍스트형 드롭다운만 허용합니다.
-    const badText = /^(manager|lore|기억\s*삽입|설정|요약|파티챗|에피소드)$/i;
-    const strongModelWord = /(하이퍼\s*챗|프로\s*챗|프리\s*챗|pro\s*chat|free\s*chat|gpt|claude|gemini|sonnet|opus|flash)/i;
-    const looseModelWord = /(챗\s*[0-9]|chat\s*[0-9])/i;
-    const minLeft = Math.max(420, window.innerWidth * .50);
+  function findStableCrackHeaderActionRow() {
+    // 크랙 요약 메모리 편집기가 안정적으로 사용하는 실제 상단 액션 행을 그대로 사용합니다.
+    // 이 컨테이너 안에서만 Manager 위치를 결정하여 본문/좌측 내비/팝오버로 이탈하지 않게 합니다.
+    try {
+      return document.querySelector('.group\\/header .flex.gap-3.items-center');
+    } catch (_) {
+      return null;
+    }
+  }
 
-    const candidates = visibleButtonLikes(document).map(el => {
-      if (!el || el === state.fab || !isElementVisible(el) || isComposerAreaElement(el)) return null;
+  function findModelSelectorButtonInHeader(header) {
+    if (!header) return null;
+    const badText = /^(manager|lore|기억\s*삽입|설정|요약|파티챗|에피소드)$/i;
+    const strongModelWord = /(하이퍼\s*챗|프로\s*챗|프리\s*챗|chat|gpt|claude|gemini|sonnet|opus|flash)/i;
+    const candidates = [...header.querySelectorAll('button,[role="button"]')].map(el => {
+      if (!el || el === state.fab || el.id === 'summary-editor-btn' || !isElementVisible(el)) return null;
       if (el.closest?.('[role="dialog"],[aria-modal="true"],[role="menu"],[role="listbox"],[data-radix-popper-content-wrapper]')) return null;
-      const r = el.getBoundingClientRect();
       const t = modelSelectorText(el);
       if (!t || badText.test(t)) return null;
-      if (r.left < minLeft || r.top < 55 || r.top > 180 || r.width < 95 || r.width > 360 || r.height < 28 || r.height > 78) return null;
       const strong = strongModelWord.test(t);
-      const loose = looseModelWord.test(t);
       const popup = !!el.getAttribute('aria-haspopup') || el.getAttribute('aria-expanded') != null;
-      if (!strong && !loose && !popup) return null;
+      const hasVersionLikeNumber = /\d+(?:\.\d+)?/.test(t);
+      if (!strong && !(popup && hasVersionLikeNumber)) return null;
       let score = 0;
-      if (strong) score += 180;
-      if (loose) score += 90;
-      if (popup) score += 55;
-      if (r.left >= window.innerWidth * .72) score += 35;
-      if (r.width >= 125) score += 15;
+      if (strong) score += 200;
+      if (hasVersionLikeNumber) score += 70;
+      if (popup) score += 35;
       if (t.length >= 3 && t.length <= 32) score += 10;
       return { el, score };
-    }).filter(Boolean).sort((a,b) => b.score - a.score || b.el.getBoundingClientRect().left - a.el.getBoundingClientRect().left);
-
+    }).filter(Boolean).sort((a,b) => b.score - a.score);
     return candidates[0]?.el || null;
   }
 
-  function horizontalHostForModelButton(modelButton) {
-    if (!modelButton?.parentElement) return null;
-    let child = modelButton;
-    let host = modelButton.parentElement;
-    for (let depth = 0; host && host !== document.body && depth < 5; depth++) {
-      const r = host.getBoundingClientRect();
-      const cs = getComputedStyle(host);
-      const horizontal = cs.display === 'flex' || cs.display === 'inline-flex';
-      if (horizontal && r.height >= 30 && r.height <= 100 && r.width >= modelButton.getBoundingClientRect().width + 60) {
-        return { host, before: child };
-      }
-      child = host;
-      host = host.parentElement;
-    }
-    // 최후에는 모델 버튼의 직접 부모를 사용하되, 모델 선택기가 확실히 오른쪽 상단에서 잡힌 경우에만 도달합니다.
-    return { host:modelButton.parentElement, before:modelButton };
+  function directChildInsideHost(el, host) {
+    if (!el || !host || !host.contains(el)) return null;
+    let node = el;
+    while (node?.parentElement && node.parentElement !== host) node = node.parentElement;
+    return node?.parentElement === host ? node : null;
   }
 
   function mountManagerNextToModelSelector(fab) {
-    const modelButton = findModelSelectorButton();
-    const mount = horizontalHostForModelButton(modelButton);
-    const host = mount?.host;
-    const before = mount?.before;
-    if (!modelButton || !host || !before || host === document.body) return false;
+    const header = findStableCrackHeaderActionRow();
+    if (!header || !isElementVisible(header)) return false;
+    const modelButton = findModelSelectorButtonInHeader(header);
+    if (!modelButton) return false;
+    const before = directChildInsideHost(modelButton, header);
+    if (!before) return false;
+
     hideManagerMobileHost();
     fab.classList.remove('rpcm-fallback', 'rpcm-compact-fallback', 'rpcm-mobile-fab');
     for (const prop of ['left','right','top','bottom','position','margin']) fab.style.removeProperty(prop);
     fab.style.setProperty('margin-right', '8px', 'important');
-    // 모델 선택 컴포넌트 자체가 여러 겹으로 감싸져 있어도, 같은 상단 가로 행의 직접 자식 바로 앞에 삽입합니다.
-    if (fab.parentElement !== host || fab.nextSibling !== before) host.insertBefore(fab, before);
-    fab.dataset.rpcmPlacement = 'model-selector-inline';
+
+    // 요약 메모리 편집기(📜)와 같은 고정 상단 행에만 삽입합니다.
+    // 모델 선택 컴포넌트의 최상위 자식 바로 앞에 넣으므로 모델명/내부 래퍼가 바뀌어도 위치가 유지됩니다.
+    if (fab.parentElement !== header || fab.nextSibling !== before) header.insertBefore(fab, before);
+    fab.dataset.rpcmPlacement = 'stable-header-before-model';
     managerInlineMounted = true;
     managerFallbackLocked = false;
     return true;
@@ -5574,14 +5567,15 @@ NO → 압축한다.
       return true;
     }
 
-    // 상단 모델 선택 버튼이 아직 렌더링되지 않은 순간에만 임시 고정 위치를 사용합니다.
-    // managerFallbackLocked를 켜지 않으므로 모델 버튼이 나타나면 다음 검사에서 정확한 자리로 한 번만 이동합니다.
+    // 상단 액션 행/모델 선택기가 아직 렌더링되지 않았다면 엉뚱한 곳에 임시로 띄우지 않습니다.
+    // 요약 메모리 편집기와 같은 실제 헤더가 준비될 때까지 DOM 밖에서 대기하고, 다음 observer/주기 체크에서 정확한 자리로만 삽입합니다.
     managerInlineMounted = false;
     managerFallbackLocked = false;
-    mountManagerFallback(fab, false);
+    if (fab.isConnected) fab.remove();
+    fab.dataset.rpcmPlacement = 'waiting-stable-header';
     state.fab = fab;
     updateFab();
-    return true;
+    return false;
   }
 
   function createFab() {
