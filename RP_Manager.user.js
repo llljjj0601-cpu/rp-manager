@@ -5129,7 +5129,11 @@ NO → 압축한다.
       #rpcm-fab.rpcm-armed .rpcm-dot{background:#22c55e!important;box-shadow:0 0 0 2px rgba(34,197,94,.16)!important}
       #rpcm-fab[hidden]{display:none!important}
       #rpcm-fab .rpcm-fab-wing{display:none!important}
-      #rpcm-fab.rpcm-fallback{position:fixed!important;right:12px!important;z-index:2147483645!important;height:34px!important;margin:0!important;border-radius:999px!important;box-shadow:0 4px 14px rgba(0,0,0,.35)!important;backdrop-filter:blur(8px)!important}
+      #rpcm-fab.rpcm-fallback{position:fixed!important;z-index:2147483645!important;height:34px!important;margin:0!important;border-radius:9px!important;box-shadow:0 4px 14px rgba(0,0,0,.35)!important;backdrop-filter:blur(8px)!important}
+      #rpcm-fab.rpcm-compact-fallback{width:42px!important;min-width:42px!important;padding:0!important}
+      #rpcm-fab.rpcm-compact-fallback .rpcm-fab-label{display:none!important}
+      #rpcm-fab.rpcm-compact-fallback .rpcm-fab-wing{display:inline!important;font-size:18px!important;line-height:1!important}
+      #rpcm-fab.rpcm-modal-open{box-shadow:0 0 0 2px rgba(255,102,153,.2),0 4px 14px rgba(0,0,0,.35)!important}
       #rpcm-fab.rpcm-mobile-fab{width:48px!important;min-width:48px!important;height:48px!important;min-height:48px!important;padding:0!important;border-radius:50%!important;right:14px!important;touch-action:manipulation!important;-webkit-tap-highlight-color:transparent!important;box-shadow:0 6px 20px rgba(0,0,0,.42)!important}
       #rpcm-fab.rpcm-mobile-fab .rpcm-fab-label{display:none!important}
       #rpcm-fab.rpcm-mobile-fab .rpcm-fab-wing{display:inline!important;font-size:22px!important;line-height:1!important}
@@ -5182,7 +5186,7 @@ NO → 압축한다.
     const wanted = String(label || '').trim().toLowerCase();
     const candidates = [...document.querySelectorAll('button, [role="button"]')];
     return candidates.find(el => {
-      if (el.id === 'rpcm-fab' || el.closest('#rpcm-overlay')) return false;
+      if (el.id === 'rpcm-fab' || el.closest('#rpcm-overlay') || !isElementVisible(el)) return false;
       const t = String(el.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
       return t === wanted;
     }) || null;
@@ -5208,12 +5212,13 @@ NO → 압축한다.
     // 데스크톱 입력창 하단 툴바 안으로 Manager가 따라 들어가는 것을 막습니다.
     // Lore/기억 삽입 버튼이 입력창 쪽으로 이동해도 Manager는 그 위치를 앵커로 사용하지 않습니다.
     if (rect.top >= Math.max(0, window.innerHeight - 260)) return true;
-    let node = el.parentElement;
-    let depth = 0;
-    while (node && node !== document.body && depth < 6) {
-      if (node.querySelector?.('[contenteditable="true"],.ProseMirror')) return true;
-      node = node.parentElement;
-      depth++;
+    // 큰 공통 레이아웃 조상 안에 입력창이 있다는 이유만으로 상단 버튼까지
+    // composer로 오인하지 않습니다. 실제 입력창과 좌표가 가까운 경우만 제외합니다.
+    for (const editor of [...document.querySelectorAll('[contenteditable="true"],.ProseMirror')].filter(isElementVisible)) {
+      const er = editor.getBoundingClientRect();
+      const horizontalOverlap = rect.right >= er.left - 80 && rect.left <= er.right + 80;
+      const verticalNear = rect.bottom >= er.top - 90 && rect.top <= er.bottom + 150;
+      if (horizontalOverlap && verticalNear) return true;
     }
     return false;
   }
@@ -5234,31 +5239,72 @@ NO → 압축한다.
       if (!divs?.length) return null;
       const list = divs[0].children?.[0]?.children;
       const top = list?.[list.length - 1];
-      return top ? { host: top, before: top.childNodes[0] || null, kind: 'legacy-banner' } : null;
+      return top && isElementVisible(top) && !isComposerAreaElement(top)
+        ? { host: top, before: top.childNodes[0] || null, kind: 'legacy-banner' }
+        : null;
     } catch (_) { return null; }
   }
 
   function findModernHeaderTarget() {
-    const minLeft = Math.max(260, Math.floor(window.innerWidth * .35));
+    const minLeft = Math.max(120, Math.floor(window.innerWidth * .18));
     const controls = visibleButtonLikes(document)
       .filter(el => {
         const r = el.getBoundingClientRect();
-        return r.top >= 40 && r.top <= 135 && r.left >= minLeft && r.right <= window.innerWidth + 8;
+        return r.top >= 0 && r.top <= 190 && r.left >= minLeft && r.right <= window.innerWidth + 8 &&
+          r.width <= 300 && r.height >= 22 && r.height <= 80 && !isComposerAreaElement(el);
       })
       .sort((a, b) => b.getBoundingClientRect().right - a.getBoundingClientRect().right);
     for (const control of controls) {
       let node = control.parentElement;
       while (node && node !== document.body) {
         const r = node.getBoundingClientRect();
-        if (r.top >= 32 && r.top <= 140 && r.height >= 28 && r.height <= 76 &&
-            r.width > 28 && r.width <= Math.min(720, window.innerWidth * .62) && r.right >= window.innerWidth * .52) {
+        if (r.top >= 0 && r.top <= 190 && r.height >= 26 && r.height <= 110 &&
+            r.width > 28 && r.width <= Math.min(900, window.innerWidth * .82) && r.right >= window.innerWidth * .35 &&
+            !isComposerAreaElement(node)) {
           const children = visibleButtonLikes(node)
-            .filter(child => child.getBoundingClientRect().top >= 32 && child.getBoundingClientRect().top <= 140)
+            .filter(child => {
+              const cr = child.getBoundingClientRect();
+              return cr.top >= 0 && cr.top <= 190 && !isComposerAreaElement(child);
+            })
             .sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left);
           if (children.length) return { host: node, before: children[0], kind: 'modern-header' };
         }
         node = node.parentElement;
       }
+    }
+    return null;
+  }
+
+  function findSemanticHeaderTarget() {
+    const minLeft = Math.max(120, Math.floor(window.innerWidth * .18));
+    const headers = Array.from(document.querySelectorAll('header,[role="banner"]'))
+      .filter(header => {
+        if (!isElementVisible(header) || header.closest('#rpcm-overlay,#rpcm-floating-host')) return false;
+        const r = header.getBoundingClientRect();
+        return r.top < 190 && r.bottom > 20 && r.height >= 28 && r.height <= 190 &&
+          r.width >= Math.min(260, window.innerWidth * .55);
+      })
+      .sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top);
+
+    for (const header of headers) {
+      const controls = visibleButtonLikes(header)
+        .filter(el => {
+          const r = el.getBoundingClientRect();
+          return r.top >= 0 && r.top <= 190 && r.left >= minLeft && r.width <= 300 && r.height >= 22 && r.height <= 80 &&
+            !isComposerAreaElement(el);
+        })
+        .sort((a, b) => b.getBoundingClientRect().right - a.getBoundingClientRect().right);
+      if (!controls.length) continue;
+
+      const first = controls[0];
+      let host = first.parentElement;
+      while (host && host.parentElement && host.parentElement !== header) {
+        const parent = host.parentElement;
+        const r = parent.getBoundingClientRect();
+        if (r.height > 110 || r.top < 0 || r.bottom > 200 || isComposerAreaElement(parent)) break;
+        host = parent;
+      }
+      if (host && host !== document.body) return { host, before: first, kind: 'semantic-header' };
     }
     return null;
   }
@@ -5286,14 +5332,17 @@ NO → 압축한다.
   function findManagerButtonTarget() {
     // 데스크톱은 원래 상단/배너 계열 위치를 우선합니다.
     // Lore 버튼이 하단 입력 툴바로 이동했을 때 그 옆으로 Manager가 끌려 내려가는 회귀를 방지합니다.
-    const stableTopTarget = findLegacyBannerTarget() || findModernHeaderTarget();
-    if (stableTopTarget) return stableTopTarget;
+    const legacyTopTarget = findLegacyBannerTarget();
+    if (legacyTopTarget) return legacyTopTarget;
 
     const loreEntry = document.getElementById('lore-inj-entry-button') || document.querySelector('[data-lore-inj-entry="true"]');
-    const namedTopTarget = inlineAnchorTarget(loreEntry, { rejectComposer:true }) ||
-      inlineAnchorTarget(findTopActionButton('Lore'), { rejectComposer:true }) ||
-      inlineAnchorTarget(findTopActionButton('기억 삽입'), { rejectComposer:true });
+    const namedTopTarget = inlineAnchorTarget(findTopActionButton('기억 삽입'), { rejectComposer:true }) ||
+      inlineAnchorTarget(loreEntry, { rejectComposer:true }) ||
+      inlineAnchorTarget(findTopActionButton('Lore'), { rejectComposer:true });
     if (namedTopTarget) return namedTopTarget;
+
+    const stableTopTarget = findSemanticHeaderTarget() || findModernHeaderTarget();
+    if (stableTopTarget) return stableTopTarget;
 
     // 입력창 툴바는 Crack 기본 UI를 밀거나 줄바꿈을 만들 수 있으므로
     // 더 이상 데스크톱 Manager의 최종 삽입 위치로 사용하지 않습니다.
@@ -5314,9 +5363,8 @@ NO → 압축한다.
     return fab;
   }
 
-  // 기본은 기존 위치를 그대로 사용합니다. 다만 다른 확프/React 재렌더가
-  // 이미 꽂힌 Manager 버튼을 실제로 지워버린 것이 감지되면 그 페이지 세션에서는
-  // 안전한 body 직속 fixed 위치로 전환합니다. 새로고침/다른 채팅방 이동 시 다시 기존 위치부터 시도합니다.
+  // 기본은 기존 상단 위치를 사용합니다. React 재렌더 중 상단을 잠시 찾지 못하면
+  // 우측 상단의 독립 위치로 피했다가 안정적인 상단 컨테이너가 돌아오는 즉시 복귀합니다.
   let managerPlacementRoute = '';
   let managerInlineMounted = false;
   let managerFallbackLocked = false;
@@ -5338,14 +5386,66 @@ NO → 압축한다.
     managerFallbackLocked = false;
   }
 
+  function managerTopRowAnchor() {
+    const loreEntry = document.getElementById('lore-inj-entry-button') || document.querySelector('[data-lore-inj-entry="true"]');
+    const candidates = [loreEntry, findTopActionButton('Lore'), findTopActionButton('기억 삽입')]
+      .filter((el, index, list) => el && list.indexOf(el) === index && isElementVisible(el))
+      .filter(el => {
+        const r = el.getBoundingClientRect();
+        return r.top >= 0 && r.top <= 190 && r.bottom <= 230;
+      })
+      .sort((a, b) => a.getBoundingClientRect().left - b.getBoundingClientRect().left);
+    return candidates[0] || null;
+  }
+
+  function positionManagerTopFallback(fab) {
+    const anchor = managerTopRowAnchor();
+    fab.classList.remove('rpcm-compact-fallback');
+    fab.style.removeProperty('bottom');
+    fab.style.removeProperty('left');
+    fab.style.removeProperty('right');
+
+    if (!anchor) {
+      fab.style.setProperty('top', 'max(70px, calc(54px + env(safe-area-inset-top, 0px)))', 'important');
+      fab.style.setProperty('right', '14px', 'important');
+      return;
+    }
+
+    const anchorRect = anchor.getBoundingClientRect();
+    const gap = 8;
+    let fabRect = fab.getBoundingClientRect();
+    let width = Math.max(42, fabRect.width || 112);
+    let left = anchorRect.left - width - gap;
+
+    // 첫 버튼 왼쪽에 전체 Manager가 안 들어가면 🪽 아이콘으로 줄여서 배치합니다.
+    if (left < 8) {
+      fab.classList.add('rpcm-compact-fallback');
+      fabRect = fab.getBoundingClientRect();
+      width = Math.max(42, fabRect.width || 42);
+      left = anchorRect.left - width - gap;
+    }
+
+    const height = Math.max(34, fabRect.height || 34);
+    const top = Math.max(8, Math.min(window.innerHeight - height - 8,
+      anchorRect.top + (anchorRect.height - height) / 2));
+
+    if (left >= 8) {
+      fab.style.setProperty('left', `${Math.round(left)}px`, 'important');
+    } else {
+      // 극단적으로 좁은 화면에서는 줄을 침범하지 않고 상단 좌측 안전 여백에 둡니다.
+      fab.style.setProperty('left', '8px', 'important');
+    }
+    fab.style.setProperty('top', `${Math.round(top)}px`, 'important');
+  }
+
   function mountManagerFallback(fab, locked = false) {
     if (!document.body) return false;
     hideManagerMobileHost();
     fab.classList.add('rpcm-fallback');
-    // 폴백은 Lore 버튼을 따라다니지 않는 독립 위치입니다.
-    fab.style.setProperty('bottom', 'calc(82px + env(safe-area-inset-bottom, 0px))', 'important');
     if (fab.parentElement !== document.body) document.body.appendChild(fab);
-    fab.dataset.rpcmPlacement = locked ? 'fixed-conflict-fallback' : 'fixed-awaiting-target';
+    // 하단 고정 확프와 겹치지 않도록 Lore가 있는 상단 줄의 왼쪽 빈칸에 독립 배치합니다.
+    positionManagerTopFallback(fab);
+    fab.dataset.rpcmPlacement = locked ? 'fixed-top-recovery' : 'fixed-top-awaiting-target';
     return true;
   }
 
@@ -5472,7 +5572,11 @@ NO → 압축한다.
     // 모바일 버튼은 페이지/다른 확프 CSS가 닿지 않는 Shadow DOM 안에 둡니다.
     // 호스트는 body 밖 documentElement 직속이라 React가 body를 다시 그려도 유지됩니다.
     fab.classList.add('rpcm-fallback', 'rpcm-mobile-fab');
+    fab.classList.remove('rpcm-compact-fallback');
     fab.style.removeProperty('bottom');
+    fab.style.removeProperty('top');
+    fab.style.removeProperty('left');
+    fab.style.removeProperty('right');
     if (fab.parentNode !== mount) mount.appendChild(fab);
     fab.dataset.rpcmPlacement = 'shadow-mobile';
     managerInlineMounted = false;
@@ -5481,11 +5585,15 @@ NO → 압축한다.
 
   function updateFab() {
     if (!state.fab) return;
-    const visible = !!state.currentChatId && !state.modal;
+    const visible = !!state.currentChatId;
     state.fab.hidden = !visible;
     const armed = !!state.currentRoom?.pending;
     state.fab.classList.toggle('rpcm-armed', armed);
-    state.fab.title = armed ? `🪽위시 RP Manager · 자동 유지 중 (${pendingProgressText(state.currentRoom.pending)})` : '🪽위시 RP Manager';
+    state.fab.classList.toggle('rpcm-modal-open', !!state.modal);
+    state.fab.setAttribute('aria-expanded', state.modal ? 'true' : 'false');
+    state.fab.title = state.modal
+      ? '🪽위시 RP Manager 닫기'
+      : (armed ? `🪽위시 RP Manager · 자동 유지 중 (${pendingProgressText(state.currentRoom.pending)})` : '🪽위시 RP Manager');
     state.fab.setAttribute('aria-label', state.fab.title);
     if (managerMobileHost?.isConnected && isMobileManagerLayout()) {
       setImportantStyle(managerMobileHost, 'visibility', visible ? 'visible' : 'hidden');
@@ -5511,9 +5619,8 @@ NO → 압축한다.
       return true;
     }
 
-    // 기존 위치에 정상적으로 한 번 올라간 버튼이 이후 DOM에서 사라지거나 부모와 함께 숨겨졌다면
-    // React/다른 확프가 해당 영역을 다시 그린 충돌로 봅니다. 같은 페이지에서는 다시 그 DOM 안으로
-    // 억지로 집어넣지 않고 독립 폴백으로 고정해 반복 삭제 루프를 막습니다.
+    // 기존 상단 영역이 React 재렌더로 사라진 동안에는 아래 target 탐색이 실패해
+    // 독립 상단 폴백을 사용합니다. 새 상단 영역이 생기면 다음 tick에 다시 복귀합니다.
     const previousPlacement = String(fab.dataset.rpcmPlacement || '');
     const wasInline = managerInlineMounted && previousPlacement && !previousPlacement.startsWith('fixed-');
     if (wasInline && (!fab.isConnected || !isElementVisible(fab))) {
@@ -5521,6 +5628,8 @@ NO → 압축한다.
       managerInlineMounted = false;
     }
 
+    // 상단 React 영역이 Manager를 실제로 지운 경우에는 같은 방에서 재삽입을 반복하지 않습니다.
+    // 대신 독립 우측 상단에 안정적으로 유지하고, 다른 채팅방으로 이동할 때 상단 배치를 다시 시도합니다.
     if (managerFallbackLocked) {
       mountManagerFallback(fab, true);
       state.fab = fab;
@@ -5530,10 +5639,14 @@ NO → 압축한다.
 
     const target = findManagerButtonTarget();
     if (target?.host?.isConnected) {
+      // React가 상단을 잠깐 다시 그렸더라도 새 상단 자리가 확인되면 즉시 복귀합니다.
       // 평소에는 v0.8.11까지 쓰던 원래 위치/모양 그대로 둡니다.
       hideManagerMobileHost();
-      fab.classList.remove('rpcm-fallback', 'rpcm-mobile-fab');
+      fab.classList.remove('rpcm-fallback', 'rpcm-mobile-fab', 'rpcm-compact-fallback');
       fab.style.removeProperty('bottom');
+      fab.style.removeProperty('top');
+      fab.style.removeProperty('left');
+      fab.style.removeProperty('right');
       const requestedBefore = target.before === fab ? fab.nextSibling : target.before;
       const before = requestedBefore?.parentElement === target.host ? requestedBefore : null;
       if (fab.parentElement !== target.host || fab.nextSibling !== before) target.host.insertBefore(fab, before);
@@ -5562,7 +5675,10 @@ NO → 압축한다.
       return;
     }
     await ensureCurrentRoom(chatId, true);
-    if (state.modal) closeModal();
+    if (state.modal) {
+      closeModal();
+      return;
+    }
 
     const overlay = document.createElement('div');
     overlay.id = 'rpcm-overlay';
