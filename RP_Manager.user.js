@@ -2415,6 +2415,13 @@ NO → 압축한다.
     return Number(totalTurns) === 0 ? '직접 해제 전까지' : `${Number(totalTurns)}턴`;
   }
 
+  function retentionOptionsHtml(value) {
+    const selected = normalizeRetentionTurns(value);
+    return [
+      [1, '1턴'], [3, '3턴'], [5, '5턴'], [10, '10턴'], [0, '직접 해제']
+    ].map(([turns, label]) => `<option value="${turns}" ${selected === turns ? 'selected' : ''}>${label}</option>`).join('');
+  }
+
   function remainingLabelForItem(item) {
     const total = Number(item?.totalTurns || 0);
     const used = Number(item?.usedTurns || 0);
@@ -4400,6 +4407,40 @@ NO → 압축한다.
     return next.length;
   }
 
+  async function rebuildPendingFromCurrentSelection(room, reason = 'manual-selection-resync') {
+    if (!room?.pending) return { active: 0, cleared: false };
+    const p = room.pending;
+    const previousItems = clonePendingItems(p.items);
+    const previousActive = activePendingItems(p);
+    const previousBySlot = new Map(previousActive
+      .filter(i => i.sourceSlotId !== 'logSummary' && i.group !== 'log-auto' && i.slotId !== 'logSummary')
+      .map(i => [String(i.slotId || ''), i]));
+    const previousLogs = previousActive.filter(i => i.sourceSlotId === 'logSummary' || i.group === 'log-auto' || i.slotId === 'logSummary');
+
+    const nextNonLogs = selectedSlots(room)
+      .filter(slot => slot.id !== 'logSummary')
+      .map(slot => {
+        const next = slotToPendingItem(slot);
+        const previous = previousBySlot.get(String(slot.id || ''));
+        if (previous) {
+          next.usedTurns = Number(previous.usedTurns || 0);
+          next.totalTurns = normalizeRetentionTurns(slot.retentionTurns);
+          if (next.totalTurns !== 0 && next.usedTurns >= next.totalTurns) next.usedTurns = 0;
+        }
+        return next;
+      });
+
+    p.items = [...nextNonLogs, ...previousLogs];
+    try {
+      replacePendingLogItems(room);
+      return await syncPendingCarrier(room, reason);
+    } catch (error) {
+      if (room.pending) room.pending.items = previousItems;
+      await saveRoom(room);
+      throw error;
+    }
+  }
+
   async function rebuildPendingLogItems(room, reason = 'log-mode-change') {
     if (!room.pending) return;
     replacePendingLogItems(room);
@@ -4718,9 +4759,22 @@ NO → 압축한다.
 
     // AI 응답 1회마다 기존 활성 항목을 독립적으로 1턴 차감합니다.
     const items = Array.isArray(p.items) ? p.items : [];
+    const expiredSlotIds = new Set();
     for (const item of items) {
       const total = Number(item.totalTurns || 0);
-      if (total !== 0 && Number(item.usedTurns || 0) < total) item.usedTurns = Number(item.usedTurns || 0) + 1;
+      const used = Number(item.usedTurns || 0);
+      if (total !== 0 && used < total) {
+        item.usedTurns = used + 1;
+        const isLogItem = item.sourceSlotId === 'logSummary' || item.group === 'log-auto' || item.slotId === 'logSummary';
+        if (!isLogItem && item.usedTurns >= total) expiredSlotIds.add(String(item.slotId || ''));
+      }
+    }
+    // 유지턴이 끝난 항목은 체크도 함께 해제해, 체크는 켜져 있는데 실제 carrier에는 없는
+    // 혼동 상태를 만들지 않습니다. 자동감지 캐릭터는 다음 실제 등장 때 다시 켜질 수 있습니다.
+    for (const slotId of expiredSlotIds) {
+      if (activePendingItems(p).some(item => String(item.slotId || '') === slotId)) continue;
+      const slot = (room.slots || []).find(item => String(item.id || '') === slotId);
+      if (slot) slot.enabled = false;
     }
 
     // v0.8.9에서 이어진 pending은 최근로그가 저장소 뒤쪽 순서로 고정되어 있을 수 있습니다.
@@ -5094,7 +5148,7 @@ NO → 압축한다.
       .rpcm-slot{border:1px solid #333;background:#1f1f1f;border-radius:11px;margin-bottom:9px;overflow:hidden}
       .rpcm-slot summary{list-style:none;display:flex;align-items:center;gap:10px;padding:11px 12px;cursor:pointer;user-select:none}.rpcm-slot summary::-webkit-details-marker{display:none}.rpcm-slot summary:hover{background:#252525}
       #rpcm-modal input[type=checkbox],#rpcm-lib-dialog-backdrop input[type=checkbox],#rpcm-log-dialog-backdrop input[type=checkbox],#rpcm-dup-dialog-backdrop input[type=radio]{accent-color:#df6298}
-      .rpcm-enable{width:18px;height:18px;accent-color:#df6298}.rpcm-slot-name{font-size:13px;font-weight:750;flex:1}.rpcm-slot-count{font-size:11px;color:#888}.rpcm-chevron{font-size:12px;color:#666}.rpcm-slot[open] .rpcm-chevron{transform:rotate(90deg)}
+      .rpcm-enable{width:18px;height:18px;accent-color:#df6298}.rpcm-slot-name{font-size:13px;font-weight:750;flex:1}.rpcm-slot-character .rpcm-slot-name{flex:0 1 auto}.rpcm-slot-character .rpcm-slot-count{margin-left:auto}.rpcm-character-retention{display:inline-flex;align-items:center;gap:5px;color:#888;font-size:10px;white-space:nowrap;cursor:default}.rpcm-character-retention select{height:28px;border:1px solid #444;border-radius:7px;background:#232323;color:#eee;padding:0 7px;font:10px/1 inherit;cursor:pointer}.rpcm-slot-count{font-size:11px;color:#888}.rpcm-chevron{font-size:12px;color:#666}.rpcm-slot[open] .rpcm-chevron{transform:rotate(90deg)}
       .rpcm-edit{padding:0 12px 12px}.rpcm-title-input{width:100%;box-sizing:border-box;background:#111;color:#eee;border:1px solid #3b3b3b;border-radius:8px;padding:8px 10px;font-size:12px;margin-bottom:8px}.rpcm-textarea{width:100%;box-sizing:border-box;min-height:160px;max-height:1200px;resize:vertical;background:#101010;color:#e6e6e6;border:1px solid #3b3b3b;border-radius:8px;padding:11px;font-size:13px;line-height:1.55;outline:none}.rpcm-textarea:focus,.rpcm-title-input:focus{border-color:#df6298;box-shadow:0 0 0 2px rgba(223,98,152,.16)}.rpcm-slot[data-slot-id="currentState"] .rpcm-textarea:focus,.rpcm-slot[data-slot-id="logSummary"] .rpcm-textarea:focus{overscroll-behavior:contain}.rpcm-slot.is-search-hit{border-color:#7b5a9b;box-shadow:0 0 0 2px rgba(155,125,227,.14)}
       .rpcm-editor-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:0 0 8px}.rpcm-editor-action{border:1px solid #383838;background:#222;color:#999;border-radius:7px;padding:5px 8px;font-size:10px;cursor:pointer}.rpcm-editor-action:hover{color:#eee;background:#2d2d2d}.rpcm-editor-action:disabled{opacity:.38;cursor:default}.rpcm-editor-action.rpcm-focus-toggle{margin-left:auto;color:#d7a3bd;border-color:#5d3149}.rpcm-editor-hint{color:#666;font-size:10px}
       #rpcm-detached-backdrop{position:fixed;inset:0;z-index:2147483646;background:rgba(0,0,0,.64);display:flex;align-items:center;justify-content:center;padding:3vh 3vw;box-sizing:border-box;font-family:-apple-system,BlinkMacSystemFont,"Pretendard",sans-serif}
@@ -5636,7 +5690,7 @@ NO → 압축한다.
             <button class="rpcm-iconbtn" id="rpcm-close">✕</button>
           </div>
           <div class="rpcm-body">
-            ${pending ? `<div class="rpcm-pending"><div>🟠 <strong>${pending.verified ? '서버 주입 확인됨 ✓' : '서버 주입 확인 필요'}</strong><br>${esc(pendingProgressText(pending))}<br>현재 carrier AI ${esc(shortId(pending.messageId))} · 숨김 컨텍스트 ${formatCount(pending.injectedChars)}자 · 서버 raw ${formatCount(pending.serverChars || pending.carrierChars)}자</div><div class="rpcm-spacer"></div><button class="rpcm-btn secondary" id="rpcm-show-raw">주입 내용 확인</button><button class="rpcm-btn secondary" id="rpcm-reverify">서버 재검증</button><button class="rpcm-btn warn" id="rpcm-restore-now">지금 해제</button></div>` : ''}
+            ${pending ? `<div class="rpcm-pending"><div>🟠 <strong>${pending.verified ? '서버 주입 확인됨 ✓' : '서버 주입 확인 필요'}</strong><br>${esc(pendingProgressText(pending))}<br>현재 carrier AI ${esc(shortId(pending.messageId))} · 숨김 컨텍스트 ${formatCount(pending.injectedChars)}자 · 서버 raw ${formatCount(pending.serverChars || pending.carrierChars)}자</div><div class="rpcm-spacer"></div><button class="rpcm-btn secondary" id="rpcm-show-raw">주입 내용 확인</button><button class="rpcm-btn secondary" id="rpcm-resync-selected">체크 항목 반영</button><button class="rpcm-btn secondary" id="rpcm-reverify">서버 재검증</button><button class="rpcm-btn warn" id="rpcm-restore-now">지금 해제</button></div>` : ''}
             <div class="rpcm-quickbar">
               <button type="button" class="rpcm-jump" data-jump="rpcm-section-basic">기본 메모</button><button type="button" class="rpcm-jump" data-jump="rpcm-section-character">캐릭터</button><button type="button" class="rpcm-jump" data-jump="rpcm-section-extra">기타</button><button type="button" class="rpcm-jump" data-jump="rpcm-section-tools">도구</button>
               <div class="rpcm-search-box"><input class="rpcm-search-input" id="rpcm-search-input" placeholder="현재상태·로그·캐릭터·기타 검색"><button type="button" class="rpcm-search-nav" id="rpcm-search-prev" aria-label="이전 검색 결과">↑</button><button type="button" class="rpcm-search-nav" id="rpcm-search-next" aria-label="다음 검색 결과">↓</button><span class="rpcm-search-count" id="rpcm-search-count">0 / 0</span><div class="rpcm-search-results" id="rpcm-search-results" hidden></div></div>
@@ -5734,7 +5788,7 @@ NO → 압축한다.
 
     function createSlotCard(slot, openDefault = false) {
       const d = document.createElement('details');
-      d.className = 'rpcm-slot';
+      d.className = `rpcm-slot${slot.group === 'character' ? ' rpcm-slot-character' : ''}`;
       d.dataset.slotId = slot.id;
       d.open = hadPreviousRender ? previouslyOpenSlots.has(String(slot.id)) : openDefault;
       const deletable = slot.group === 'character' || slot.group === 'extra';
@@ -5744,6 +5798,7 @@ NO → 압축한다.
         <summary>
           <input class="rpcm-enable" type="checkbox" ${slot.enabled ? 'checked' : ''}>
           <span class="rpcm-slot-name">${slot.id === 'currentState' ? '🧭 ' : slot.id === 'logSummary' ? '🗓️ ' : ''}${esc(slot.title)}</span>
+          ${slot.group === 'character' ? `<label class="rpcm-character-retention" title="앞으로 몇 번의 AI 응답에 매번 유지할지 선택"><span>유지</span><select class="rpcm-slot-retention" aria-label="${esc(slot.title)} 유지 턴">${retentionOptionsHtml(slot.retentionTurns)}</select></label>` : ''}
           ${DEFAULT_GUIDES[slot.id] ? `<button class="rpcm-guide-toggle" type="button" title="GPT/Gemini에 복사해 쓸 수 있는 업데이트 지침">지침</button>` : ''}
           ${pendingItem ? `<span class="rpcm-slot-remain">${esc(remainingLabelForItem(pendingItem))}</span>` : ''}
           <span class="rpcm-slot-count">${formatCount(String(slot.content || '').length)}자</span>
@@ -5753,13 +5808,7 @@ NO → 압축한다.
         <div class="rpcm-edit">
           ${titleEditable ? `<input class="rpcm-title-input" value="${esc(slot.title)}" placeholder="항목 이름">` : `<div class="rpcm-fixed-note">${slot.id === 'currentState' ? '다음 RP에 필요한 최신 상태·관계·정보격차·비밀·미해결 후크·현재 부상/소유물 등 현재 유효한 HOT MEMORY를 넣습니다. 통째로 주입합니다.' : '날짜별 사건 요약 전체를 붙여넣습니다. 원문은 저장소로 보관하고, 날짜 블록 단위로 분해해 직접 선택·최신·관련·고정 로그만 골라 주입합니다.'}</div>${DEFAULT_GUIDES[slot.id] ? `<div class="rpcm-guide-panel" hidden><div class="rpcm-guide-head"><span>GPT / Gemini용 업데이트 지침 · 수정 내용은 이 브라우저에 자동 저장됩니다.</span><button class="rpcm-guide-icon" type="button" data-guide-copy title="지침 복사" aria-label="지침 복사">${GUIDE_COPY_ICON}</button><button class="rpcm-guide-reset" type="button" data-guide-reset>기본값 복원</button></div><textarea class="rpcm-guide-textarea" data-rpcm-editor="true" spellcheck="false"></textarea></div>` : ''}`}
           ${slot.group === 'character' ? `<div class="rpcm-auto-terms"><strong>자동 감지어</strong> · ${esc(characterAutomaticTerms(slot).slice(0, 10).join(' · ') || '캐릭터 이름을 입력하면 자동 생성됩니다.')}${characterAutomaticTerms(slot).length > 10 ? ' · …' : ''}</div><div class="rpcm-alias-row"><input class="rpcm-alias-input" value="${esc((slot.aliases || []).join(', '))}" placeholder="추가 별칭 (선택): 애칭·약칭·호칭"><label class="rpcm-auto-pin"><input type="checkbox" class="rpcm-auto-pinned" ${slot.autoPinned ? 'checked' : ''}> 📌 자동 고정</label><label class="rpcm-auto-exclude"><input type="checkbox" class="rpcm-auto-excluded" ${slot.autoExcluded ? 'checked' : ''}> 🚫 자동감지 제외</label></div>` : ''}
-          <div class="rpcm-slot-options"><span>이 항목 유지</span><select class="rpcm-slot-retention">
-            <option value="1" ${Number(slot.retentionTurns)===1?'selected':''}>1턴</option>
-            <option value="3" ${Number(slot.retentionTurns)===3?'selected':''}>3턴</option>
-            <option value="5" ${Number(slot.retentionTurns)===5?'selected':''}>5턴</option>
-            <option value="10" ${Number(slot.retentionTurns)===10?'selected':''}>10턴</option>
-            <option value="0" ${Number(slot.retentionTurns)===0?'selected':''}>직접 해제</option>
-          </select><span>AI 응답마다 이 항목만 개별 차감</span></div>
+          ${slot.group !== 'character' ? `<div class="rpcm-slot-options"><span>이 항목 유지</span><select class="rpcm-slot-retention">${retentionOptionsHtml(slot.retentionTurns)}</select><span>AI 응답마다 이 항목만 개별 차감</span></div>` : ''}
           <div class="rpcm-editor-actions"><button type="button" class="rpcm-editor-action" data-editor-copy>내용 복사</button><button type="button" class="rpcm-editor-action" data-editor-select>전체 선택</button><button type="button" class="rpcm-editor-action" data-editor-clean>붙여넣기 정리</button><span class="rpcm-editor-hint">Ctrl+Z로 편집 되돌리기</span>${slot.group !== 'extra' ? `<button type="button" class="rpcm-editor-action rpcm-focus-toggle" data-editor-focus>크게 편집</button>` : ''}</div>
           <textarea class="rpcm-textarea" data-rpcm-editor="true" style="height:${editorHeightPreference(slot)}px" placeholder="여기에 ${esc(slot.title)} 내용을 붙여넣으세요."></textarea>
         </div>`;
@@ -5876,6 +5925,12 @@ NO → 압축한다.
       };
 
       cb.onclick = e => e.stopPropagation();
+      if (retentionInput) {
+        retentionInput.onclick = e => e.stopPropagation();
+        retentionInput.onpointerdown = e => e.stopPropagation();
+      }
+      const characterRetention = d.querySelector('.rpcm-character-retention');
+      if (characterRetention) characterRetention.onclick = e => e.stopPropagation();
       cb.onchange = async () => {
         // debounce 저장 전에 바로 체크한 경우에도 현재 화면의 최신 입력값으로 carrier를 재구성합니다.
         slot.content = ta.value;
@@ -6361,11 +6416,17 @@ NO → 압축한다.
 
     overlay.querySelector('#rpcm-close').onclick = closeModal;
     overlay.querySelector('#rpcm-save').onclick = async () => {
-      readModalIntoRoom();
-      updateSaveStatusUi('saving');
-      await saveRoom(room);
-      notify('🪽위시 RP Manager 저장 완료', 'success');
-      renderModalIfOpen();
+      try {
+        readModalIntoRoom();
+        updateSaveStatusUi('saving');
+        if (room.pending) await rebuildPendingFromCurrentSelection(room, 'save-selection-resync');
+        else await saveRoom(room);
+        notify(room.pending ? '저장 완료 · 현재 체크 항목을 서버 주입에도 반영했습니다.' : '🪽위시 RP Manager 저장 완료', 'success', 4600);
+        renderModalIfOpen();
+      } catch (e) {
+        updateSaveStatusUi('error');
+        notify(`저장/주입 반영 실패: ${e.message}`, 'error', 6500);
+      }
     };
 
     overlay.querySelector('#rpcm-arm').onclick = async () => {
@@ -6386,6 +6447,19 @@ NO → 압축한다.
       overlay.querySelector('#rpcm-show-raw').onclick = async () => {
         try { await showInjectedRaw(room); }
         catch (e) { notify(`확인 실패: ${e.message}`, 'error', 6000); }
+      };
+      overlay.querySelector('#rpcm-resync-selected').onclick = async () => {
+        const button = overlay.querySelector('#rpcm-resync-selected');
+        try {
+          button.disabled = true;
+          readModalIntoRoom();
+          await rebuildPendingFromCurrentSelection(room, 'manual-selection-resync');
+          notify('현재 체크 항목을 carrier에 다시 반영했습니다. ‘주입 내용 확인’에서 확인할 수 있습니다.', 'success', 5200);
+          renderModalIfOpen();
+        } catch (e) {
+          button.disabled = false;
+          notify(`체크 항목 반영 실패: ${e.message}`, 'error', 6500);
+        }
       };
       overlay.querySelector('#rpcm-reverify').onclick = async () => {
         try {
