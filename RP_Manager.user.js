@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🪽위시 RP Manager
 // @namespace    local.rp.context.manager
-// @version      0.9.3
+// @version      0.9.4
 // @description  장기 RP용 현재상태·날짜로그·캐릭터 설정·OOC를 관리하고 필요한 컨텍스트를 자동 주입합니다.
 // @author       User
 // @license      All Rights Reserved
@@ -33,13 +33,13 @@
   // 버전별 키를 쓰면 구버전과 신버전이 동시에 설치됐을 때 둘 다 실행될 수 있습니다.
   // 모든 버전이 공유하는 고정 키로 중복 실행을 막습니다.
   if (window.__WISH_RP_MANAGER_LOADED__) return;
-  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.9.1', loadedAt: Date.now() };
+  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.9.2', loadedAt: Date.now() };
   // 같은 페이지에 남아 있는 v0.8.10 복사본이 뒤늦게 시작되는 경우도 차단합니다.
   window.__RP_MANAGER_0810_LOADED__ = true;
 
   const APP = {
     name: '🪽위시 RP Manager',
-    version: '0.9.1',
+    version: '0.9.2',
     dbName: 'RPContextManagerDB',
     dbVersion: 2,
     storeName: 'rooms',
@@ -1692,6 +1692,7 @@ NO → 압축한다.
     // v0.7 자동 기억 호출 설정: 기존 방은 보수적으로 OFF에서 시작합니다.
     room.autoCharacterDetection = !!room.autoCharacterDetection;
     room.autoCharacterLibraryId = String(room.autoCharacterLibraryId || '');
+    room.lastExtraLibraryId = String(room.lastExtraLibraryId || '');
     room.autoCharacterResetOnReappear = room.autoCharacterResetOnReappear !== false;
     room.autoLogRecallEnabled = !!room.autoLogRecallEnabled;
     room.autoLogRecentBlocks = [1,2].includes(Number(room.autoLogRecentBlocks)) ? Number(room.autoLogRecentBlocks) : APP.defaultRecentLogBlocks;
@@ -1777,6 +1778,22 @@ NO → 압축한다.
       .sort((a, b) => new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0));
   }
 
+  function extraLibraryDisplayName(lib) {
+    return String(lib?.presetName || lib?.label || '기타 설정집').trim() || '기타 설정집';
+  }
+
+  function extraPresetScopeIdFromName(name) {
+    const normalized = normalizedLibraryLabel(name) || '기타 설정집';
+    return `extra-preset:${encodeURIComponent(normalized)}`;
+  }
+
+  async function listUsableExtraLibraries() {
+    const all = await getAllCharacterLibraries();
+    return all
+      .filter(lib => Array.isArray(lib?.extras) && lib.extras.length)
+      .sort((a, b) => new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0));
+  }
+
   function getCharacterLibraryScopeCandidates(room = state.currentRoom) {
     const raw = [];
     const pathId = getCharacterIdFromPath();
@@ -1859,28 +1876,11 @@ NO → 압축한다.
       .replace(/-->/g, '--\u200B>');
   }
 
-  function stripStatusHudBlocks(text, preserveLineBreaks = false) {
-    // 채팅 상·하단에 렌더링되는 상태창은 보통 ``` ``` 안의 별도 블록입니다.
-    // 실제 RP 대사/서술까지 지우지 않도록 상태창 표식이나 구조가 확인된
-    // 펜스만 제거합니다. 이 함수는 감지용 복사본에만 적용됩니다.
-    const src = normalizeLineBreaks(String(text || ''));
-    const fenceRe = /```([^\n`]*)\n?([\s\S]*?)```/g;
-    const statusMarkerRe = /(?:상태\s*창|상태\s*HUD|HUD|status\s*(?:hud|window|panel|card)|character\s*(?:status|info)|current\s*(?:state|status)|현재\s*상태)/iu;
-    const statusFieldRe = /(?:위치|장소|상태|행동|관계|동행|성별|나이|age|gender|location|position|status|relationship)\s*[:：|｜]/iu;
-    const identityRe = /(?:\d{1,3}\s*세|남성|여성|남자|여자|male|female|age\s*[:：|｜]|gender\s*[:：|｜])/iu;
-    return src.replace(fenceRe, (full, info, body) => {
-      const probe = String(info || '') + '\n' + String(body || '').slice(0, 1800);
-      const isStatusHud = statusMarkerRe.test(probe) || (statusFieldRe.test(probe) && identityRe.test(probe));
-      if (!isStatusHud) return full;
-      return preserveLineBreaks ? '\n' : ' ';
-    });
-  }
-
   function stripAutomationNoise(text, preserveLineBreaks = false) {
     let src = String(text || '');
     src = stripOurContextBlock(src).text || src;
     // 마커가 이스케이프되거나 본문 중간에 남은 경우도 자동 검색 자료에서 제거합니다.
-    // Manager가 숨김 주입한 현재상태·날짜로그·기타가 캐릭터 후보를 만드는 일을 막는 2차 안전장치입니다.
+    // 현재상태·날짜로그·기타가 캐릭터 후보를 만드는 일을 막는 2차 안전장치입니다.
     src = src
       .replace(/\\?<!--RP_CONTEXT_MANAGER_START[\s\S]*?RP_CONTEXT_MANAGER_END-->/gi, ' ')
       .replace(/\\?&lt;!--RP_CONTEXT_MANAGER_START[\s\S]*?RP_CONTEXT_MANAGER_END--&gt;/gi, ' ')
@@ -1888,29 +1888,6 @@ NO → 압축한다.
       // 로어 인젝터의 참고 블록도 자동 캐릭터/과거로그 검색 대상에서 제외합니다.
       .replace(/<ooc_lore_context>[\s\S]*?<\/ooc_lore_context>/gi, ' ')
       .replace(/&lt;ooc_lore_context&gt;[\s\S]*?&lt;\/ooc_lore_context&gt;/gi, ' ');
-
-    // 화면에 보이는 상태창(HUD)도 RP 본문이 아니므로 이름 감지에서 제외합니다.
-    src = stripStatusHudBlocks(src, preserveLineBreaks);
-
-    // 자동 감지에서 숨김 참고자료를 제외합니다.
-    // Manager 블록은 위에서 전용 마커로 제거하고, 아래는 로어 인젝터가
-    // 사용하는 HTML 주석·참고용 커스텀 태그·마크다운 주석의 호환 정리입니다.
-    // 일반 RP 본문은 건드리지 않고 숨김 컨테이너 자체만 제거합니다.
-    const hiddenReferenceTag = '(?:ooc[-_ ]?lore(?:[-_ ]?(?:context|reference|inject(?:or)?|refiner))?|lore[-_ ]?(?:context|reference|inject(?:or)?|refiner)|(?:rp|hidden|private|memory)[-_ ]?(?:lore[-_ ]?)?(?:context|reference)|lore[-_ ]?inject(?:or)?[-_ ]?(?:context|reference)?)';
-    try {
-      const pairedTag = new RegExp('<' + hiddenReferenceTag + '\\b[^>]*>[\\s\\S]*?</' + hiddenReferenceTag + '>', 'gi');
-      const pairedEscapedTag = new RegExp('&lt;' + hiddenReferenceTag + '\\b[^&]*&gt;[\\s\\S]*?&lt;/' + hiddenReferenceTag + '&gt;', 'gi');
-      src = src.replace(pairedTag, ' ').replace(pairedEscapedTag, ' ');
-    } catch (_) {}
-    // HTML/JS 주석은 화면에 표시되지 않는 참고자료로 사용되는 경우가 많습니다.
-    // 이 단계는 감지용 복사본에만 적용되며 서버 원문은 변경하지 않습니다.
-    src = src
-      // 시작/종료 표식이 각각 별도 주석인 로어 인젝터 형식도 한 번에 제거합니다.
-      .replace(/<!--\s*(?:LORE|OOC[_ -]?LORE|LORE[_ -]?(?:INJECTOR|CONTEXT|REFERENCE)|RP[_ -]?LORE|HIDDEN[_ -]?(?:CONTEXT|REFERENCE)|로어|참고|숨김)[^>\n]*?(?:START|BEGIN)\b[\s\S]*?<!--\s*(?:LORE|OOC[_ -]?LORE|LORE[_ -]?(?:INJECTOR|CONTEXT|REFERENCE)|RP[_ -]?LORE|HIDDEN[_ -]?(?:CONTEXT|REFERENCE)|로어|참고|숨김)[^>\n]*?(?:END|FINISH)\b[^>]*-->/gi, ' ')
-      .replace(/<!--[\s\S]*?-->/g, ' ')
-      .replace(/&lt;!--[\s\S]*?--&gt;/gi, ' ')
-      .replace(/\{\/\*[\s\S]*?\*\/\}/g, ' ')
-      .replace(/(?:^|\n)[ \t]*\[\/\/\]:[ \t]*#[ \t]*\([\s\S]*?\)[ \t]*(?=\n|$)/g, ' ');
     if (preserveLineBreaks) {
       return normalizeLineBreaks(src)
         .replace(/[^\S\n]+/g, ' ')
@@ -1972,29 +1949,17 @@ NO → 압축한다.
     return [...new Set(terms)].sort((a,b) => b.length - a.length);
   }
 
-  function characterCandidateEvidence(text, item) {
+  function characterRpDetectionEvidence(text, item) {
     const terms = characterDetectionTerms(item);
     if (!terms.length) return { accepted:false, confidence:0, matched:'', reason:'감지 이름 없음' };
-
-    // 설정 제목·이름 라벨·나이/외형 등의 ‘설정 신호’는 요구하지 않습니다.
-    // 숨김 참고자료를 제거한 실제 RP 본문에서 캐릭터 이름 또는 별칭이
-    // 한 번이라도 등장하면 감지로 인정합니다.
-    const cleaned = stripAutomationNoise(text, true);
-    let directMatch = null;
-    for (const term of terms) {
-      if (!aliasAppears(cleaned, term)) continue;
-      const isPrimaryName = term === String(item?.title || '').trim();
-      const evidence = {
-        accepted: true,
-        confidence: isPrimaryName ? 99 : 97,
-        matched: term,
-        reason: '실제 RP 본문에서 이름/별칭 등장',
-      };
-      if (!directMatch || evidence.confidence > directMatch.confidence || (evidence.confidence === directMatch.confidence && term.length > directMatch.matched.length)) {
-        directMatch = evidence;
-      }
-    }
-    return directMatch || { accepted:false, confidence:0, matched:'', reason:'실제 RP 본문 이름/별칭 미감지' };
+    const haystack = String(text || '');
+    const matched = terms.find(term => aliasAppears(haystack, term)) || '';
+    if (!matched) return { accepted:false, confidence:0, matched:'', reason:'실제 RP 본문에서 이름 미감지' };
+    const title = String(item?.title || '').trim().replace(/\s+/g, ' ').toLowerCase();
+    const normalizedMatch = matched.replace(/\s+/g, ' ').toLowerCase();
+    const formalTerms = new Set(characterAutomaticTerms(item).map(term => term.toLowerCase()));
+    const confidence = normalizedMatch === title ? 99 : formalTerms.has(normalizedMatch) ? 97 : 94;
+    return { accepted:true, confidence, matched, reason:`실제 RP 본문에서 “${matched}” 감지` };
   }
 
   const LOG_STOPWORDS = new Set([
@@ -2555,7 +2520,7 @@ NO → 압축한다.
     }, timeout);
   }
 
-  function openCharacterSelectionDialog({ title, description = '', items = [], confirmText = '확인', preserveOption = false, preserveDefault = true }) {
+  function openCharacterSelectionDialog({ title, description = '', items = [], confirmText = '확인', preserveOption = false, preserveDefault = true, itemFallback = '캐릭터', preserveText = '설정집에 이미 있는 미선택 캐릭터는 그대로 유지' }) {
     return new Promise(resolve => {
       const old = document.getElementById('rpcm-lib-dialog-backdrop');
       if (old) old.remove();
@@ -2566,8 +2531,8 @@ NO → 압축한다.
         <div class="rpcm-lib-dialog" role="dialog" aria-modal="true">
           <div class="rpcm-lib-dialog-head"><div><div class="rpcm-lib-dialog-title">${esc(title)}</div>${description ? `<div class="rpcm-lib-dialog-desc">${esc(description)}</div>` : ''}</div><button type="button" class="rpcm-lib-close">✕</button></div>
           <div class="rpcm-lib-toolbar"><button type="button" class="rpcm-lib-small" data-act="all">전체 선택</button><button type="button" class="rpcm-lib-small" data-act="none">전체 해제</button><span class="rpcm-lib-selected">${safeItems.length}개 선택</span></div>
-          <div class="rpcm-lib-list">${safeItems.map(({item,index}) => `<label class="rpcm-lib-row"><input type="checkbox" data-lib-index="${index}" checked><span><strong>${esc(item.title || '캐릭터')}</strong><small>${formatCount(String(item.content || '').length)}자 · ${retentionLabel(item.retentionTurns)}</small></span></label>`).join('')}</div>
-          ${preserveOption ? `<label class="rpcm-lib-preserve"><input type="checkbox" id="rpcm-lib-preserve" ${preserveDefault ? 'checked' : ''}><span>설정집에 이미 있는 미선택 캐릭터는 그대로 유지</span></label>` : ''}
+          <div class="rpcm-lib-list">${safeItems.map(({item,index}) => `<label class="rpcm-lib-row"><input type="checkbox" data-lib-index="${index}" checked><span><strong>${esc(item.title || itemFallback)}</strong><small>${formatCount(String(item.content || '').length)}자 · ${retentionLabel(item.retentionTurns)}</small></span></label>`).join('')}</div>
+          ${preserveOption ? `<label class="rpcm-lib-preserve"><input type="checkbox" id="rpcm-lib-preserve" ${preserveDefault ? 'checked' : ''}><span>${esc(preserveText)}</span></label>` : ''}
           <div class="rpcm-lib-dialog-actions"><button type="button" class="rpcm-btn secondary" data-act="cancel">취소</button><button type="button" class="rpcm-btn primary" data-act="confirm">${esc(confirmText)}</button></div>
         </div>`;
       document.body.appendChild(backdrop);
@@ -2590,21 +2555,23 @@ NO → 압축한다.
     });
   }
 
-  function openLibraryPickerDialog(libraries, { title = '불러올 설정집 선택', confirmText = '이 설정집 선택' } = {}) {
+  function openLibraryPickerDialog(libraries, { title = '불러올 설정집 선택', confirmText = '이 설정집 선택', mode = 'character' } = {}) {
     return new Promise(resolve => {
       const old = document.getElementById('rpcm-lib-dialog-backdrop');
       if (old) old.remove();
       const backdrop = document.createElement('div');
       backdrop.id = 'rpcm-lib-dialog-backdrop';
       const safe = (libraries || []).map((lib, index) => ({ lib, index }));
+      const isExtra = mode === 'extra';
+      const displayNameOf = lib => isExtra ? extraLibraryDisplayName(lib) : libraryDisplayName(lib);
       backdrop.innerHTML = `
         <div class="rpcm-lib-dialog" role="dialog" aria-modal="true">
-          <div class="rpcm-lib-dialog-head"><div><div class="rpcm-lib-dialog-title">${esc(title)}</div><div class="rpcm-lib-dialog-desc">저장 위치와 관계없이 모든 🪽위시 RP Manager 설정집에서 선택합니다. 선택한 설정집의 이름도 여기서 수정할 수 있습니다.</div></div><button type="button" class="rpcm-lib-close">✕</button></div>
+          <div class="rpcm-lib-dialog-head"><div><div class="rpcm-lib-dialog-title">${esc(title)}</div><div class="rpcm-lib-dialog-desc">저장 위치와 관계없이 모든 🪽위시 RP Manager ${isExtra ? '기타 ' : '캐릭터 '}설정집에서 선택합니다. 선택한 설정집의 이름도 여기서 수정할 수 있습니다.</div></div><button type="button" class="rpcm-lib-close">✕</button></div>
           <div class="rpcm-lib-list">${safe.map(({lib,index}) => {
-            const nm = libraryDisplayName(lib);
-            const count = Array.isArray(lib.characters) ? lib.characters.length : 0;
+            const nm = displayNameOf(lib);
+            const count = isExtra ? (Array.isArray(lib.extras) ? lib.extras.length : 0) : (Array.isArray(lib.characters) ? lib.characters.length : 0);
             const source = lib.sourceLabel || lib.sourceLabels?.[0] || '';
-            return `<div class="rpcm-lib-row rpcm-library-row"><label class="rpcm-lib-row-main"><input type="radio" name="rpcm-library-choice" data-lib-index="${index}" ${index === 0 ? 'checked' : ''}><span><strong data-lib-name="${index}">${esc(nm)}</strong><small>${count}명${source ? ` · 저장 출처 ${esc(source)}` : ''}</small></span></label><button type="button" class="rpcm-lib-rename-icon" data-rename-index="${index}" title="설정집 이름 수정" aria-label="${esc(nm)} 이름 수정"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></button></div>`;
+            return `<div class="rpcm-lib-row rpcm-library-row"><label class="rpcm-lib-row-main"><input type="radio" name="rpcm-library-choice" data-lib-index="${index}" ${index === 0 ? 'checked' : ''}><span><strong data-lib-name="${index}">${esc(nm)}</strong><small>${count}${isExtra ? '개' : '명'}${source ? ` · 저장 출처 ${esc(source)}` : ''}</small></span></label><button type="button" class="rpcm-lib-rename-icon" data-rename-index="${index}" title="설정집 이름 수정" aria-label="${esc(nm)} 이름 수정"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></button></div>`;
           }).join('')}</div>
           <div class="rpcm-lib-dialog-actions"><button type="button" class="rpcm-btn secondary" data-act="cancel">취소</button><button type="button" class="rpcm-btn primary" data-act="confirm">${esc(confirmText)}</button></div>
         </div>`;
@@ -2615,14 +2582,14 @@ NO → 압축한다.
       async function renameLibraryAtIndex(index) {
         const lib = libraries[index];
         if (!lib) return;
-        const before = libraryDisplayName(lib);
+        const before = displayNameOf(lib);
         const entered = prompt('설정집 새 이름을 입력해 주세요.', before);
         if (entered === null) return;
         const nextName = String(entered || '').trim();
         if (!nextName) { notify('설정집 이름을 입력해 주세요.', 'warn'); return; }
         if (nextName === before) return;
         const nextKey = normalizedLibraryLabel(nextName);
-        const duplicated = libraries.some((other, otherIndex) => otherIndex !== index && normalizedLibraryLabel(libraryDisplayName(other)) === nextKey);
+        const duplicated = libraries.some((other, otherIndex) => otherIndex !== index && normalizedLibraryLabel(displayNameOf(other)) === nextKey);
         if (duplicated) { notify('같은 이름의 설정집이 이미 있습니다.', 'warn', 4500); return; }
         try {
           const updated = { ...lib, presetName: nextName, label: nextName };
@@ -2635,8 +2602,10 @@ NO → 압축한다.
             renameBtn.title = '설정집 이름 수정';
             renameBtn.setAttribute('aria-label', `${nextName} 이름 수정`);
           }
-          const autoOpt = document.querySelector(`#rpcm-auto-char-library option[value="${CSS.escape(String(updated.scopeId || ''))}"]`);
-          if (autoOpt) autoOpt.textContent = `${nextName} (${Array.isArray(updated.characters) ? updated.characters.length : 0}명)`;
+          if (!isExtra) {
+            const autoOpt = document.querySelector(`#rpcm-auto-char-library option[value="${CSS.escape(String(updated.scopeId || ''))}"]`);
+            if (autoOpt) autoOpt.textContent = `${nextName} (${Array.isArray(updated.characters) ? updated.characters.length : 0}명)`;
+          }
           notify(`설정집 이름을 ‘${nextName}’(으)로 수정했습니다.`, 'success', 4200);
         } catch (e) {
           notify(`설정집 이름 수정 실패: ${e.message}`, 'error', 5500);
@@ -3074,6 +3043,7 @@ NO → 압축한다.
       pending: null,
       autoCharacterDetection: false,
       autoCharacterLibraryId: '',
+      lastExtraLibraryId: '',
       autoCharacterResetOnReappear: true,
       autoLogRecallEnabled: false,
       autoLogRecentBlocks: APP.defaultRecentLogBlocks,
@@ -3157,7 +3127,7 @@ NO → 압축한다.
   }
 
   async function saveCharacterLibrary(library) {
-    if (!library?.scopeId) throw new Error('캐릭터 설정집 범위를 찾지 못했습니다.');
+    if (!library?.scopeId) throw new Error('설정집 식별자를 찾지 못했습니다.');
     library.updatedAt = nowIso();
     await new Promise((resolve, reject) => {
       const tx = state.db.transaction(APP.libraryStoreName, 'readwrite');
@@ -3221,6 +3191,56 @@ NO → 압축한다.
       slot.retentionTurns = normalizeRetentionTurns(src.retentionTurns);
       slot.autoExcluded = !!slot.autoExcluded;
       slot.enabled = false; // 불러온 항목은 현재 방에서 사용자가 직접 체크
+    }
+    normalizeRoomSlots(room);
+    return { count: (selectedItems || []).length, added, updated };
+  }
+
+  function extraSlotsForLibrary(room) {
+    return (room?.slots || [])
+      .filter(slot => slot.group === 'extra' && String(slot.content || '').trim())
+      .map(slot => ({
+        title: String(slot.title || '기타').trim() || '기타',
+        content: String(slot.content || ''),
+        retentionTurns: normalizeRetentionTurns(slot.retentionTurns),
+      }));
+  }
+
+  function mergeExtraLibraryItems(existingItems, selectedItems, preserveUnselected = true) {
+    if (!preserveUnselected) return (selectedItems || []).map(item => ({ ...item }));
+    const result = (existingItems || []).map(item => ({ ...item }));
+    const index = new Map(result.map((item, i) => [libraryItemKey(item), i]));
+    for (const item of selectedItems || []) {
+      const key = libraryItemKey(item);
+      const next = { ...item };
+      if (key && index.has(key)) result[index.get(key)] = next;
+      else { index.set(key, result.length); result.push(next); }
+    }
+    return result;
+  }
+
+  function applySelectedExtraLibraryToRoom(room, selectedItems) {
+    const extras = (room.slots || []).filter(slot => slot.group === 'extra');
+    const byKey = new Map(extras.map(slot => [libraryItemKey(slot), slot]));
+    let reusableDefault = extras.find(slot => /^기타(?:\s+\d+)?$/.test(String(slot.title || '').trim()) && !String(slot.content || '').trim() && !slot.enabled) || null;
+    let added = 0, updated = 0;
+    for (const src of selectedItems || []) {
+      const key = libraryItemKey(src);
+      let slot = key ? byKey.get(key) : null;
+      if (!slot && reusableDefault) {
+        slot = reusableDefault;
+        reusableDefault = null;
+        updated++;
+      } else if (!slot) {
+        slot = makeDynamicSlot('extra', String(src.title || '기타'));
+        room.slots.push(slot);
+        added++;
+      } else { updated++; }
+      slot.title = String(src.title || '기타').trim() || '기타';
+      slot.content = String(src.content || '');
+      slot.retentionTurns = normalizeRetentionTurns(src.retentionTurns);
+      slot.enabled = false; // 다른 방에서 불러온 규칙은 확인 후 직접 체크
+      byKey.set(libraryItemKey(slot), slot);
     }
     normalizeRoomSlots(room);
     return { count: (selectedItems || []).length, added, updated };
@@ -4191,6 +4211,7 @@ NO → 압축한다.
       slots:(room?.slots || []).map(slot => ({ id:slot.id, title:slot.title, group:slot.group, enabled:!!slot.enabled, content:String(slot.content || ''), retentionTurns:Number(slot.retentionTurns || 0), aliases:slot.aliases || [], autoPinned:!!slot.autoPinned, autoExcluded:!!slot.autoExcluded })),
       autoCharacterDetection:!!room?.autoCharacterDetection,
       autoCharacterLibraryId:String(room?.autoCharacterLibraryId || ''),
+      lastExtraLibraryId:String(room?.lastExtraLibraryId || ''),
       autoLogRecallEnabled:!!room?.autoLogRecallEnabled,
       autoLogRecentBlocks:Number(room?.autoLogRecentBlocks || 0),
       autoLogRelatedBlocks:Number(room?.autoLogRelatedBlocks || 0),
@@ -4199,7 +4220,12 @@ NO → 압축한다.
   }
 
   function backupLibrarySignature(library) {
-    return JSON.stringify((library?.characters || []).map(item => ({ title:item.title, content:String(item.content || ''), aliases:item.aliases || [], retentionTurns:Number(item.retentionTurns || 0), autoPinned:!!item.autoPinned, autoExcluded:!!item.autoExcluded })));
+    return JSON.stringify({
+      kind:String(library?.kind || ''),
+      name:String(library?.presetName || library?.label || ''),
+      characters:(library?.characters || []).map(item => ({ title:item.title, content:String(item.content || ''), aliases:item.aliases || [], retentionTurns:Number(item.retentionTurns || 0), autoPinned:!!item.autoPinned, autoExcluded:!!item.autoExcluded })),
+      extras:(library?.extras || []).map(item => ({ title:item.title, content:String(item.content || ''), retentionTurns:Number(item.retentionTurns || 0) })),
+    });
   }
 
   function openBackupImportDialog(data, existingRooms = [], existingLibraries = []) {
@@ -4210,6 +4236,8 @@ NO → 압축한다.
       const existingLibraryMap = new Map((existingLibraries || []).map(lib => [String(lib.scopeId), lib]));
       const rooms = (Array.isArray(data?.rooms) ? data.rooms : []).filter(room => room?.chatId);
       const libraries = (Array.isArray(data?.characterLibraries) ? data.characterLibraries : []).filter(lib => lib?.scopeId);
+      const characterLibraries = libraries.filter(lib => Array.isArray(lib?.characters) && lib.characters.length);
+      const extraLibraries = libraries.filter(lib => Array.isArray(lib?.extras) && lib.extras.length);
       const backdrop = document.createElement('div');
       backdrop.id = 'rpcm-import-backdrop';
       backdrop.innerHTML = `
@@ -4225,8 +4253,10 @@ NO → 압축한다.
               const diff = !existing ? '신규' : backupRoomSignature(existing) === backupRoomSignature(room) ? '동일' : '변경 있음';
               return `<label class="rpcm-import-row${current ? ' is-current' : ''}${blocked ? ' is-blocked' : ''}"><input type="checkbox" data-room-id="${esc(room.chatId)}" ${blocked ? 'disabled' : ''}><span><strong>${current ? '● ' : ''}${esc(room.label || `RP ${shortId(room.chatId)}`)} <em class="rpcm-import-diff">${diff}</em></strong><small>${esc(backupRoomSummary(room))}${blocked ? ' · 현재 주입 중이라 복원 불가' : ''}</small></span></label>`;
             }).join('') : '<div class="rpcm-empty">백업에 채팅방 데이터가 없습니다.</div>'}
-            <div class="rpcm-import-group-title">캐릭터 설정집 · ${libraries.length}개</div>
-            ${libraries.length ? libraries.map(lib => { const existing = existingLibraryMap.get(String(lib.scopeId)); const diff = !existing ? '신규' : backupLibrarySignature(existing) === backupLibrarySignature(lib) ? '동일' : '변경 있음'; return `<label class="rpcm-import-row"><input type="checkbox" data-library-id="${esc(lib.scopeId)}"><span><strong>${esc(libraryDisplayName(lib) || lib.scopeId)} <em class="rpcm-import-diff">${diff}</em></strong><small>${Array.isArray(lib.characters) ? lib.characters.length : 0}명</small></span></label>`; }).join('') : '<div class="rpcm-empty">백업에 캐릭터 설정집이 없습니다.</div>'}
+            <div class="rpcm-import-group-title">캐릭터 설정집 · ${characterLibraries.length}개</div>
+            ${characterLibraries.length ? characterLibraries.map(lib => { const existing = existingLibraryMap.get(String(lib.scopeId)); const diff = !existing ? '신규' : backupLibrarySignature(existing) === backupLibrarySignature(lib) ? '동일' : '변경 있음'; return `<label class="rpcm-import-row"><input type="checkbox" data-library-id="${esc(lib.scopeId)}"><span><strong>${esc(libraryDisplayName(lib) || lib.scopeId)} <em class="rpcm-import-diff">${diff}</em></strong><small>${lib.characters.length}명</small></span></label>`; }).join('') : '<div class="rpcm-empty">백업에 캐릭터 설정집이 없습니다.</div>'}
+            <div class="rpcm-import-group-title">기타 설정집 · ${extraLibraries.length}개</div>
+            ${extraLibraries.length ? extraLibraries.map(lib => { const existing = existingLibraryMap.get(String(lib.scopeId)); const diff = !existing ? '신규' : backupLibrarySignature(existing) === backupLibrarySignature(lib) ? '동일' : '변경 있음'; return `<label class="rpcm-import-row"><input type="checkbox" data-library-id="${esc(lib.scopeId)}"><span><strong>${esc(extraLibraryDisplayName(lib) || lib.scopeId)} <em class="rpcm-import-diff">${diff}</em></strong><small>${lib.extras.length}개 항목</small></span></label>`; }).join('') : '<div class="rpcm-empty">백업에 기타 설정집이 없습니다.</div>'}
           </div>
           <div class="rpcm-import-note">선택한 채팅방은 같은 ID의 기존 데이터를 덮어씁니다. 주입 진행 상태는 복원하지 않습니다.</div>
           <div class="rpcm-lib-dialog-actions"><button type="button" class="rpcm-btn secondary rpcm-import-cancel">취소</button><button type="button" class="rpcm-btn primary rpcm-import-apply" disabled>선택 항목 복원</button></div>
@@ -4567,6 +4597,8 @@ NO → 압축한다.
   async function autoDetectCharacters(room, freshMessages) {
     if (!room.autoCharacterDetection) return { detected: [], added: 0, reset: 0 };
     const library = room.autoCharacterLibraryId ? await getCharacterLibrary(room.autoCharacterLibraryId) : null;
+    // Manager/로어가 숨겨 주입한 기억은 후보 근거로 쓰지 않습니다.
+    // 마커 블록을 제거하고 남은 실제 RP 본문에서만 등록 이름·별칭을 찾습니다.
     const text = (freshMessages || []).map(m => stripAutomationNoise(messageTextOf(m), true)).filter(Boolean).join('\n\n');
     const chars = (room.slots || []).filter(s => s.group === 'character');
     const byKey = new Map(chars.map(s => [libraryItemKey(s), s]));
@@ -4576,7 +4608,7 @@ NO → 압축한다.
     for (const src of (library?.characters || [])) {
       const key = libraryItemKey(src);
       let slot = byKey.get(key);
-      const evidence = text ? characterCandidateEvidence(text, src) : { accepted:false };
+      const evidence = text ? characterRpDetectionEvidence(text, src) : { accepted:false };
       const matched = evidence.accepted ? evidence.matched : null;
       // 📌 자동 고정은 '감지 이벤트'가 아니라 항상 유지되는 사용자 상태입니다.
       // 매 폴링마다 감지된 것으로 반환하면 토스트가 반복되고 모달이 재렌더링되어 스크롤이 위로 튀므로
@@ -4599,7 +4631,7 @@ NO → 압축한다.
       slot.enabled = true;
       slot.lastAutoMatch = matched;
       slot.lastAutoConfidence = Number(evidence.confidence || 0);
-      slot.lastAutoReason = String(evidence.reason || '실제 RP 본문에서 이름/별칭 등장');
+      slot.lastAutoReason = String(evidence.reason || '실제 RP 본문 감지');
       slot.lastAutoDetectedAt = Date.now();
       detected.push({ slot, matched, confidence:slot.lastAutoConfidence, reason:slot.lastAutoReason });
 
@@ -5162,8 +5194,8 @@ NO → 압축한다.
       #rpcm-fab.rpcm-armed .rpcm-dot{background:#22c55e!important;box-shadow:0 0 0 2px rgba(34,197,94,.16)!important}
       #rpcm-fab[hidden]{display:none!important}
       #rpcm-fab .rpcm-fab-wing{display:none!important}
-      #rpcm-fab.rpcm-fallback{position:fixed!important;z-index:2147483645!important;height:34px!important;margin:0!important;border-radius:999px!important;box-shadow:0 4px 14px rgba(0,0,0,.24)!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important;filter:none!important}#rpcm-fab.rpcm-compact-fallback{width:42px!important;min-width:42px!important;padding:0!important}#rpcm-fab.rpcm-compact-fallback .rpcm-fab-label{display:none!important}#rpcm-fab.rpcm-compact-fallback .rpcm-fab-wing{display:inline!important;font-size:18px!important;line-height:1!important}
-      #rpcm-fab.rpcm-mobile-fab{width:42px!important;min-width:42px!important;height:42px!important;min-height:42px!important;padding:0!important;border-radius:50%!important;right:auto!important;touch-action:manipulation!important;-webkit-tap-highlight-color:transparent!important;box-shadow:none!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important;filter:none!important}
+      #rpcm-fab.rpcm-fallback{position:fixed!important;z-index:2147483645!important;height:34px!important;margin:0!important;border-radius:999px!important;box-shadow:0 4px 14px rgba(0,0,0,.35)!important;backdrop-filter:blur(8px)!important}#rpcm-fab.rpcm-compact-fallback{width:42px!important;min-width:42px!important;padding:0!important}#rpcm-fab.rpcm-compact-fallback .rpcm-fab-label{display:none!important}#rpcm-fab.rpcm-compact-fallback .rpcm-fab-wing{display:inline!important;font-size:18px!important;line-height:1!important}
+      #rpcm-fab.rpcm-mobile-fab{width:48px!important;min-width:48px!important;height:48px!important;min-height:48px!important;padding:0!important;border-radius:50%!important;right:14px!important;touch-action:manipulation!important;-webkit-tap-highlight-color:transparent!important;box-shadow:0 6px 20px rgba(0,0,0,.42)!important}
       #rpcm-fab.rpcm-mobile-fab .rpcm-fab-label{display:none!important}
       #rpcm-fab.rpcm-mobile-fab .rpcm-fab-wing{display:inline!important;font-size:22px!important;line-height:1!important}
       #rpcm-fab.rpcm-mobile-fab .rpcm-dot{position:absolute!important;right:5px!important;top:5px!important;width:8px!important;height:8px!important;border:1px solid rgba(24,24,24,.9)!important}
@@ -5197,7 +5229,7 @@ NO → 압축한다.
       .rpcm-footer{position:absolute;bottom:0;left:0;right:0;display:flex;gap:9px;align-items:center;padding:12px 18px;background:rgba(24,24,24,.96);border-top:1px solid #333;backdrop-filter:blur(8px)}
       #rpcm-modal-wrap{position:fixed;top:64px;right:16px;display:flex;flex-direction:column;max-height:calc(100vh - 140px);width:min(820px,calc(100vw - 32px));pointer-events:auto}
       .rpcm-btn{border:none;border-radius:9px;padding:10px 14px;font-weight:750;font-size:13px;cursor:pointer;white-space:nowrap}.rpcm-btn.primary{background:#df6298;color:#fff}.rpcm-btn.primary:hover{background:#d6538e}.rpcm-btn.secondary{background:#2a2a2a;color:#ddd;border:1px solid #3b3b3b}.rpcm-btn.secondary:hover{background:#353535}.rpcm-btn.warn{background:#92400e;color:#fff}.rpcm-btn.danger{background:#7f1d1d;color:#fff}.rpcm-btn:disabled{opacity:.4;cursor:not-allowed}.rpcm-footnote{font-size:11px;color:#777;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-      .rpcm-section{margin:16px 0 8px}.rpcm-section-head{display:flex;align-items:center;gap:8px;margin:0 2px 8px}.rpcm-section-head.rpcm-character-head{display:block}.rpcm-section-title{font-size:13px;font-weight:850;color:#d7d7d7}.rpcm-section-desc{font-size:11px;color:#747474;line-height:1.55}.rpcm-charlib-actions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-start;margin-top:10px}.rpcm-charlib-actions .rpcm-add-btn{margin-left:0}.rpcm-add-btn{margin-left:auto;border:1px solid #3b3b3b;background:#242424;color:#ccc;border-radius:8px;padding:7px 10px;font-size:11px;font-weight:700;cursor:pointer}.rpcm-add-btn:hover{background:#303030;color:#fff}.rpcm-delete-btn{border:1px solid #5a2a2a;background:#2a1818;color:#fca5a5;border-radius:7px;padding:6px 9px;font-size:11px;cursor:pointer;margin-left:8px}.rpcm-delete-btn:hover{background:#3a1b1b}.rpcm-fixed-note{font-size:11px;color:#777;margin:-2px 0 8px;line-height:1.55}.rpcm-guide-toggle{flex:0 0 auto;border:1px solid #6b3a55;background:#2a1a24;color:#e5a3c3;border-radius:6px;padding:3px 7px;font-size:9px;font-weight:750;cursor:pointer}.rpcm-guide-toggle:hover,.rpcm-guide-toggle.is-open{color:#fce7f3;background:#3a2130;border-color:#be5f91}.rpcm-guide-panel{margin:0 0 11px;border:1px solid #5d3149;border-left:3px solid #df6298;border-radius:8px;background:#20131b;overflow:hidden;box-shadow:inset 0 0 0 1px rgba(223,98,152,.04)}.rpcm-guide-panel[hidden]{display:none!important}.rpcm-guide-head{display:flex;align-items:center;gap:8px;padding:8px 9px;border-bottom:1px solid #4a293b;background:#291823;color:#d8a0bc;font-size:10px}.rpcm-guide-head span{flex:1}.rpcm-guide-icon{display:inline-flex;align-items:center;justify-content:center;width:28px;height:26px;padding:0;border:1px solid #71405a;border-radius:6px;background:#321d29;color:#efb5d1;cursor:pointer}.rpcm-guide-icon:hover{background:#452638;color:#fff1f7;border-color:#c46497}.rpcm-guide-icon svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}.rpcm-guide-reset{height:26px;padding:0 8px;border:1px solid #71405a;border-radius:6px;background:#321d29;color:#e6abc8;font-size:9px;font-weight:700;cursor:pointer}.rpcm-guide-reset:hover{background:#452638;color:#fce7f3;border-color:#c46497}.rpcm-guide-textarea{display:block;width:100%;box-sizing:border-box;min-height:260px;max-height:420px;resize:vertical;border:0;background:#170f14;color:#eadbe3;padding:11px 12px;font:11px/1.58 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;outline:none;caret-color:#df6298}.rpcm-guide-textarea::selection{background:#7a3159;color:#fff}.rpcm-slot-options{display:flex;align-items:center;gap:8px;margin:0 0 8px;color:#888;font-size:11px}.rpcm-slot-options select{height:30px;border:1px solid #444;border-radius:7px;background:#232323;color:#eee;padding:0 8px;font:inherit}.rpcm-auto-panel{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:8px 0 10px;padding:10px 12px;border:1px solid #333;border-radius:10px;background:#191919;color:#aaa;font-size:11px}
+      .rpcm-section{margin:16px 0 8px}.rpcm-section-head{display:flex;align-items:center;gap:8px;margin:0 2px 8px}.rpcm-section-head.rpcm-character-head,.rpcm-section-head.rpcm-extra-head{display:block}.rpcm-section-title{font-size:13px;font-weight:850;color:#d7d7d7}.rpcm-section-desc{font-size:11px;color:#747474;line-height:1.55}.rpcm-charlib-actions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-start;margin-top:10px}.rpcm-charlib-actions .rpcm-add-btn{margin-left:0}.rpcm-add-btn{margin-left:auto;border:1px solid #3b3b3b;background:#242424;color:#ccc;border-radius:8px;padding:7px 10px;font-size:11px;font-weight:700;cursor:pointer}.rpcm-add-btn:hover{background:#303030;color:#fff}.rpcm-delete-btn{border:1px solid #5a2a2a;background:#2a1818;color:#fca5a5;border-radius:7px;padding:6px 9px;font-size:11px;cursor:pointer;margin-left:8px}.rpcm-delete-btn:hover{background:#3a1b1b}.rpcm-fixed-note{font-size:11px;color:#777;margin:-2px 0 8px;line-height:1.55}.rpcm-guide-toggle{flex:0 0 auto;border:1px solid #6b3a55;background:#2a1a24;color:#e5a3c3;border-radius:6px;padding:3px 7px;font-size:9px;font-weight:750;cursor:pointer}.rpcm-guide-toggle:hover,.rpcm-guide-toggle.is-open{color:#fce7f3;background:#3a2130;border-color:#be5f91}.rpcm-guide-panel{margin:0 0 11px;border:1px solid #5d3149;border-left:3px solid #df6298;border-radius:8px;background:#20131b;overflow:hidden;box-shadow:inset 0 0 0 1px rgba(223,98,152,.04)}.rpcm-guide-panel[hidden]{display:none!important}.rpcm-guide-head{display:flex;align-items:center;gap:8px;padding:8px 9px;border-bottom:1px solid #4a293b;background:#291823;color:#d8a0bc;font-size:10px}.rpcm-guide-head span{flex:1}.rpcm-guide-icon{display:inline-flex;align-items:center;justify-content:center;width:28px;height:26px;padding:0;border:1px solid #71405a;border-radius:6px;background:#321d29;color:#efb5d1;cursor:pointer}.rpcm-guide-icon:hover{background:#452638;color:#fff1f7;border-color:#c46497}.rpcm-guide-icon svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}.rpcm-guide-reset{height:26px;padding:0 8px;border:1px solid #71405a;border-radius:6px;background:#321d29;color:#e6abc8;font-size:9px;font-weight:700;cursor:pointer}.rpcm-guide-reset:hover{background:#452638;color:#fce7f3;border-color:#c46497}.rpcm-guide-textarea{display:block;width:100%;box-sizing:border-box;min-height:260px;max-height:420px;resize:vertical;border:0;background:#170f14;color:#eadbe3;padding:11px 12px;font:11px/1.58 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;outline:none;caret-color:#df6298}.rpcm-guide-textarea::selection{background:#7a3159;color:#fff}.rpcm-slot-options{display:flex;align-items:center;gap:8px;margin:0 0 8px;color:#888;font-size:11px}.rpcm-slot-options select{height:30px;border:1px solid #444;border-radius:7px;background:#232323;color:#eee;padding:0 8px;font:inherit}.rpcm-auto-panel{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:8px 0 10px;padding:10px 12px;border:1px solid #333;border-radius:10px;background:#191919;color:#aaa;font-size:11px}
 .rpcm-auto-note{flex-basis:100%;font-size:11px;line-height:1.55;color:#8d8d93;padding-top:2px}.rpcm-auto-note b{color:#b8b8bf;font-weight:650}.rpcm-auto-panel label{display:flex;gap:6px;align-items:center}.rpcm-auto-panel input[type=checkbox]{accent-color:#df6298}.rpcm-auto-panel select{height:30px;border:1px solid #444;border-radius:7px;background:#232323;color:#eee;padding:0 8px;font:inherit;max-width:260px}.rpcm-alias-row{display:grid;grid-template-columns:1fr auto auto;gap:8px;align-items:center;margin:0 0 8px}.rpcm-alias-input{height:32px;border:1px solid #404040;border-radius:7px;background:#1e1e1e;color:#ddd;padding:0 9px;font:11px/1.2 inherit;min-width:0}.rpcm-auto-exclude,.rpcm-auto-pin{display:flex;align-items:center;gap:5px;color:#888;font-size:10px;white-space:nowrap}.rpcm-auto-exclude input,.rpcm-auto-pin input{accent-color:#df6298}.rpcm-auto-terms{font-size:10px;color:#777;line-height:1.5;margin:-2px 0 8px;padding:6px 8px;border-left:2px solid #3b3b3b;background:#191919}.rpcm-auto-terms strong{color:#aaa}.rpcm-slot-remain{font-size:10px;font-weight:800;color:#fbbf24;border:1px solid rgba(245,158,11,.35);background:rgba(245,158,11,.08);padding:3px 6px;border-radius:6px}.rpcm-empty{border:1px dashed #343434;border-radius:10px;color:#666;font-size:12px;padding:14px;text-align:center;margin-bottom:9px}.rpcm-lib-dialog-backdrop{}#rpcm-lib-dialog-backdrop{position:fixed;inset:0;z-index:1000004;background:rgba(0,0,0,.62);display:flex;align-items:center;justify-content:center;padding:18px}.rpcm-lib-dialog{width:min(520px,94vw);max-height:min(720px,88vh);display:flex;flex-direction:column;background:#171717;border:1px solid #3b3b3b;border-radius:14px;box-shadow:0 24px 70px rgba(0,0,0,.55);color:#ddd;overflow:hidden}.rpcm-lib-dialog-head{display:flex;gap:12px;align-items:flex-start;padding:16px;border-bottom:1px solid #2d2d2d}.rpcm-lib-dialog-head>div:first-child{flex:1;min-width:0}.rpcm-lib-dialog-title{font-size:15px;font-weight:850;color:#f1f1f1}.rpcm-lib-dialog-desc{font-size:11px;color:#888;line-height:1.55;margin-top:4px}.rpcm-lib-close{border:0;background:transparent;color:#888;font-size:18px;cursor:pointer}.rpcm-lib-toolbar{display:flex;align-items:center;gap:6px;padding:10px 14px;border-bottom:1px solid #292929}.rpcm-lib-small{border:1px solid #3b3b3b;background:#222;color:#bbb;border-radius:7px;padding:6px 8px;font-size:11px;cursor:pointer}.rpcm-lib-selected{margin-left:auto;font-size:11px;color:#999}.rpcm-lib-list{overflow:auto;padding:8px 12px;min-height:80px}.rpcm-lib-row{display:flex;align-items:flex-start;gap:10px;padding:10px;border-radius:9px;cursor:pointer}.rpcm-lib-row:hover{background:#222}.rpcm-lib-row input{margin-top:2px;accent-color:#df6298}.rpcm-lib-row span{display:flex;flex-direction:column;gap:3px;min-width:0}.rpcm-lib-row strong{font-size:12px;color:#e8e8e8}.rpcm-lib-row small{font-size:10px;color:#777}.rpcm-library-row{align-items:center;padding:6px 8px}.rpcm-lib-row-main{display:flex;align-items:flex-start;gap:10px;flex:1;min-width:0;padding:4px 2px;cursor:pointer}.rpcm-lib-row-main input{margin-top:2px}.rpcm-lib-row-main span{flex:1}.rpcm-lib-rename-icon{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:30px;height:30px;border:1px solid transparent;border-radius:7px;background:transparent;color:#7d7d82;cursor:pointer;transition:background .16s,border-color .16s,color .16s}.rpcm-lib-rename-icon:hover{background:rgba(223,98,152,.10);border-color:rgba(223,98,152,.30);color:#df6298}.rpcm-lib-rename-icon svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}.rpcm-lib-preserve{display:flex;align-items:flex-start;gap:8px;margin:0 14px 8px;padding:10px;border:1px solid #333;border-radius:9px;background:#1d1d1d;font-size:11px;color:#aaa;line-height:1.45}.rpcm-lib-preserve input{margin-top:2px;accent-color:#df6298}.rpcm-lib-dialog-actions{display:flex;justify-content:flex-end;gap:8px;padding:12px 14px;border-top:1px solid #2d2d2d}
       .rpcm-tools{display:flex;gap:7px;flex-wrap:wrap;margin:12px 0 2px}.rpcm-mini{font-size:11px;padding:7px 9px;border-radius:7px;border:1px solid #3b3b3b;background:#232323;color:#aaa;cursor:pointer}.rpcm-mini:hover{color:#fff;background:#303030}.rpcm-shortcuts{flex-basis:100%;color:#666;font-size:10px;margin-top:3px}
       .rpcm-breakdown{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:18px;row-gap:0;margin-top:10px;border-top:1px solid #292929}.rpcm-breakdown-chip{display:flex;align-items:center;justify-content:flex-start;gap:7px;border:0;border-bottom:1px solid #292929;background:transparent;color:#777;border-radius:0;padding:6px 1px;font-size:10px}.rpcm-breakdown-chip strong{color:#bdbdbd;font-weight:700}.rpcm-breakdown-chip>span:last-child{margin-left:auto}.rpcm-auto-active{margin:0 0 12px;padding:10px 12px;border:1px solid #303030;border-radius:10px;background:#191919}.rpcm-auto-active-title{font-size:11px;font-weight:800;color:#bbb;margin-bottom:6px}.rpcm-auto-active-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:7px;align-items:center;padding:5px 0;border-top:1px solid #252525;font-size:10px;color:#888}.rpcm-auto-active-row:first-of-type{border-top:0}.rpcm-auto-badge{border:1px solid color-mix(in srgb,var(--rpcm-tone,#6f7782) 72%,#3c3c3c);border-radius:999px;padding:2px 7px;color:var(--rpcm-tone,#bbb);background:color-mix(in srgb,var(--rpcm-tone,#6f7782) 11%,transparent);font-weight:750}.rpcm-auto-active-row strong{display:block;color:#ddd;font-size:11px}.rpcm-auto-active-copy{min-width:0}.rpcm-auto-reason{display:block;color:#888;margin-top:1px}.rpcm-auto-evidence{display:block;margin-top:3px;color:#c496ac;font-size:9px;line-height:1.45}.rpcm-auto-active-meta{display:flex;align-items:center;justify-content:flex-end;gap:6px;white-space:nowrap}.rpcm-auto-inline-toggle{width:25px;height:24px;padding:0;border:1px solid #3b3b3b;border-radius:6px;background:#222;color:#aaa;cursor:pointer;font-size:11px;line-height:1}.rpcm-auto-inline-toggle:hover{border-color:#70405a;background:#2b1d25;color:#e9abc8}.rpcm-auto-inline-content{grid-column:1/-1;white-space:pre-wrap;word-break:break-word;max-height:220px;overflow:auto;margin:4px 0 3px;padding:9px 10px;border:1px solid #303030;border-left:2px solid #b55a84;border-radius:7px;background:#101010;color:#aaa;font:10px/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.rpcm-auto-inline-content[hidden]{display:none!important}.rpcm-warnings{margin:0 0 12px;padding:9px 11px;border:1px solid rgba(245,158,11,.35);background:rgba(245,158,11,.08);border-radius:9px;color:#fbbf24;font-size:10px;line-height:1.55}.rpcm-warning-action{display:inline-flex;align-items:center;margin-top:7px;padding:5px 8px;border:1px solid rgba(245,158,11,.45);border-radius:6px;background:rgba(245,158,11,.10);color:#fbbf24;font-size:10px;font-weight:750;cursor:pointer}.rpcm-warning-action:hover{background:rgba(245,158,11,.18);color:#fde68a}.rpcm-save-status{font-size:10px;white-space:nowrap}.rpcm-save-status.saved{color:#6b9f7b}.rpcm-save-status.saving{color:#d1a64b}.rpcm-save-status.error{color:#ef7777}#rpcm-log-dialog-backdrop{position:fixed;inset:0;z-index:1000005;background:rgba(0,0,0,.64);display:flex;align-items:center;justify-content:center;padding:18px}.rpcm-log-dialog{width:min(720px,95vw);max-height:min(820px,90vh);display:flex;flex-direction:column;background:#171717;border:1px solid #3b3b3b;border-radius:14px;overflow:hidden;color:#ddd}.rpcm-log-list{overflow:auto;padding:10px 12px}.rpcm-log-row{padding:10px 11px;border:1px solid #303030;border-radius:9px;background:#1d1d1d;margin-bottom:8px}.rpcm-log-row-head{display:flex;gap:8px;align-items:center}.rpcm-log-row-head strong{flex:1;font-size:12px}.rpcm-log-row-head span,.rpcm-log-row-reason{font-size:10px;color:#777}.rpcm-log-row-reason{margin-top:3px}.rpcm-log-row-controls{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:7px;font-size:10px;color:#aaa}.rpcm-log-row-controls label{display:flex;align-items:center;gap:4px}.rpcm-log-content{white-space:pre-wrap;word-break:break-word;max-height:220px;overflow:auto;background:#101010;border:1px solid #2d2d2d;border-radius:7px;padding:9px;margin:8px 0 0;color:#aaa;font:10px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.rpcm-log-help{padding:9px 14px;border-bottom:1px solid #292929;background:#1b1719;color:#9c9096;font-size:10px;line-height:1.55}.rpcm-log-help b{color:#d8b2c4}.rpcm-log-year,.rpcm-log-month{border:1px solid #2f2f2f;border-radius:10px;background:#191919;margin-bottom:9px;overflow:hidden}.rpcm-log-year>summary,.rpcm-log-month>summary{display:flex;align-items:center;gap:8px;cursor:pointer;list-style:none;padding:10px 11px;background:#1d1d1d;color:#ddd}.rpcm-log-year>summary::-webkit-details-marker,.rpcm-log-month>summary::-webkit-details-marker{display:none}.rpcm-log-year>summary:before,.rpcm-log-month>summary:before{content:"▸";color:#8b7c83;font-size:10px}.rpcm-log-year[open]>summary:before,.rpcm-log-month[open]>summary:before{content:"▾"}.rpcm-log-year>summary strong,.rpcm-log-month>summary strong{flex:1}.rpcm-log-year>summary span,.rpcm-log-month>summary span{color:#777;font-size:10px}.rpcm-log-month{margin:8px;border-color:#2a2a2a}.rpcm-log-month>summary{padding:8px 9px;background:#1b1b1b}.rpcm-log-groupbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 10px;border-top:1px solid #252525;border-bottom:1px solid #252525;background:#181518;color:#9b9095;font-size:10px}.rpcm-log-groupbar label{display:flex;align-items:center;gap:4px;cursor:pointer}.rpcm-log-groupbar input,.rpcm-log-manual{accent-color:#df6298}.rpcm-log-month .rpcm-log-row{margin:7px 8px;background:#1b1b1b}.rpcm-log-dialog .rpcm-spacer{flex:1}#rpcm-dup-dialog-backdrop{position:fixed;inset:0;z-index:1000006;background:rgba(0,0,0,.68);display:flex;align-items:center;justify-content:center;padding:18px}.rpcm-dup-dialog{width:min(860px,95vw)}.rpcm-dup-list{padding:12px 14px}.rpcm-dup-group{border:1px solid #3b3326;border-radius:10px;background:#1b1916;margin-bottom:12px;overflow:hidden}.rpcm-dup-group-head{display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid #332d24;background:#211d18}.rpcm-dup-group-head strong{color:#f0cf8a;font-size:12px}.rpcm-dup-group-head span{color:#8e8270;font-size:10px}.rpcm-dup-choice{margin:9px;border:1px solid #303030;border-radius:9px;background:#1b1b1b;overflow:hidden;transition:border-color .15s,box-shadow .15s}.rpcm-dup-choice.is-selected{border-color:#b75d86;box-shadow:0 0 0 1px rgba(223,98,152,.12)}.rpcm-dup-choice-head{display:flex;align-items:center;gap:8px;padding:8px 10px;background:#202020;cursor:pointer}.rpcm-dup-choice-head strong{flex:1;color:#ddd;font-size:11px}.rpcm-dup-choice-head span{color:#777;font-size:10px}.rpcm-dup-editor{display:block;width:100%;min-height:130px;max-height:260px;resize:vertical;box-sizing:border-box;border:0;border-top:1px solid #2b2b2b;background:#101010;color:#c7c7c7;padding:10px 11px;outline:none;font:10px/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.rpcm-dup-editor:focus{box-shadow:inset 0 0 0 1px rgba(223,98,152,.42)}
@@ -5478,79 +5510,58 @@ NO → 압축한다.
 
   function mobileManagerButtonStyles() {
     return `
-      :host{all:initial;background:transparent!important;box-shadow:none!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important;filter:none!important}
-      #mount{width:42px;height:42px;overflow:visible;pointer-events:none;background:transparent!important;box-shadow:none!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important;filter:none!important}
-      button{all:unset;box-sizing:border-box!important;position:relative!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;width:42px!important;height:42px!important;min-width:42px!important;min-height:42px!important;border:1px solid #f472b6!important;border-radius:50%!important;background:#24181f!important;color:#f9a8d4!important;box-shadow:none!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important;filter:none!important;font-family:-apple-system,BlinkMacSystemFont,"Pretendard",sans-serif!important;cursor:pointer!important;user-select:none!important;touch-action:manipulation!important;-webkit-tap-highlight-color:transparent!important;pointer-events:auto!important}
+      :host{all:initial}
+      #mount{width:48px;height:48px;pointer-events:none}
+      button{all:unset;box-sizing:border-box!important;position:relative!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;width:48px!important;height:48px!important;min-width:48px!important;min-height:48px!important;border:1px solid #f472b6!important;border-radius:50%!important;background:rgba(36,24,31,.94)!important;color:#f9a8d4!important;box-shadow:0 6px 20px rgba(0,0,0,.42)!important;font-family:-apple-system,BlinkMacSystemFont,"Pretendard",sans-serif!important;cursor:pointer!important;user-select:none!important;touch-action:manipulation!important;-webkit-tap-highlight-color:transparent!important;pointer-events:auto!important}
       button:focus-visible{outline:2px solid #f9a8d4!important;outline-offset:3px!important}
       button[hidden]{display:none!important}
       .rpcm-fab-label{display:none!important}
-      .rpcm-fab-wing{display:inline!important;font-size:20px!important;line-height:1!important}
-      .rpcm-dot{position:absolute!important;right:4px!important;top:4px!important;width:7px!important;height:7px!important;border:1px solid #24181f!important;border-radius:50%!important;background:#f9a8d4!important}
-      button.rpcm-armed{background:#55243d!important;border-color:#fb7185!important;color:#fff!important}
+      .rpcm-fab-wing{display:inline!important;font-size:22px!important;line-height:1!important}
+      .rpcm-dot{position:absolute!important;right:5px!important;top:5px!important;width:8px!important;height:8px!important;border:1px solid rgba(24,24,24,.9)!important;border-radius:50%!important;background:#f9a8d4!important}
+      button.rpcm-armed{background:rgba(85,36,61,.96)!important;border-color:#fb7185!important;color:#fff!important}
       button.rpcm-armed .rpcm-dot{background:#22c55e!important;box-shadow:0 0 0 2px rgba(34,197,94,.16)!important}
-      @media(prefers-color-scheme:light){button{background:#fff1f7!important;color:#b84f7e!important;border-color:#df6298!important}.rpcm-dot{border-color:#fff1f7!important}}
+      @media(prefers-color-scheme:light){button{background:#fff1f7!important;color:#b84f7e!important;border-color:#df6298!important}}
     `;
   }
+
   function setImportantStyle(el, name, value) {
     try { el?.style?.setProperty(name, value, 'important'); } catch (_) {}
   }
 
-  function findMobileModelSelectorButton() {
-    const header = findStableCrackHeaderActionRow();
-    const inHeader = findModelSelectorButtonInHeader(header);
-    if (inHeader && isElementVisible(inHeader)) return inHeader;
-
-    // 헤더 클래스가 바뀐 경우에도 모델 선택 버튼의 텍스트로 보조 탐색합니다.
-    const strongModelWord = /(하이퍼\s*챗|프로\s*챗|프리\s*챗|chat|gpt|claude|gemini|sonnet|opus|flash)/i;
+  function mobileManagerTopOffset() {
+    const viewportWidth = Math.max(1, window.innerWidth || document.documentElement.clientWidth || 1);
+    const viewportHeight = Math.max(1, window.visualViewport?.height || window.innerHeight || document.documentElement.clientHeight || 1);
+    const size = 48;
+    const right = 14;
+    const gap = 10;
+    let top = 76;
+    let obstacles = [];
     try {
-      return visibleButtonLikes(document)
-        .filter(el => el && el !== state.fab && !el.closest?.(`#${MANAGER_MOBILE_HOST_ID}`))
-        .filter(el => !el.closest?.('[role="dialog"],[aria-modal="true"],[role="menu"],[role="listbox"],[data-radix-popper-content-wrapper]'))
-        .filter(isElementVisible)
-        .map(el => ({ el, rect: el.getBoundingClientRect(), text: modelSelectorText(el) }))
-        .filter(x => x.rect.top >= 48 && x.rect.top <= 230 && x.rect.width >= 90 && x.rect.width <= 420 && x.rect.height >= 28 && x.rect.height <= 90 && strongModelWord.test(x.text))
-        .sort((a, b) => (b.rect.width - a.rect.width) || (a.rect.top - b.rect.top))[0]?.el || null;
-    } catch (_) { return null; }
-  }
+      obstacles = visibleButtonLikes(document).filter(el => {
+        if (el === state.fab || el.closest?.(`#${MANAGER_MOBILE_HOST_ID}`)) return false;
+        const rect = el.getBoundingClientRect();
+        return rect.width >= 24 && rect.height >= 24 && rect.width <= 180 && rect.height <= 180 &&
+          rect.right >= viewportWidth - 150 && rect.top <= 260 && rect.bottom >= 0;
+      }).map(el => el.getBoundingClientRect());
+    } catch (_) {}
 
-  function findMobileComposerRect() {
-    const viewportHeight = Math.max(1, window.visualViewport?.height || window.innerHeight || document.documentElement.clientHeight || 1);
-    const minWidth = Math.min(420, Math.max(280, Math.floor((window.innerWidth || 360) * .62)));
-    const editors = [...document.querySelectorAll('[contenteditable="true"],.ProseMirror,textarea,[placeholder*="메시지"],[aria-label*="메시지"]')]
-      .filter(isElementVisible)
-      .sort((a, b) => b.getBoundingClientRect().bottom - a.getBoundingClientRect().bottom);
-    for (const editor of editors) {
-      let node = editor;
-      let best = null;
-      for (let depth = 0; node && node !== document.body && depth < 7; depth++, node = node.parentElement) {
-        const rect = node.getBoundingClientRect();
-        if (rect.width >= minWidth && rect.height >= 42 && rect.height <= 300 &&
-            rect.bottom >= viewportHeight - 280 && rect.top < viewportHeight) {
-          best = rect;
-        }
-      }
-      if (best) return best;
+    for (let pass = 0; pass < 8; pass++) {
+      const target = {
+        left: viewportWidth - right - size,
+        right: viewportWidth - right,
+        top,
+        bottom: top + size,
+      };
+      const overlap = obstacles.find(rect =>
+        target.left < rect.right + gap && target.right > rect.left - gap &&
+        target.top < rect.bottom + gap && target.bottom > rect.top - gap
+      );
+      if (!overlap) break;
+      top = Math.min(Math.max(top + size + gap, overlap.bottom + gap), Math.max(76, viewportHeight - size - 18));
     }
-    return null;
+    return Math.round(top);
   }
 
-  function mobileManagerBottomOffset() {
-    const viewportHeight = Math.max(1, window.visualViewport?.height || window.innerHeight || document.documentElement.clientHeight || 1);
-    const composer = findMobileComposerRect();
-    // 입력창 위에 원래처럼 두되, 겹침을 피하도록 기존보다 6px 더 띄웁니다.
-    if (composer) {
-      const gap = 18;
-      const fromComposer = viewportHeight - composer.top + gap;
-      return Math.round(Math.min(420, Math.max(118, fromComposer)));
-    }
-    // 입력창이 아직 렌더링되지 않은 순간에도 버튼이 상단으로 튀지 않게 합니다.
-    return Math.round(Math.min(260, Math.max(146, viewportHeight * .14)));
-  }
-
-  function mobileManagerAnchorPosition() {
-    // 모바일은 모델 선택기 옆이 아니라 기존처럼 화면 오른쪽 아래에 둡니다.
-    return { right: 14, bottom: mobileManagerBottomOffset() };
-  }
   function ensureManagerMobileHostGuard() {
     if (managerMobileHostGuard || !document.documentElement) return;
     managerMobileHostGuard = new MutationObserver(() => {
@@ -5591,30 +5602,20 @@ NO → 압축한다.
       }
     }
 
-    const position = mobileManagerAnchorPosition();
+    const top = mobileManagerTopOffset();
     setImportantStyle(managerMobileHost, 'position', 'fixed');
-    setImportantStyle(managerMobileHost, 'width', '42px');
-    setImportantStyle(managerMobileHost, 'height', '42px');
-    managerMobileHost.style.removeProperty('left');
-    managerMobileHost.style.removeProperty('top');
+    setImportantStyle(managerMobileHost, 'width', '48px');
+    setImportantStyle(managerMobileHost, 'height', '48px');
+    setImportantStyle(managerMobileHost, 'right', '14px');
+    managerMobileHost.style.removeProperty('bottom');
+    setImportantStyle(managerMobileHost, 'top', `max(calc(env(safe-area-inset-top, 0px) + 12px), ${top}px)`);
     setImportantStyle(managerMobileHost, 'z-index', '2147483646');
     setImportantStyle(managerMobileHost, 'pointer-events', 'none');
-    setImportantStyle(managerMobileHost, 'overflow', 'visible');
-    // paint containment은 원형 버튼의 그림자를 사각형으로 잘라 보이게 하므로 사용하지 않습니다.
-    setImportantStyle(managerMobileHost, 'contain', 'none');
-    setImportantStyle(managerMobileHost, 'isolation', 'isolate');
-    setImportantStyle(managerMobileHost, 'background', 'transparent');
-    setImportantStyle(managerMobileHost, 'box-shadow', 'none');
-    setImportantStyle(managerMobileHost, 'backdrop-filter', 'none');
-    setImportantStyle(managerMobileHost, '-webkit-backdrop-filter', 'none');
-    setImportantStyle(managerMobileHost, 'filter', 'none');
-    setImportantStyle(managerMobileHost, 'opacity', '1');
-    ensureManagerMobileHostGuard();
-    if (!position) return managerMobileMount;
-    setImportantStyle(managerMobileHost, 'right', String(position.right) + 'px');
-    setImportantStyle(managerMobileHost, 'bottom', 'calc(' + String(position.bottom) + 'px + env(safe-area-inset-bottom, 0px))');
+    setImportantStyle(managerMobileHost, 'contain', 'layout style paint');
     setImportantStyle(managerMobileHost, 'visibility', 'visible');
+    setImportantStyle(managerMobileHost, 'opacity', '1');
     setImportantStyle(managerMobileHost, 'display', 'block');
+    ensureManagerMobileHostGuard();
     return managerMobileMount;
   }
 
@@ -5853,13 +5854,13 @@ NO → 압축한다.
             </div>
 
             <div class="rpcm-section" id="rpcm-section-character">
-              <div class="rpcm-section-head rpcm-character-head"><div><div class="rpcm-section-title">캐릭터 설정</div><div class="rpcm-section-desc">캐릭터별로 저장·체크하고 인물마다 유지 주기를 따로 설정합니다.<br>자동 감지는 숨김 주입·로어 참고자료를 제외한 최근 RP 본문에서 이름·별칭이 등장한 캐릭터를 감지합니다.<br>‘추가 별칭’은 설정팩에 없는 애칭·약칭·호칭을 등록할 때만 사용합니다. 체크 상태와 남은 턴은 공유하지 않습니다.</div></div><div class="rpcm-charlib-actions"><button class="rpcm-add-btn" id="rpcm-charlib-save">설정집 저장</button><button class="rpcm-add-btn" id="rpcm-charlib-load">설정집 불러오기</button><button class="rpcm-add-btn" id="rpcm-add-character">＋ 캐릭터 추가</button></div></div>
+              <div class="rpcm-section-head rpcm-character-head"><div><div class="rpcm-section-title">캐릭터 설정</div><div class="rpcm-section-desc">캐릭터별로 저장·체크하고 인물마다 유지 주기를 따로 설정합니다.<br>자동 감지는 최근 실제 RP 본문에서 정식 이름·성·영문명·등록 별칭을 확인합니다. Manager가 숨겨 주입한 현재상태·날짜로그·캐릭터·기타/OOC와 로어 참고 블록은 감지 대상에서 제외합니다.<br>‘추가 별칭’은 설정팩에 없는 애칭·약칭·호칭을 등록할 때만 사용합니다. 체크 상태와 남은 턴은 공유하지 않습니다.</div></div><div class="rpcm-charlib-actions"><button class="rpcm-add-btn" id="rpcm-charlib-save">설정집 저장</button><button class="rpcm-add-btn" id="rpcm-charlib-load">설정집 불러오기</button><button class="rpcm-add-btn" id="rpcm-add-character">＋ 캐릭터 추가</button></div></div>
               <div class="rpcm-auto-panel"><label><input type="checkbox" id="rpcm-auto-char" ${room.autoCharacterDetection ? 'checked' : ''}> 캐릭터 자동 감지</label><label>자동감지 설정집 <select id="rpcm-auto-char-library"><option value="">선택 안 함</option></select></label><label><input type="checkbox" id="rpcm-auto-char-reset" ${room.autoCharacterResetOnReappear ? 'checked' : ''}> 다시 등장하면 유지턴 리셋</label><div class="rpcm-auto-note">자동 감지·관련 로그 선택은 주입 전에도 <b>다음 주입 준비</b>를 위해 갱신됩니다. 실제 서버 숨김 주입은 <b>주입 시작</b>을 누른 뒤에만 동작합니다.</div></div>
               <div id="rpcm-character-slots"></div>
             </div>
 
             <div class="rpcm-section" id="rpcm-section-extra">
-              <div class="rpcm-section-head"><div><div class="rpcm-section-title">기타</div><div class="rpcm-section-desc">OOC, 출력 규칙, 사칭방지 프롬 등 자주 채팅에 붙여오는 것들을 자유롭게 추가합니다.</div></div><button class="rpcm-add-btn" id="rpcm-add-extra">＋ 기타 추가</button></div>
+              <div class="rpcm-section-head rpcm-extra-head"><div><div class="rpcm-section-title">기타</div><div class="rpcm-section-desc">OOC, 출력 규칙, 사칭방지 프롬 등 자주 채팅에 붙여오는 항목을 설정집으로 저장해 다른 방에서도 불러올 수 있습니다.</div></div><div class="rpcm-charlib-actions"><button class="rpcm-add-btn" id="rpcm-extralib-save">기타 설정집 저장</button><button class="rpcm-add-btn" id="rpcm-extralib-load">기타 설정집 불러오기</button><button class="rpcm-add-btn" id="rpcm-add-extra">＋ 기타 추가</button></div></div>
               <div id="rpcm-extra-slots"></div>
             </div>
 
@@ -6125,6 +6126,20 @@ NO → 압축한다.
         refreshStatsOnly();
       };
       if (titleInput) {
+        // 기본 이름은 클릭 즉시 비워 새 이름을 바로 입력할 수 있게 합니다.
+        // 아무것도 입력하지 않고 빠져나오면 안전하게 '기타'로 되돌립니다.
+        if (slot.group === 'extra') {
+          titleInput.addEventListener('focus', () => {
+            if (/^기타(?:\s+\d+)?$/.test(titleInput.value.trim())) titleInput.value = '';
+          });
+          titleInput.addEventListener('blur', () => {
+            if (titleInput.value.trim()) return;
+            titleInput.value = '기타';
+            slot.title = '기타';
+            name.textContent = '기타';
+            queueRoomAutoSave(room);
+          });
+        }
         titleInput.oninput = () => {
           slot.title = titleInput.value;
           name.textContent = titleInput.value || (slot.group === 'character' ? '새 캐릭터' : '기타');
@@ -6533,6 +6548,86 @@ NO → 압축한다.
         const card = state.modal?.querySelector(`[data-slot-id="${slot.id}"]`);
         if (card) { card.open = true; card.querySelector('.rpcm-title-input')?.focus(); }
       }, 50);
+    };
+
+    const extraLibSaveBtn = overlay.querySelector('#rpcm-extralib-save');
+    const extraLibLoadBtn = overlay.querySelector('#rpcm-extralib-load');
+
+    if (extraLibSaveBtn) extraLibSaveBtn.onclick = async () => {
+      try {
+        if (room.pending) { notify('주입 중에는 기타 설정집을 변경하지 않는 편이 안전합니다. 먼저 지금 해제해 주세요.', 'warn', 5000); return; }
+        readModalIntoRoom();
+        await saveRoom(room);
+        const available = extraSlotsForLibrary(room);
+        if (!available.length) { notify('내용이 입력된 기타 항목이 없습니다.', 'warn'); return; }
+
+        const choice = await openCharacterSelectionDialog({
+          title: '설정집에 저장할 기타 항목 선택',
+          description: '체크한 기타 항목만 선택한 설정집에 저장/갱신합니다.',
+          items: available,
+          confirmText: '선택 항목 저장',
+          preserveOption: true,
+          preserveDefault: true,
+          itemFallback: '기타',
+          preserveText: '설정집에 이미 있는 미선택 기타 항목은 그대로 유지',
+        });
+        if (!choice) return;
+
+        const allLibraries = await listUsableExtraLibraries();
+        const lastLib = room.lastExtraLibraryId ? allLibraries.find(lib => lib.scopeId === room.lastExtraLibraryId) : null;
+        const defaultName = lastLib ? extraLibraryDisplayName(lastLib) : `${room.label || '공용'} 기타 설정집`;
+        const entered = prompt('기타 설정집 이름을 입력해 주세요.\n같은 이름으로 저장하면 기존 설정집을 갱신합니다.', defaultName);
+        if (entered === null) return;
+        const presetName = String(entered || '').trim();
+        if (!presetName) { notify('기타 설정집 이름을 입력해 주세요.', 'warn'); return; }
+
+        const nameKey = normalizedLibraryLabel(presetName);
+        let existing = allLibraries.find(lib => normalizedLibraryLabel(extraLibraryDisplayName(lib)) === nameKey) || null;
+        if (!existing && lastLib && normalizedLibraryLabel(extraLibraryDisplayName(lastLib)) === nameKey) existing = lastLib;
+        const scopeId = existing?.scopeId || extraPresetScopeIdFromName(presetName);
+        const merged = mergeExtraLibraryItems(existing?.extras || [], choice.items, choice.preserve);
+        await saveCharacterLibrary({
+          ...(existing || {}),
+          scopeId,
+          kind: 'extra-preset',
+          presetName,
+          label: presetName,
+          sourceLabel: room.label || existing?.sourceLabel || '',
+          sourceLabels: [...new Set([...(existing?.sourceLabels || []), room.label].filter(Boolean))],
+          extras: merged,
+          createdAt: existing?.createdAt || nowIso(),
+        });
+        room.lastExtraLibraryId = scopeId;
+        await saveRoom(room);
+        notify(`기타 설정집 ‘${presetName}’ 저장 완료 · 선택 ${choice.items.length}개 · 총 ${merged.length}개`, 'success', 5500);
+      } catch (e) { notify(`기타 설정집 저장 실패: ${e.message}`, 'error', 6000); }
+    };
+
+    if (extraLibLoadBtn) extraLibLoadBtn.onclick = async () => {
+      try {
+        if (room.pending) { notify('주입 중에는 기타 설정집을 불러올 수 없습니다. 먼저 지금 해제해 주세요.', 'warn', 5000); return; }
+        readModalIntoRoom();
+        await saveRoom(room);
+
+        const libraries = await listUsableExtraLibraries();
+        if (!libraries.length) { notify('저장된 기타 설정집이 없습니다. 먼저 어느 방에서든 ‘기타 설정집 저장’을 눌러주세요.', 'warn', 5500); return; }
+        const library = await openLibraryPickerDialog(libraries, { title: '불러올 기타 설정집 선택', confirmText: '선택한 설정집 열기', mode: 'extra' });
+        if (!library) return;
+
+        const choice = await openCharacterSelectionDialog({
+          title: '현재 방으로 불러올 기타 항목 선택',
+          description: `${extraLibraryDisplayName(library)} · 체크한 항목만 현재 방에 추가/갱신합니다.`,
+          items: library.extras,
+          confirmText: '선택 항목 불러오기',
+          itemFallback: '기타',
+        });
+        if (!choice) return;
+        const result = applySelectedExtraLibraryToRoom(room, choice.items);
+        room.lastExtraLibraryId = library.scopeId;
+        await saveRoom(room);
+        notify(`‘${extraLibraryDisplayName(library)}’ 불러오기 완료 · ${result.count}개 (추가 ${result.added}, 갱신 ${result.updated}) · 체크 해제 상태`, 'success', 6000);
+        renderModalIfOpen();
+      } catch (e) { notify(`기타 설정집 불러오기 실패: ${e.message}`, 'error', 6000); }
     };
 
     overlay.querySelector('#rpcm-add-extra').onclick = async () => {
