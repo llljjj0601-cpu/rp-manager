@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🪽위시 RP Manager
 // @namespace    local.rp.context.manager
-// @version      0.9.4
+// @version      0.9.5
 // @description  장기 RP용 현재상태·날짜로그·캐릭터 설정·OOC를 관리하고 필요한 컨텍스트를 자동 주입합니다.
 // @author       User
 // @license      All Rights Reserved
@@ -33,13 +33,13 @@
   // 버전별 키를 쓰면 구버전과 신버전이 동시에 설치됐을 때 둘 다 실행될 수 있습니다.
   // 모든 버전이 공유하는 고정 키로 중복 실행을 막습니다.
   if (window.__WISH_RP_MANAGER_LOADED__) return;
-  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.9.2', loadedAt: Date.now() };
+  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.9.5', loadedAt: Date.now() };
   // 같은 페이지에 남아 있는 v0.8.10 복사본이 뒤늦게 시작되는 경우도 차단합니다.
   window.__RP_MANAGER_0810_LOADED__ = true;
 
   const APP = {
     name: '🪽위시 RP Manager',
-    version: '0.9.2',
+    version: '0.9.5',
     dbName: 'RPContextManagerDB',
     dbVersion: 2,
     storeName: 'rooms',
@@ -2555,6 +2555,139 @@ NO → 압축한다.
     });
   }
 
+  function openStoredLibraryManagerDialog(library, { mode = 'character', allLibraries = [] } = {}) {
+    return new Promise(resolve => {
+      document.querySelector('#rpcm-library-manager-backdrop')?.remove();
+      const isExtra = mode === 'extra';
+      const field = isExtra ? 'extras' : 'characters';
+      const displayNameOf = lib => isExtra ? extraLibraryDisplayName(lib) : libraryDisplayName(lib);
+      const draft = (Array.isArray(library?.[field]) ? library[field] : []).map(item => ({
+        ...item,
+        aliases: Array.isArray(item?.aliases) ? [...item.aliases] : [],
+        content: String(item?.content || ''),
+        retentionTurns: normalizeRetentionTurns(item?.retentionTurns),
+      }));
+      const backdrop = document.createElement('div');
+      backdrop.id = 'rpcm-library-manager-backdrop';
+      backdrop.innerHTML = `
+        <div class="rpcm-lib-dialog rpcm-library-manager" role="dialog" aria-modal="true" aria-label="${isExtra ? '기타' : '캐릭터'} 설정집 관리">
+          <div class="rpcm-lib-dialog-head"><div><div class="rpcm-lib-dialog-title">${isExtra ? '기타' : '캐릭터'} 설정집 관리</div><div class="rpcm-lib-dialog-desc">설정집 이름과 내부 항목을 직접 수정하거나 필요한 항목만 삭제할 수 있습니다.</div></div><button type="button" class="rpcm-lib-close" aria-label="닫기">✕</button></div>
+          <div class="rpcm-library-name-row"><label>설정집 이름<input type="text" class="rpcm-library-name-input" value="${esc(displayNameOf(library))}" placeholder="설정집 이름"></label><span class="rpcm-library-item-count"></span></div>
+          <div class="rpcm-library-manager-toolbar"><button type="button" class="rpcm-lib-small" data-act="select-all">전체 선택</button><button type="button" class="rpcm-lib-small" data-act="select-none">선택 해제</button><button type="button" class="rpcm-lib-small rpcm-library-delete-selected" data-act="delete-selected">선택 삭제</button><span class="rpcm-library-selected-count">0개 선택</span></div>
+          <div class="rpcm-library-manager-list"></div>
+          <div class="rpcm-lib-dialog-actions rpcm-library-manager-actions"><button type="button" class="rpcm-btn danger" data-act="delete-library">설정집 전체 삭제</button><span class="rpcm-library-manager-spacer"></span><button type="button" class="rpcm-btn secondary" data-act="cancel">취소</button><button type="button" class="rpcm-btn primary" data-act="save">변경 저장</button></div>
+        </div>`;
+      document.body.appendChild(backdrop);
+      const list = backdrop.querySelector('.rpcm-library-manager-list');
+      const countEl = backdrop.querySelector('.rpcm-library-item-count');
+      const nameInput = backdrop.querySelector('.rpcm-library-name-input');
+      const selectedCountEl = backdrop.querySelector('.rpcm-library-selected-count');
+      const finish = value => { backdrop.remove(); resolve(value); };
+      const selectedBoxes = () => [...list.querySelectorAll('[data-manager-select]')];
+      const refreshSelectedCount = () => { selectedCountEl.textContent = `${selectedBoxes().filter(box => box.checked).length}개 선택`; };
+
+      const renderItems = () => {
+        countEl.textContent = `${draft.length}${isExtra ? '개' : '명'}`;
+        if (!draft.length) {
+          list.innerHTML = '<div class="rpcm-empty">설정집에 남은 항목이 없습니다. 전체 삭제하거나 취소해 주세요.</div>';
+          return;
+        }
+        list.innerHTML = draft.map((item, index) => `
+          <details class="rpcm-library-item-card" data-manager-item="${index}">
+            <summary><input type="checkbox" data-manager-select="${index}" aria-label="${esc(String(item.title || (isExtra ? '기타' : '캐릭터')))} 선택"><span class="rpcm-library-item-number">${String(index + 1).padStart(2, '0')}.</span><strong data-manager-summary-title>${esc(String(item.title || (isExtra ? '기타' : '캐릭터')))}</strong><span>${formatCount(String(item.content || '').length)}자 · ${retentionLabel(item.retentionTurns)}</span><button type="button" class="rpcm-library-item-delete" data-manager-delete="${index}">삭제</button><span class="rpcm-chevron">▶</span></summary>
+            <div class="rpcm-library-item-edit">
+              <label>항목 이름<input type="text" data-manager-title value="${esc(String(item.title || ''))}" placeholder="${isExtra ? '기타 항목 이름' : '캐릭터 이름'}"></label>
+              ${isExtra ? '' : `<label>추가 별칭<input type="text" data-manager-aliases value="${esc((item.aliases || []).join(', '))}" placeholder="애칭·약칭·호칭을 쉼표로 구분"></label>`}
+              <label class="rpcm-library-retention-label">유지 주기<select data-manager-retention>${retentionOptionsHtml(item.retentionTurns)}</select></label>
+              <label>내용<textarea data-manager-content data-rpcm-editor="true" spellcheck="false">${esc(String(item.content || ''))}</textarea></label>
+            </div>
+          </details>`).join('');
+
+        list.querySelectorAll('.rpcm-library-item-card').forEach(card => {
+          const index = Number(card.dataset.managerItem);
+          const item = draft[index];
+          const titleInput = card.querySelector('[data-manager-title]');
+          const aliasInput = card.querySelector('[data-manager-aliases]');
+          const retentionInput = card.querySelector('[data-manager-retention]');
+          const contentInput = card.querySelector('[data-manager-content]');
+          const summaryTitle = card.querySelector('[data-manager-summary-title]');
+          titleInput.oninput = () => { item.title = titleInput.value; summaryTitle.textContent = titleInput.value || (isExtra ? '기타' : '캐릭터'); };
+          if (aliasInput) aliasInput.oninput = () => { item.aliases = aliasInput.value.split(',').map(value => value.trim()).filter(Boolean); };
+          retentionInput.onchange = () => { item.retentionTurns = normalizeRetentionTurns(retentionInput.value); };
+          contentInput.oninput = () => { item.content = contentInput.value; };
+          card.addEventListener('toggle', () => { card.querySelector('.rpcm-chevron').textContent = card.open ? '▼' : '▶'; });
+        });
+        selectedBoxes().forEach(box => {
+          box.onclick = event => event.stopPropagation();
+          box.onchange = refreshSelectedCount;
+        });
+        refreshSelectedCount();
+        list.querySelectorAll('[data-manager-delete]').forEach(button => {
+          button.onclick = event => {
+            event.preventDefault(); event.stopPropagation();
+            const index = Number(button.dataset.managerDelete);
+            const title = String(draft[index]?.title || (isExtra ? '기타' : '캐릭터'));
+            if (!confirm(`설정집에서 ‘${title}’ 항목을 삭제할까요?\n‘변경 저장’을 눌러야 최종 반영됩니다.`)) return;
+            draft.splice(index, 1);
+            renderItems();
+          };
+        });
+      };
+
+      renderItems();
+      backdrop.querySelector('[data-act="select-all"]').onclick = () => { selectedBoxes().forEach(box => { box.checked = true; }); refreshSelectedCount(); };
+      backdrop.querySelector('[data-act="select-none"]').onclick = () => { selectedBoxes().forEach(box => { box.checked = false; }); refreshSelectedCount(); };
+      backdrop.querySelector('[data-act="delete-selected"]').onclick = () => {
+        const indexes = selectedBoxes().filter(box => box.checked).map(box => Number(box.dataset.managerSelect)).sort((a,b) => b - a);
+        if (!indexes.length) { notify('삭제할 항목을 먼저 선택해 주세요.', 'warn'); return; }
+        if (!confirm(`선택한 ${indexes.length}개 항목을 설정집에서 삭제할까요?\n‘변경 저장’을 눌러야 최종 반영됩니다.`)) return;
+        indexes.forEach(index => draft.splice(index, 1));
+        renderItems();
+      };
+      backdrop.querySelector('.rpcm-lib-close').onclick = () => finish(null);
+      backdrop.querySelector('[data-act="cancel"]').onclick = () => finish(null);
+      backdrop.querySelector('[data-act="save"]').onclick = async () => {
+        const nextName = String(nameInput.value || '').trim();
+        if (!nextName) { notify('설정집 이름을 입력해 주세요.', 'warn'); nameInput.focus(); return; }
+        const duplicatedLibraryName = (allLibraries || []).some(other => other && String(other.scopeId || '') !== String(library.scopeId || '') && normalizedLibraryLabel(displayNameOf(other)) === normalizedLibraryLabel(nextName));
+        if (duplicatedLibraryName) { notify('같은 이름의 설정집이 이미 있습니다.', 'warn', 4500); nameInput.focus(); return; }
+        if (!draft.length) { notify('항목이 하나도 없습니다. 설정집 전체 삭제를 이용해 주세요.', 'warn', 4500); return; }
+        const titleKeys = draft.map(item => normalizedLibraryLabel(item.title));
+        if (titleKeys.some(key => !key)) { notify('모든 항목의 이름을 입력해 주세요.', 'warn'); return; }
+        if (new Set(titleKeys).size !== titleKeys.length) { notify('설정집 안에 같은 이름의 항목이 두 개 있습니다. 이름을 다르게 수정해 주세요.', 'warn', 5200); return; }
+        try {
+          const updated = {
+            ...library,
+            presetName: nextName,
+            label: nextName,
+            [field]: draft.map(item => ({
+              ...item,
+              title: String(item.title || '').trim(),
+              content: String(item.content || ''),
+              retentionTurns: normalizeRetentionTurns(item.retentionTurns),
+              ...(isExtra ? {} : { aliases:[...new Set((item.aliases || []).map(value => String(value).trim()).filter(Boolean))] }),
+            })),
+          };
+          await saveCharacterLibrary(updated);
+          notify(`‘${nextName}’ 설정집 변경을 저장했습니다.`, 'success', 4200);
+          finish({ action:'saved', library:updated });
+        } catch (error) { notify(`설정집 변경 저장 실패: ${error.message}`, 'error', 6000); }
+      };
+      backdrop.querySelector('[data-act="delete-library"]').onclick = async () => {
+        const name = displayNameOf(library);
+        if (!confirm(`‘${name}’ 설정집 전체를 삭제할까요?\n내부 항목 ${draft.length}${isExtra ? '개' : '명'}도 함께 삭제되며 되돌릴 수 없습니다.`)) return;
+        try {
+          await deleteStoredLibrary(library.scopeId);
+          notify(`‘${name}’ 설정집을 삭제했습니다.`, 'success', 4200);
+          finish({ action:'deleted', scopeId:library.scopeId });
+        } catch (error) { notify(`설정집 삭제 실패: ${error.message}`, 'error', 6000); }
+      };
+      backdrop.onclick = event => { if (event.target === backdrop) finish(null); };
+      backdrop.onkeydown = event => { if (event.key === 'Escape') finish(null); };
+      setTimeout(() => nameInput.focus(), 0);
+    });
+  }
+
   function openLibraryPickerDialog(libraries, { title = '불러올 설정집 선택', confirmText = '이 설정집 선택', mode = 'character' } = {}) {
     return new Promise(resolve => {
       const old = document.getElementById('rpcm-lib-dialog-backdrop');
@@ -2564,14 +2697,15 @@ NO → 압축한다.
       const safe = (libraries || []).map((lib, index) => ({ lib, index }));
       const isExtra = mode === 'extra';
       const displayNameOf = lib => isExtra ? extraLibraryDisplayName(lib) : libraryDisplayName(lib);
+      const itemCountOf = lib => isExtra ? (Array.isArray(lib?.extras) ? lib.extras.length : 0) : (Array.isArray(lib?.characters) ? lib.characters.length : 0);
       backdrop.innerHTML = `
         <div class="rpcm-lib-dialog" role="dialog" aria-modal="true">
-          <div class="rpcm-lib-dialog-head"><div><div class="rpcm-lib-dialog-title">${esc(title)}</div><div class="rpcm-lib-dialog-desc">저장 위치와 관계없이 모든 🪽위시 RP Manager ${isExtra ? '기타 ' : '캐릭터 '}설정집에서 선택합니다. 선택한 설정집의 이름도 여기서 수정할 수 있습니다.</div></div><button type="button" class="rpcm-lib-close">✕</button></div>
+          <div class="rpcm-lib-dialog-head"><div><div class="rpcm-lib-dialog-title">${esc(title)}</div><div class="rpcm-lib-dialog-desc">설정집을 선택하거나 ‘항목 관리’를 눌러 내부 내용을 수정·삭제할 수 있습니다.</div></div><button type="button" class="rpcm-lib-close">✕</button></div>
           <div class="rpcm-lib-list">${safe.map(({lib,index}) => {
             const nm = displayNameOf(lib);
-            const count = isExtra ? (Array.isArray(lib.extras) ? lib.extras.length : 0) : (Array.isArray(lib.characters) ? lib.characters.length : 0);
+            const count = itemCountOf(lib);
             const source = lib.sourceLabel || lib.sourceLabels?.[0] || '';
-            return `<div class="rpcm-lib-row rpcm-library-row"><label class="rpcm-lib-row-main"><input type="radio" name="rpcm-library-choice" data-lib-index="${index}" ${index === 0 ? 'checked' : ''}><span><strong data-lib-name="${index}">${esc(nm)}</strong><small>${count}${isExtra ? '개' : '명'}${source ? ` · 저장 출처 ${esc(source)}` : ''}</small></span></label><button type="button" class="rpcm-lib-rename-icon" data-rename-index="${index}" title="설정집 이름 수정" aria-label="${esc(nm)} 이름 수정"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></button></div>`;
+            return `<div class="rpcm-lib-row rpcm-library-row" data-library-row="${index}"><label class="rpcm-lib-row-main"><input type="radio" name="rpcm-library-choice" data-lib-index="${index}" ${index === 0 ? 'checked' : ''}><span><strong data-lib-name="${index}">${esc(nm)}</strong><small><span data-lib-count="${index}">${count}${isExtra ? '개' : '명'}</span>${source ? ` · 저장 출처 ${esc(source)}` : ''}</small></span></label><button type="button" class="rpcm-lib-manage-btn" data-manage-index="${index}">항목 관리</button><button type="button" class="rpcm-lib-rename-icon" data-rename-index="${index}" title="설정집 이름 수정" aria-label="${esc(nm)} 이름 수정"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></button><button type="button" class="rpcm-lib-delete-icon" data-delete-library-index="${index}" title="설정집 전체 삭제" aria-label="${esc(nm)} 설정집 삭제"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v5M14 11v5"/></svg></button></div>`;
           }).join('')}</div>
           <div class="rpcm-lib-dialog-actions"><button type="button" class="rpcm-btn secondary" data-act="cancel">취소</button><button type="button" class="rpcm-btn primary" data-act="confirm">${esc(confirmText)}</button></div>
         </div>`;
@@ -2579,6 +2713,24 @@ NO → 압축한다.
       const finish = value => { backdrop.remove(); resolve(value); };
       backdrop.querySelector('.rpcm-lib-close').onclick = () => finish(null);
       backdrop.querySelector('[data-act="cancel"]').onclick = () => finish(null);
+      const refreshPickerRow = (index, lib) => {
+        const nameEl = backdrop.querySelector(`[data-lib-name="${index}"]`);
+        const countEl = backdrop.querySelector(`[data-lib-count="${index}"]`);
+        const renameBtn = backdrop.querySelector(`[data-rename-index="${index}"]`);
+        const deleteBtn = backdrop.querySelector(`[data-delete-library-index="${index}"]`);
+        const displayName = displayNameOf(lib);
+        if (nameEl) nameEl.textContent = displayNameOf(lib);
+        if (countEl) countEl.textContent = `${itemCountOf(lib)}${isExtra ? '개' : '명'}`;
+        if (renameBtn) renameBtn.setAttribute('aria-label', `${displayName} 이름 수정`);
+        if (deleteBtn) deleteBtn.setAttribute('aria-label', `${displayName} 설정집 삭제`);
+      };
+      const removePickerRow = index => {
+        libraries[index] = null;
+        backdrop.querySelector(`[data-library-row="${index}"]`)?.remove();
+        const firstRadio = backdrop.querySelector('input[name="rpcm-library-choice"]');
+        if (firstRadio) firstRadio.checked = true;
+        else finish(null);
+      };
       async function renameLibraryAtIndex(index) {
         const lib = libraries[index];
         if (!lib) return;
@@ -2589,14 +2741,13 @@ NO → 압축한다.
         if (!nextName) { notify('설정집 이름을 입력해 주세요.', 'warn'); return; }
         if (nextName === before) return;
         const nextKey = normalizedLibraryLabel(nextName);
-        const duplicated = libraries.some((other, otherIndex) => otherIndex !== index && normalizedLibraryLabel(displayNameOf(other)) === nextKey);
+        const duplicated = libraries.some((other, otherIndex) => other && otherIndex !== index && normalizedLibraryLabel(displayNameOf(other)) === nextKey);
         if (duplicated) { notify('같은 이름의 설정집이 이미 있습니다.', 'warn', 4500); return; }
         try {
           const updated = { ...lib, presetName: nextName, label: nextName };
           await saveCharacterLibrary(updated);
           libraries[index] = updated;
-          const nameEl = backdrop.querySelector(`[data-lib-name="${index}"]`);
-          if (nameEl) nameEl.textContent = nextName;
+          refreshPickerRow(index, updated);
           const renameBtn = backdrop.querySelector(`[data-rename-index="${index}"]`);
           if (renameBtn) {
             renameBtn.title = '설정집 이름 수정';
@@ -2619,6 +2770,42 @@ NO → 압축한다.
           const radio = backdrop.querySelector(`input[name="rpcm-library-choice"][data-lib-index="${index}"]`);
           if (radio) radio.checked = true;
           await renameLibraryAtIndex(index);
+        };
+      });
+      backdrop.querySelectorAll('[data-manage-index]').forEach(button => {
+        button.onclick = async event => {
+          event.preventDefault(); event.stopPropagation();
+          const index = Number(button.dataset.manageIndex);
+          const library = libraries[index];
+          if (!library) return;
+          const radio = backdrop.querySelector(`input[name="rpcm-library-choice"][data-lib-index="${index}"]`);
+          if (radio) radio.checked = true;
+          const result = await openStoredLibraryManagerDialog(library, { mode, allLibraries:libraries.filter(Boolean) });
+          if (!result) return;
+          if (result.action === 'deleted') { removePickerRow(index); return; }
+          if (result.action === 'saved' && result.library) {
+            libraries[index] = result.library;
+            refreshPickerRow(index, result.library);
+            if (!isExtra) {
+              const autoOpt = document.querySelector(`#rpcm-auto-char-library option[value="${CSS.escape(String(result.library.scopeId || ''))}"]`);
+              if (autoOpt) autoOpt.textContent = `${libraryDisplayName(result.library)} (${itemCountOf(result.library)}명)`;
+            }
+          }
+        };
+      });
+      backdrop.querySelectorAll('[data-delete-library-index]').forEach(button => {
+        button.onclick = async event => {
+          event.preventDefault(); event.stopPropagation();
+          const index = Number(button.dataset.deleteLibraryIndex);
+          const library = libraries[index];
+          if (!library) return;
+          const name = displayNameOf(library);
+          if (!confirm(`‘${name}’ 설정집 전체를 삭제할까요?\n내부 항목 ${itemCountOf(library)}${isExtra ? '개' : '명'}도 함께 삭제되며 되돌릴 수 없습니다.`)) return;
+          try {
+            await deleteStoredLibrary(library.scopeId);
+            notify(`‘${name}’ 설정집을 삭제했습니다.`, 'success', 4200);
+            removePickerRow(index);
+          } catch (error) { notify(`설정집 삭제 실패: ${error.message}`, 'error', 6000); }
         };
       });
       backdrop.querySelector('[data-act="confirm"]').onclick = () => {
@@ -3135,6 +3322,33 @@ NO → 압축한다.
       req.onsuccess = () => resolve();
       req.onerror = () => reject(req.error);
     });
+  }
+
+  async function deleteStoredLibrary(scopeId) {
+    const id = String(scopeId || '');
+    if (!id) throw new Error('삭제할 설정집 식별자를 찾지 못했습니다.');
+    await new Promise((resolve, reject) => {
+      const tx = state.db.transaction(APP.libraryStoreName, 'readwrite');
+      const req = tx.objectStore(APP.libraryStoreName).delete(id);
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+    });
+
+    // 삭제된 설정집을 가리키는 방별 선택값도 정리합니다.
+    const rooms = await getAllRooms();
+    for (const room of rooms) {
+      let changed = false;
+      if (String(room.autoCharacterLibraryId || '') === id) { room.autoCharacterLibraryId = ''; changed = true; }
+      if (String(room.lastCharacterLibraryId || '') === id) { room.lastCharacterLibraryId = ''; changed = true; }
+      if (String(room.lastExtraLibraryId || '') === id) { room.lastExtraLibraryId = ''; changed = true; }
+      if (changed) await saveRoom(room);
+    }
+    if (state.currentRoom) {
+      if (String(state.currentRoom.autoCharacterLibraryId || '') === id) state.currentRoom.autoCharacterLibraryId = '';
+      if (String(state.currentRoom.lastCharacterLibraryId || '') === id) state.currentRoom.lastCharacterLibraryId = '';
+      if (String(state.currentRoom.lastExtraLibraryId || '') === id) state.currentRoom.lastExtraLibraryId = '';
+    }
+    try { document.querySelector(`#rpcm-auto-char-library option[value="${CSS.escape(id)}"]`)?.remove(); } catch (_) {}
   }
 
   async function getAllCharacterLibraries() {
@@ -5230,7 +5444,8 @@ NO → 압축한다.
       #rpcm-modal-wrap{position:fixed;top:64px;right:16px;display:flex;flex-direction:column;max-height:calc(100vh - 140px);width:min(820px,calc(100vw - 32px));pointer-events:auto}
       .rpcm-btn{border:none;border-radius:9px;padding:10px 14px;font-weight:750;font-size:13px;cursor:pointer;white-space:nowrap}.rpcm-btn.primary{background:#df6298;color:#fff}.rpcm-btn.primary:hover{background:#d6538e}.rpcm-btn.secondary{background:#2a2a2a;color:#ddd;border:1px solid #3b3b3b}.rpcm-btn.secondary:hover{background:#353535}.rpcm-btn.warn{background:#92400e;color:#fff}.rpcm-btn.danger{background:#7f1d1d;color:#fff}.rpcm-btn:disabled{opacity:.4;cursor:not-allowed}.rpcm-footnote{font-size:11px;color:#777;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
       .rpcm-section{margin:16px 0 8px}.rpcm-section-head{display:flex;align-items:center;gap:8px;margin:0 2px 8px}.rpcm-section-head.rpcm-character-head,.rpcm-section-head.rpcm-extra-head{display:block}.rpcm-section-title{font-size:13px;font-weight:850;color:#d7d7d7}.rpcm-section-desc{font-size:11px;color:#747474;line-height:1.55}.rpcm-charlib-actions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-start;margin-top:10px}.rpcm-charlib-actions .rpcm-add-btn{margin-left:0}.rpcm-add-btn{margin-left:auto;border:1px solid #3b3b3b;background:#242424;color:#ccc;border-radius:8px;padding:7px 10px;font-size:11px;font-weight:700;cursor:pointer}.rpcm-add-btn:hover{background:#303030;color:#fff}.rpcm-delete-btn{border:1px solid #5a2a2a;background:#2a1818;color:#fca5a5;border-radius:7px;padding:6px 9px;font-size:11px;cursor:pointer;margin-left:8px}.rpcm-delete-btn:hover{background:#3a1b1b}.rpcm-fixed-note{font-size:11px;color:#777;margin:-2px 0 8px;line-height:1.55}.rpcm-guide-toggle{flex:0 0 auto;border:1px solid #6b3a55;background:#2a1a24;color:#e5a3c3;border-radius:6px;padding:3px 7px;font-size:9px;font-weight:750;cursor:pointer}.rpcm-guide-toggle:hover,.rpcm-guide-toggle.is-open{color:#fce7f3;background:#3a2130;border-color:#be5f91}.rpcm-guide-panel{margin:0 0 11px;border:1px solid #5d3149;border-left:3px solid #df6298;border-radius:8px;background:#20131b;overflow:hidden;box-shadow:inset 0 0 0 1px rgba(223,98,152,.04)}.rpcm-guide-panel[hidden]{display:none!important}.rpcm-guide-head{display:flex;align-items:center;gap:8px;padding:8px 9px;border-bottom:1px solid #4a293b;background:#291823;color:#d8a0bc;font-size:10px}.rpcm-guide-head span{flex:1}.rpcm-guide-icon{display:inline-flex;align-items:center;justify-content:center;width:28px;height:26px;padding:0;border:1px solid #71405a;border-radius:6px;background:#321d29;color:#efb5d1;cursor:pointer}.rpcm-guide-icon:hover{background:#452638;color:#fff1f7;border-color:#c46497}.rpcm-guide-icon svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}.rpcm-guide-reset{height:26px;padding:0 8px;border:1px solid #71405a;border-radius:6px;background:#321d29;color:#e6abc8;font-size:9px;font-weight:700;cursor:pointer}.rpcm-guide-reset:hover{background:#452638;color:#fce7f3;border-color:#c46497}.rpcm-guide-textarea{display:block;width:100%;box-sizing:border-box;min-height:260px;max-height:420px;resize:vertical;border:0;background:#170f14;color:#eadbe3;padding:11px 12px;font:11px/1.58 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;outline:none;caret-color:#df6298}.rpcm-guide-textarea::selection{background:#7a3159;color:#fff}.rpcm-slot-options{display:flex;align-items:center;gap:8px;margin:0 0 8px;color:#888;font-size:11px}.rpcm-slot-options select{height:30px;border:1px solid #444;border-radius:7px;background:#232323;color:#eee;padding:0 8px;font:inherit}.rpcm-auto-panel{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:8px 0 10px;padding:10px 12px;border:1px solid #333;border-radius:10px;background:#191919;color:#aaa;font-size:11px}
-.rpcm-auto-note{flex-basis:100%;font-size:11px;line-height:1.55;color:#8d8d93;padding-top:2px}.rpcm-auto-note b{color:#b8b8bf;font-weight:650}.rpcm-auto-panel label{display:flex;gap:6px;align-items:center}.rpcm-auto-panel input[type=checkbox]{accent-color:#df6298}.rpcm-auto-panel select{height:30px;border:1px solid #444;border-radius:7px;background:#232323;color:#eee;padding:0 8px;font:inherit;max-width:260px}.rpcm-alias-row{display:grid;grid-template-columns:1fr auto auto;gap:8px;align-items:center;margin:0 0 8px}.rpcm-alias-input{height:32px;border:1px solid #404040;border-radius:7px;background:#1e1e1e;color:#ddd;padding:0 9px;font:11px/1.2 inherit;min-width:0}.rpcm-auto-exclude,.rpcm-auto-pin{display:flex;align-items:center;gap:5px;color:#888;font-size:10px;white-space:nowrap}.rpcm-auto-exclude input,.rpcm-auto-pin input{accent-color:#df6298}.rpcm-auto-terms{font-size:10px;color:#777;line-height:1.5;margin:-2px 0 8px;padding:6px 8px;border-left:2px solid #3b3b3b;background:#191919}.rpcm-auto-terms strong{color:#aaa}.rpcm-slot-remain{font-size:10px;font-weight:800;color:#fbbf24;border:1px solid rgba(245,158,11,.35);background:rgba(245,158,11,.08);padding:3px 6px;border-radius:6px}.rpcm-empty{border:1px dashed #343434;border-radius:10px;color:#666;font-size:12px;padding:14px;text-align:center;margin-bottom:9px}.rpcm-lib-dialog-backdrop{}#rpcm-lib-dialog-backdrop{position:fixed;inset:0;z-index:1000004;background:rgba(0,0,0,.62);display:flex;align-items:center;justify-content:center;padding:18px}.rpcm-lib-dialog{width:min(520px,94vw);max-height:min(720px,88vh);display:flex;flex-direction:column;background:#171717;border:1px solid #3b3b3b;border-radius:14px;box-shadow:0 24px 70px rgba(0,0,0,.55);color:#ddd;overflow:hidden}.rpcm-lib-dialog-head{display:flex;gap:12px;align-items:flex-start;padding:16px;border-bottom:1px solid #2d2d2d}.rpcm-lib-dialog-head>div:first-child{flex:1;min-width:0}.rpcm-lib-dialog-title{font-size:15px;font-weight:850;color:#f1f1f1}.rpcm-lib-dialog-desc{font-size:11px;color:#888;line-height:1.55;margin-top:4px}.rpcm-lib-close{border:0;background:transparent;color:#888;font-size:18px;cursor:pointer}.rpcm-lib-toolbar{display:flex;align-items:center;gap:6px;padding:10px 14px;border-bottom:1px solid #292929}.rpcm-lib-small{border:1px solid #3b3b3b;background:#222;color:#bbb;border-radius:7px;padding:6px 8px;font-size:11px;cursor:pointer}.rpcm-lib-selected{margin-left:auto;font-size:11px;color:#999}.rpcm-lib-list{overflow:auto;padding:8px 12px;min-height:80px}.rpcm-lib-row{display:flex;align-items:flex-start;gap:10px;padding:10px;border-radius:9px;cursor:pointer}.rpcm-lib-row:hover{background:#222}.rpcm-lib-row input{margin-top:2px;accent-color:#df6298}.rpcm-lib-row span{display:flex;flex-direction:column;gap:3px;min-width:0}.rpcm-lib-row strong{font-size:12px;color:#e8e8e8}.rpcm-lib-row small{font-size:10px;color:#777}.rpcm-library-row{align-items:center;padding:6px 8px}.rpcm-lib-row-main{display:flex;align-items:flex-start;gap:10px;flex:1;min-width:0;padding:4px 2px;cursor:pointer}.rpcm-lib-row-main input{margin-top:2px}.rpcm-lib-row-main span{flex:1}.rpcm-lib-rename-icon{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:30px;height:30px;border:1px solid transparent;border-radius:7px;background:transparent;color:#7d7d82;cursor:pointer;transition:background .16s,border-color .16s,color .16s}.rpcm-lib-rename-icon:hover{background:rgba(223,98,152,.10);border-color:rgba(223,98,152,.30);color:#df6298}.rpcm-lib-rename-icon svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}.rpcm-lib-preserve{display:flex;align-items:flex-start;gap:8px;margin:0 14px 8px;padding:10px;border:1px solid #333;border-radius:9px;background:#1d1d1d;font-size:11px;color:#aaa;line-height:1.45}.rpcm-lib-preserve input{margin-top:2px;accent-color:#df6298}.rpcm-lib-dialog-actions{display:flex;justify-content:flex-end;gap:8px;padding:12px 14px;border-top:1px solid #2d2d2d}
+.rpcm-auto-note{flex-basis:100%;font-size:11px;line-height:1.55;color:#8d8d93;padding-top:2px}.rpcm-auto-note b{color:#b8b8bf;font-weight:650}.rpcm-auto-panel label{display:flex;gap:6px;align-items:center}.rpcm-auto-panel input[type=checkbox]{accent-color:#df6298}.rpcm-auto-panel select{height:30px;border:1px solid #444;border-radius:7px;background:#232323;color:#eee;padding:0 8px;font:inherit;max-width:260px}.rpcm-alias-row{display:grid;grid-template-columns:1fr auto auto;gap:8px;align-items:center;margin:0 0 8px}.rpcm-alias-input{height:32px;border:1px solid #404040;border-radius:7px;background:#1e1e1e;color:#ddd;padding:0 9px;font:11px/1.2 inherit;min-width:0}.rpcm-auto-exclude,.rpcm-auto-pin{display:flex;align-items:center;gap:5px;color:#888;font-size:10px;white-space:nowrap}.rpcm-auto-exclude input,.rpcm-auto-pin input{accent-color:#df6298}.rpcm-auto-terms{font-size:10px;color:#777;line-height:1.5;margin:-2px 0 8px;padding:6px 8px;border-left:2px solid #3b3b3b;background:#191919}.rpcm-auto-terms strong{color:#aaa}.rpcm-slot-remain{font-size:10px;font-weight:800;color:#fbbf24;border:1px solid rgba(245,158,11,.35);background:rgba(245,158,11,.08);padding:3px 6px;border-radius:6px}.rpcm-empty{border:1px dashed #343434;border-radius:10px;color:#666;font-size:12px;padding:14px;text-align:center;margin-bottom:9px}.rpcm-lib-dialog-backdrop{}#rpcm-lib-dialog-backdrop,#rpcm-library-manager-backdrop{position:fixed;inset:0;z-index:1000004;background:rgba(0,0,0,.62);display:flex;align-items:center;justify-content:center;padding:18px}#rpcm-library-manager-backdrop{z-index:1000006}.rpcm-lib-dialog{width:min(520px,94vw);max-height:min(720px,88vh);display:flex;flex-direction:column;background:#171717;border:1px solid #3b3b3b;border-radius:14px;box-shadow:0 24px 70px rgba(0,0,0,.55);color:#ddd;overflow:hidden}.rpcm-lib-dialog-head{display:flex;gap:12px;align-items:flex-start;padding:16px;border-bottom:1px solid #2d2d2d}.rpcm-lib-dialog-head>div:first-child{flex:1;min-width:0}.rpcm-lib-dialog-title{font-size:15px;font-weight:850;color:#f1f1f1}.rpcm-lib-dialog-desc{font-size:11px;color:#888;line-height:1.55;margin-top:4px}.rpcm-lib-close{border:0;background:transparent;color:#888;font-size:18px;cursor:pointer}.rpcm-lib-toolbar{display:flex;align-items:center;gap:6px;padding:10px 14px;border-bottom:1px solid #292929}.rpcm-lib-small{border:1px solid #3b3b3b;background:#222;color:#bbb;border-radius:7px;padding:6px 8px;font-size:11px;cursor:pointer}.rpcm-lib-selected{margin-left:auto;font-size:11px;color:#999}.rpcm-lib-list{overflow:auto;padding:8px 12px;min-height:80px}.rpcm-lib-row{display:flex;align-items:flex-start;gap:10px;padding:10px;border-radius:9px;cursor:pointer}.rpcm-lib-row:hover{background:#222}.rpcm-lib-row input{margin-top:2px;accent-color:#df6298}.rpcm-lib-row span{display:flex;flex-direction:column;gap:3px;min-width:0}.rpcm-lib-row strong{font-size:12px;color:#e8e8e8}.rpcm-lib-row small{font-size:10px;color:#777}.rpcm-library-row{align-items:center;padding:6px 8px}.rpcm-lib-row-main{display:flex;align-items:flex-start;gap:10px;flex:1;min-width:0;padding:4px 2px;cursor:pointer}.rpcm-lib-row-main input{margin-top:2px}.rpcm-lib-row-main span{flex:1}.rpcm-lib-manage-btn{flex:0 0 auto;border:1px solid #444;background:#242424;color:#bbb;border-radius:7px;padding:6px 8px;font-size:10px;font-weight:750;cursor:pointer}.rpcm-lib-manage-btn:hover{border-color:#8d4569;background:#32202a;color:#f1b4d1}.rpcm-lib-rename-icon,.rpcm-lib-delete-icon{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:30px;height:30px;border:1px solid transparent;border-radius:7px;background:transparent;color:#7d7d82;cursor:pointer;transition:background .16s,border-color .16s,color .16s}.rpcm-lib-rename-icon:hover{background:rgba(223,98,152,.10);border-color:rgba(223,98,152,.30);color:#df6298}.rpcm-lib-delete-icon:hover{background:rgba(239,68,68,.10);border-color:rgba(239,68,68,.30);color:#f87171}.rpcm-lib-rename-icon svg,.rpcm-lib-delete-icon svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}.rpcm-lib-preserve{display:flex;align-items:flex-start;gap:8px;margin:0 14px 8px;padding:10px;border:1px solid #333;border-radius:9px;background:#1d1d1d;font-size:11px;color:#aaa;line-height:1.45}.rpcm-lib-preserve input{margin-top:2px;accent-color:#df6298}.rpcm-lib-dialog-actions{display:flex;justify-content:flex-end;gap:8px;padding:12px 14px;border-top:1px solid #2d2d2d}.rpcm-library-manager{width:min(760px,96vw);max-height:min(820px,92vh)}.rpcm-library-name-row{display:flex;align-items:flex-end;gap:12px;padding:12px 16px;border-bottom:1px solid #2b2b2b;background:#1b1b1b}.rpcm-library-name-row label{display:flex;flex-direction:column;gap:5px;flex:1;color:#999;font-size:10px}.rpcm-library-name-input,.rpcm-library-item-edit input,.rpcm-library-item-edit select,.rpcm-library-item-edit textarea{box-sizing:border-box;width:100%;border:1px solid #414141;border-radius:8px;background:#111;color:#eee;padding:8px 10px;font:12px/1.45 inherit;outline:none}.rpcm-library-name-input:focus,.rpcm-library-item-edit input:focus,.rpcm-library-item-edit select:focus,.rpcm-library-item-edit textarea:focus{border-color:#df6298;box-shadow:0 0 0 2px rgba(223,98,152,.12)}.rpcm-library-item-count{font-size:11px;color:#888;padding-bottom:9px}.rpcm-library-manager-list{overflow:auto;padding:10px 14px;min-height:120px}.rpcm-library-item-card{border:1px solid #343434;border-radius:10px;background:#1d1d1d;margin-bottom:8px;overflow:hidden}.rpcm-library-item-card>summary{display:flex;align-items:center;gap:8px;padding:10px 12px;cursor:pointer;list-style:none}.rpcm-library-item-card>summary::-webkit-details-marker{display:none}.rpcm-library-item-card>summary strong{flex:1;min-width:0;color:#e8e8e8;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.rpcm-library-item-card>summary>span:not(.rpcm-library-item-number):not(.rpcm-chevron){font-size:10px;color:#777;white-space:nowrap}.rpcm-library-item-number{font-size:10px;color:#df6298;font-weight:800}.rpcm-library-item-delete{border:1px solid #593030;background:#2a1818;color:#fca5a5;border-radius:7px;padding:5px 8px;font-size:10px;cursor:pointer}.rpcm-library-item-edit{display:grid;grid-template-columns:1fr 1fr auto;gap:9px;padding:11px 12px;border-top:1px solid #303030;background:#181818}.rpcm-library-item-edit label{display:flex;flex-direction:column;gap:5px;color:#888;font-size:10px}.rpcm-library-item-edit label:last-child{grid-column:1/-1}.rpcm-library-item-edit textarea{min-height:150px;resize:vertical;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.rpcm-library-retention-label{min-width:110px}.rpcm-library-manager-actions{align-items:center}.rpcm-library-manager-spacer{flex:1}
+      .rpcm-lib-row small [data-lib-count]{display:inline}
       .rpcm-tools{display:flex;gap:7px;flex-wrap:wrap;margin:12px 0 2px}.rpcm-mini{font-size:11px;padding:7px 9px;border-radius:7px;border:1px solid #3b3b3b;background:#232323;color:#aaa;cursor:pointer}.rpcm-mini:hover{color:#fff;background:#303030}.rpcm-shortcuts{flex-basis:100%;color:#666;font-size:10px;margin-top:3px}
       .rpcm-breakdown{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:18px;row-gap:0;margin-top:10px;border-top:1px solid #292929}.rpcm-breakdown-chip{display:flex;align-items:center;justify-content:flex-start;gap:7px;border:0;border-bottom:1px solid #292929;background:transparent;color:#777;border-radius:0;padding:6px 1px;font-size:10px}.rpcm-breakdown-chip strong{color:#bdbdbd;font-weight:700}.rpcm-breakdown-chip>span:last-child{margin-left:auto}.rpcm-auto-active{margin:0 0 12px;padding:10px 12px;border:1px solid #303030;border-radius:10px;background:#191919}.rpcm-auto-active-title{font-size:11px;font-weight:800;color:#bbb;margin-bottom:6px}.rpcm-auto-active-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:7px;align-items:center;padding:5px 0;border-top:1px solid #252525;font-size:10px;color:#888}.rpcm-auto-active-row:first-of-type{border-top:0}.rpcm-auto-badge{border:1px solid color-mix(in srgb,var(--rpcm-tone,#6f7782) 72%,#3c3c3c);border-radius:999px;padding:2px 7px;color:var(--rpcm-tone,#bbb);background:color-mix(in srgb,var(--rpcm-tone,#6f7782) 11%,transparent);font-weight:750}.rpcm-auto-active-row strong{display:block;color:#ddd;font-size:11px}.rpcm-auto-active-copy{min-width:0}.rpcm-auto-reason{display:block;color:#888;margin-top:1px}.rpcm-auto-evidence{display:block;margin-top:3px;color:#c496ac;font-size:9px;line-height:1.45}.rpcm-auto-active-meta{display:flex;align-items:center;justify-content:flex-end;gap:6px;white-space:nowrap}.rpcm-auto-inline-toggle{width:25px;height:24px;padding:0;border:1px solid #3b3b3b;border-radius:6px;background:#222;color:#aaa;cursor:pointer;font-size:11px;line-height:1}.rpcm-auto-inline-toggle:hover{border-color:#70405a;background:#2b1d25;color:#e9abc8}.rpcm-auto-inline-content{grid-column:1/-1;white-space:pre-wrap;word-break:break-word;max-height:220px;overflow:auto;margin:4px 0 3px;padding:9px 10px;border:1px solid #303030;border-left:2px solid #b55a84;border-radius:7px;background:#101010;color:#aaa;font:10px/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.rpcm-auto-inline-content[hidden]{display:none!important}.rpcm-warnings{margin:0 0 12px;padding:9px 11px;border:1px solid rgba(245,158,11,.35);background:rgba(245,158,11,.08);border-radius:9px;color:#fbbf24;font-size:10px;line-height:1.55}.rpcm-warning-action{display:inline-flex;align-items:center;margin-top:7px;padding:5px 8px;border:1px solid rgba(245,158,11,.45);border-radius:6px;background:rgba(245,158,11,.10);color:#fbbf24;font-size:10px;font-weight:750;cursor:pointer}.rpcm-warning-action:hover{background:rgba(245,158,11,.18);color:#fde68a}.rpcm-save-status{font-size:10px;white-space:nowrap}.rpcm-save-status.saved{color:#6b9f7b}.rpcm-save-status.saving{color:#d1a64b}.rpcm-save-status.error{color:#ef7777}#rpcm-log-dialog-backdrop{position:fixed;inset:0;z-index:1000005;background:rgba(0,0,0,.64);display:flex;align-items:center;justify-content:center;padding:18px}.rpcm-log-dialog{width:min(720px,95vw);max-height:min(820px,90vh);display:flex;flex-direction:column;background:#171717;border:1px solid #3b3b3b;border-radius:14px;overflow:hidden;color:#ddd}.rpcm-log-list{overflow:auto;padding:10px 12px}.rpcm-log-row{padding:10px 11px;border:1px solid #303030;border-radius:9px;background:#1d1d1d;margin-bottom:8px}.rpcm-log-row-head{display:flex;gap:8px;align-items:center}.rpcm-log-row-head strong{flex:1;font-size:12px}.rpcm-log-row-head span,.rpcm-log-row-reason{font-size:10px;color:#777}.rpcm-log-row-reason{margin-top:3px}.rpcm-log-row-controls{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:7px;font-size:10px;color:#aaa}.rpcm-log-row-controls label{display:flex;align-items:center;gap:4px}.rpcm-log-content{white-space:pre-wrap;word-break:break-word;max-height:220px;overflow:auto;background:#101010;border:1px solid #2d2d2d;border-radius:7px;padding:9px;margin:8px 0 0;color:#aaa;font:10px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.rpcm-log-help{padding:9px 14px;border-bottom:1px solid #292929;background:#1b1719;color:#9c9096;font-size:10px;line-height:1.55}.rpcm-log-help b{color:#d8b2c4}.rpcm-log-year,.rpcm-log-month{border:1px solid #2f2f2f;border-radius:10px;background:#191919;margin-bottom:9px;overflow:hidden}.rpcm-log-year>summary,.rpcm-log-month>summary{display:flex;align-items:center;gap:8px;cursor:pointer;list-style:none;padding:10px 11px;background:#1d1d1d;color:#ddd}.rpcm-log-year>summary::-webkit-details-marker,.rpcm-log-month>summary::-webkit-details-marker{display:none}.rpcm-log-year>summary:before,.rpcm-log-month>summary:before{content:"▸";color:#8b7c83;font-size:10px}.rpcm-log-year[open]>summary:before,.rpcm-log-month[open]>summary:before{content:"▾"}.rpcm-log-year>summary strong,.rpcm-log-month>summary strong{flex:1}.rpcm-log-year>summary span,.rpcm-log-month>summary span{color:#777;font-size:10px}.rpcm-log-month{margin:8px;border-color:#2a2a2a}.rpcm-log-month>summary{padding:8px 9px;background:#1b1b1b}.rpcm-log-groupbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 10px;border-top:1px solid #252525;border-bottom:1px solid #252525;background:#181518;color:#9b9095;font-size:10px}.rpcm-log-groupbar label{display:flex;align-items:center;gap:4px;cursor:pointer}.rpcm-log-groupbar input,.rpcm-log-manual{accent-color:#df6298}.rpcm-log-month .rpcm-log-row{margin:7px 8px;background:#1b1b1b}.rpcm-log-dialog .rpcm-spacer{flex:1}#rpcm-dup-dialog-backdrop{position:fixed;inset:0;z-index:1000006;background:rgba(0,0,0,.68);display:flex;align-items:center;justify-content:center;padding:18px}.rpcm-dup-dialog{width:min(860px,95vw)}.rpcm-dup-list{padding:12px 14px}.rpcm-dup-group{border:1px solid #3b3326;border-radius:10px;background:#1b1916;margin-bottom:12px;overflow:hidden}.rpcm-dup-group-head{display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid #332d24;background:#211d18}.rpcm-dup-group-head strong{color:#f0cf8a;font-size:12px}.rpcm-dup-group-head span{color:#8e8270;font-size:10px}.rpcm-dup-choice{margin:9px;border:1px solid #303030;border-radius:9px;background:#1b1b1b;overflow:hidden;transition:border-color .15s,box-shadow .15s}.rpcm-dup-choice.is-selected{border-color:#b75d86;box-shadow:0 0 0 1px rgba(223,98,152,.12)}.rpcm-dup-choice-head{display:flex;align-items:center;gap:8px;padding:8px 10px;background:#202020;cursor:pointer}.rpcm-dup-choice-head strong{flex:1;color:#ddd;font-size:11px}.rpcm-dup-choice-head span{color:#777;font-size:10px}.rpcm-dup-editor{display:block;width:100%;min-height:130px;max-height:260px;resize:vertical;box-sizing:border-box;border:0;border-top:1px solid #2b2b2b;background:#101010;color:#c7c7c7;padding:10px 11px;outline:none;font:10px/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.rpcm-dup-editor:focus{box-shadow:inset 0 0 0 1px rgba(223,98,152,.42)}
       .rpcm-retention{display:flex;align-items:center;gap:9px;flex-wrap:wrap;padding:10px 12px;margin:10px 0 0;border:1px solid #343434;border-radius:10px;background:#191919;color:#bbb;font-size:12px}.rpcm-retention strong{color:#eee}.rpcm-retention select{height:32px;border:1px solid #444;border-radius:8px;background:#242424;color:#f2f2f2;padding:0 9px;font:inherit;outline:none}.rpcm-retention .rpcm-retention-help{color:#888;font-size:11px}
@@ -5239,7 +5454,8 @@ NO → 압축한다.
       #rpcm-toast-wrap{position:fixed;z-index:9999;top:18px;left:50%;transform:translateX(-50%);display:flex;flex-direction:column;gap:7px;pointer-events:none}.rpcm-toast{background:#202020;color:#eee;border:1px solid #3c3c3c;border-radius:9px;padding:10px 14px;box-shadow:0 8px 26px rgba(0,0,0,.38);font-size:12px;opacity:0;transform:translateY(-8px);transition:.22s;max-width:min(580px,90vw)}.rpcm-toast.show{opacity:1;transform:translateY(0)}.rpcm-toast.success{border-color:#166534}.rpcm-toast.error{border-color:#991b1b}.rpcm-toast.warn{border-color:#92400e}
       #rpcm-modal.rpcm-density-compact .rpcm-body{padding-top:10px}#rpcm-modal.rpcm-density-compact .rpcm-slot summary{padding:8px 10px}#rpcm-modal.rpcm-density-compact .rpcm-edit{padding:0 10px 10px}#rpcm-modal.rpcm-density-compact .rpcm-section{margin-top:11px}#rpcm-modal.rpcm-density-compact .rpcm-section-desc{display:none}
       @keyframes rpcm-fade-in{from{opacity:0}to{opacity:1}}@media(prefers-reduced-motion:reduce){#rpcm-modal *{scroll-behavior:auto!important;transition:none!important;animation:none!important}}
-      @media(max-width:680px){#rpcm-overlay,#rpcm-lib-dialog-backdrop,#rpcm-log-dialog-backdrop,#rpcm-dup-dialog-backdrop,#rpcm-preview-backdrop,#rpcm-import-backdrop,#rpcm-raw-viewer{inset:auto 0 auto 0!important;top:var(--rpcm-vv-top,0px)!important;width:100vw!important;height:var(--rpcm-vvh,100vh)!important;max-height:var(--rpcm-vvh,100vh)!important;box-sizing:border-box!important}#rpcm-overlay{padding:0;pointer-events:none}#rpcm-modal-wrap{position:absolute!important;top:12px!important;left:10px!important;right:10px!important;width:auto!important;max-height:calc(100% - 24px)!important;height:calc(100% - 24px)!important;pointer-events:auto}#rpcm-modal{width:100%!important;max-height:100%!important;height:100%!important;border-radius:16px!important;box-sizing:border-box!important}.rpcm-body{padding:12px 12px calc(120px + env(safe-area-inset-bottom,0px));-webkit-overflow-scrolling:touch}.rpcm-header{padding:12px}.rpcm-quickbar{top:-12px}.rpcm-search-box{order:2;flex-basis:100%;min-width:0}.rpcm-summary-head{display:block}.rpcm-summary-side{justify-content:flex-start;margin-top:7px}.rpcm-breakdown{grid-template-columns:1fr}.rpcm-footer{padding:10px 12px calc(10px + env(safe-area-inset-bottom,0px));flex-wrap:wrap}.rpcm-footnote{width:100%;flex-basis:100%}.rpcm-btn{flex:1;min-height:42px}.rpcm-iconbtn{min-width:42px;min-height:42px;touch-action:manipulation}.rpcm-search-nav{width:36px;height:36px;touch-action:manipulation}.rpcm-editor-action.rpcm-focus-toggle{margin-left:0}.rpcm-preview-meta{display:none}.rpcm-preview-dialog,.rpcm-import-dialog{width:100vw;max-height:var(--rpcm-vvh,100vh);height:var(--rpcm-vvh,100vh);border-radius:0}.rpcm-lib-dialog,.rpcm-log-dialog,.rpcm-dup-dialog{max-height:calc(var(--rpcm-vvh,100vh) - 20px)}.rpcm-raw-card{height:calc(var(--rpcm-vvh,100vh) - 20px);max-height:calc(var(--rpcm-vvh,100vh) - 20px)}.rpcm-import-toolbar{flex-wrap:wrap}}
+      .rpcm-library-manager-toolbar{display:flex;align-items:center;gap:6px;padding:8px 14px;border-bottom:1px solid #2b2b2b;background:#191919}.rpcm-library-delete-selected{border-color:#653636;color:#fca5a5}.rpcm-library-selected-count{margin-left:auto;color:#888;font-size:10px}.rpcm-library-item-card>summary>[data-manager-select]{flex:0 0 auto;margin:0;accent-color:#df6298}
+      @media(max-width:680px){#rpcm-overlay,#rpcm-lib-dialog-backdrop,#rpcm-library-manager-backdrop,#rpcm-log-dialog-backdrop,#rpcm-dup-dialog-backdrop,#rpcm-preview-backdrop,#rpcm-import-backdrop,#rpcm-raw-viewer{inset:auto 0 auto 0!important;top:var(--rpcm-vv-top,0px)!important;width:100vw!important;height:var(--rpcm-vvh,100vh)!important;max-height:var(--rpcm-vvh,100vh)!important;box-sizing:border-box!important}#rpcm-overlay{padding:0;pointer-events:none}#rpcm-modal-wrap{position:absolute!important;top:12px!important;left:10px!important;right:10px!important;width:auto!important;max-height:calc(100% - 24px)!important;height:calc(100% - 24px)!important;pointer-events:auto}#rpcm-modal{width:100%!important;max-height:100%!important;height:100%!important;border-radius:16px!important;box-sizing:border-box!important}.rpcm-body{padding:12px 12px calc(120px + env(safe-area-inset-bottom,0px));-webkit-overflow-scrolling:touch}.rpcm-header{padding:12px}.rpcm-quickbar{top:-12px}.rpcm-search-box{order:2;flex-basis:100%;min-width:0}.rpcm-summary-head{display:block}.rpcm-summary-side{justify-content:flex-start;margin-top:7px}.rpcm-breakdown{grid-template-columns:1fr}.rpcm-footer{padding:10px 12px calc(10px + env(safe-area-inset-bottom,0px));flex-wrap:wrap}.rpcm-footnote{width:100%;flex-basis:100%}.rpcm-btn{flex:1;min-height:42px}.rpcm-iconbtn{min-width:42px;min-height:42px;touch-action:manipulation}.rpcm-search-nav{width:36px;height:36px;touch-action:manipulation}.rpcm-editor-action.rpcm-focus-toggle{margin-left:0}.rpcm-preview-meta{display:none}.rpcm-preview-dialog,.rpcm-import-dialog{width:100vw;max-height:var(--rpcm-vvh,100vh);height:var(--rpcm-vvh,100vh);border-radius:0}.rpcm-lib-dialog,.rpcm-log-dialog,.rpcm-dup-dialog{max-height:calc(var(--rpcm-vvh,100vh) - 20px)}.rpcm-library-row{flex-wrap:wrap}.rpcm-lib-row-main{flex-basis:calc(100% - 86px)}.rpcm-lib-manage-btn{order:4;margin-left:34px}.rpcm-library-item-edit{grid-template-columns:1fr}.rpcm-library-item-edit label:last-child{grid-column:1}.rpcm-library-manager-actions{flex-wrap:wrap}.rpcm-library-manager-actions [data-act="delete-library"]{flex-basis:100%}.rpcm-raw-card{height:calc(var(--rpcm-vvh,100vh) - 20px);max-height:calc(var(--rpcm-vvh,100vh) - 20px)}.rpcm-import-toolbar{flex-wrap:wrap}}
     `);
   }
 
