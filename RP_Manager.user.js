@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🪽위시 RP Manager
 // @namespace    local.rp.context.manager
-// @version      0.9.0
+// @version      0.9.1
 // @description  장기 RP용 현재상태·날짜로그·캐릭터 설정·OOC를 관리하고 필요한 컨텍스트를 자동 주입합니다.
 // @author       User
 // @license      All Rights Reserved
@@ -26,7 +26,6 @@
 // 원본 배포처 외의 장소에 파일/코드를 다시 업로드하지 말아주세요.
 // ============================================================
 
-
 (function () {
   'use strict';
 
@@ -34,13 +33,13 @@
   // 버전별 키를 쓰면 구버전과 신버전이 동시에 설치됐을 때 둘 다 실행될 수 있습니다.
   // 모든 버전이 공유하는 고정 키로 중복 실행을 막습니다.
   if (window.__WISH_RP_MANAGER_LOADED__) return;
-  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.9.0', loadedAt: Date.now() };
+  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.9.1', loadedAt: Date.now() };
   // 같은 페이지에 남아 있는 v0.8.10 복사본이 뒤늦게 시작되는 경우도 차단합니다.
   window.__RP_MANAGER_0810_LOADED__ = true;
 
   const APP = {
     name: '🪽위시 RP Manager',
-    version: '0.9.0',
+    version: '0.9.1',
     dbName: 'RPContextManagerDB',
     dbVersion: 2,
     storeName: 'rooms',
@@ -65,7 +64,6 @@
     uiPrefsKey: 'RPCM_ui_preferences_v1',
     logRecallRevision: 2, // v0.8.10: 실제 날짜 기준 최근로그 + 주입 중 로그 편집 즉시 재선정
   };
-
 
   const DEFAULT_GUIDES = Object.freeze({
     currentState: String.raw`# 현재상태 업데이트 최종 프롬프트
@@ -1763,7 +1761,6 @@ NO → 압축한다.
     return String(label || '').trim().replace(/\s+/g, ' ').toLowerCase();
   }
 
-
   function libraryDisplayName(lib) {
     return String(lib?.presetName || lib?.label || '캐릭터 설정집').trim() || '캐릭터 설정집';
   }
@@ -1862,17 +1859,45 @@ NO → 압축한다.
       .replace(/-->/g, '--\u200B>');
   }
 
-
-  function stripAutomationNoise(text) {
+  function stripAutomationNoise(text, preserveLineBreaks = false) {
     let src = String(text || '');
     src = stripOurContextBlock(src).text || src;
-    // 로어 인젝터의 참고 블록은 자동 캐릭터/과거로그 검색 대상에서 제외합니다.
+    // 마커가 이스케이프되거나 본문 중간에 남은 경우도 자동 검색 자료에서 제거합니다.
+    // Manager가 숨김 주입한 현재상태·날짜로그·기타가 캐릭터 후보를 만드는 일을 막는 2차 안전장치입니다.
     src = src
+      .replace(/\\?<!--RP_CONTEXT_MANAGER_START[\s\S]*?RP_CONTEXT_MANAGER_END-->/gi, ' ')
+      .replace(/\\?&lt;!--RP_CONTEXT_MANAGER_START[\s\S]*?RP_CONTEXT_MANAGER_END--&gt;/gi, ' ')
+      .replace(/<rp_context_manager\b[\s\S]*?<\/rp_context_manager>/gi, ' ')
+      // 로어 인젝터의 참고 블록도 자동 캐릭터/과거로그 검색 대상에서 제외합니다.
       .replace(/<ooc_lore_context>[\s\S]*?<\/ooc_lore_context>/gi, ' ')
-      .replace(/&lt;ooc_lore_context&gt;[\s\S]*?&lt;\/ooc_lore_context&gt;/gi, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-    return src;
+      .replace(/&lt;ooc_lore_context&gt;[\s\S]*?&lt;\/ooc_lore_context&gt;/gi, ' ');
+
+    // 자동 감지에서 숨김 참고자료를 제외합니다.
+    // Manager 블록은 위에서 전용 마커로 제거하고, 아래는 로어 인젝터가
+    // 사용하는 HTML 주석·참고용 커스텀 태그·마크다운 주석의 호환 정리입니다.
+    // 일반 RP 본문은 건드리지 않고 숨김 컨테이너 자체만 제거합니다.
+    const hiddenReferenceTag = '(?:ooc[-_ ]?lore(?:[-_ ]?(?:context|reference|inject(?:or)?|refiner))?|lore[-_ ]?(?:context|reference|inject(?:or)?|refiner)|(?:rp|hidden|private|memory)[-_ ]?(?:lore[-_ ]?)?(?:context|reference)|lore[-_ ]?inject(?:or)?[-_ ]?(?:context|reference)?)';
+    try {
+      const pairedTag = new RegExp('<' + hiddenReferenceTag + '\\b[^>]*>[\\s\\S]*?</' + hiddenReferenceTag + '>', 'gi');
+      const pairedEscapedTag = new RegExp('&lt;' + hiddenReferenceTag + '\\b[^&]*&gt;[\\s\\S]*?&lt;/' + hiddenReferenceTag + '&gt;', 'gi');
+      src = src.replace(pairedTag, ' ').replace(pairedEscapedTag, ' ');
+    } catch (_) {}
+    // HTML/JS 주석은 화면에 표시되지 않는 참고자료로 사용되는 경우가 많습니다.
+    // 이 단계는 감지용 복사본에만 적용되며 서버 원문은 변경하지 않습니다.
+    src = src
+      // 시작/종료 표식이 각각 별도 주석인 로어 인젝터 형식도 한 번에 제거합니다.
+      .replace(/<!--\s*(?:LORE|OOC[_ -]?LORE|LORE[_ -]?(?:INJECTOR|CONTEXT|REFERENCE)|RP[_ -]?LORE|HIDDEN[_ -]?(?:CONTEXT|REFERENCE)|로어|참고|숨김)[^>\n]*?(?:START|BEGIN)\b[\s\S]*?<!--\s*(?:LORE|OOC[_ -]?LORE|LORE[_ -]?(?:INJECTOR|CONTEXT|REFERENCE)|RP[_ -]?LORE|HIDDEN[_ -]?(?:CONTEXT|REFERENCE)|로어|참고|숨김)[^>\n]*?(?:END|FINISH)\b[^>]*-->/gi, ' ')
+      .replace(/<!--[\s\S]*?-->/g, ' ')
+      .replace(/&lt;!--[\s\S]*?--&gt;/gi, ' ')
+      .replace(/\{\/\*[\s\S]*?\*\/\}/g, ' ')
+      .replace(/(?:^|\n)[ \t]*\[\/\/\]:[ \t]*#[ \t]*\([\s\S]*?\)[ \t]*(?=\n|$)/g, ' ');
+    if (preserveLineBreaks) {
+      return normalizeLineBreaks(src)
+        .replace(/[^\S\n]+/g, ' ')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+    }
+    return src.replace(/\s+/g, ' ').trim();
   }
 
   function escapeRegex(value) {
@@ -1925,6 +1950,31 @@ NO → 압축한다.
       if (v.length >= 2) terms.push(v);
     }
     return [...new Set(terms)].sort((a,b) => b.length - a.length);
+  }
+
+  function characterCandidateEvidence(text, item) {
+    const terms = characterDetectionTerms(item);
+    if (!terms.length) return { accepted:false, confidence:0, matched:'', reason:'감지 이름 없음' };
+
+    // 설정 제목·이름 라벨·나이/외형 등의 ‘설정 신호’는 요구하지 않습니다.
+    // 숨김 참고자료를 제거한 실제 RP 본문에서 캐릭터 이름 또는 별칭이
+    // 한 번이라도 등장하면 감지로 인정합니다.
+    const cleaned = stripAutomationNoise(text, true);
+    let directMatch = null;
+    for (const term of terms) {
+      if (!aliasAppears(cleaned, term)) continue;
+      const isPrimaryName = term === String(item?.title || '').trim();
+      const evidence = {
+        accepted: true,
+        confidence: isPrimaryName ? 99 : 97,
+        matched: term,
+        reason: '실제 RP 본문에서 이름/별칭 등장',
+      };
+      if (!directMatch || evidence.confidence > directMatch.confidence || (evidence.confidence === directMatch.confidence && term.length > directMatch.matched.length)) {
+        directMatch = evidence;
+      }
+    }
+    return directMatch || { accepted:false, confidence:0, matched:'', reason:'실제 RP 본문 이름/별칭 미감지' };
   }
 
   const LOG_STOPWORDS = new Set([
@@ -2519,7 +2569,6 @@ NO → 압축한다.
       backdrop.onclick = e => { if (e.target === backdrop) finish(null); };
     });
   }
-
 
   function openLibraryPickerDialog(libraries, { title = '불러올 설정집 선택', confirmText = '이 설정집 선택' } = {}) {
     return new Promise(resolve => {
@@ -3294,7 +3343,9 @@ NO → 압축한다.
         usedTurns: 0,
         autoType: s.group === 'character' && s.lastAutoMatch ? 'character' : undefined,
         matchedAlias: s.group === 'character' ? String(s.lastAutoMatch || '') : '',
-        recallReason: s.group === 'character' && s.lastAutoMatch ? (s.lastAutoMatch === '사용자 고정' ? '사용자 고정' : `“${s.lastAutoMatch}” 감지`) : '',
+        autoConfidence: s.group === 'character' ? Number(s.lastAutoConfidence || 0) : 0,
+        autoDetectionReason: s.group === 'character' ? String(s.lastAutoReason || '') : '',
+        recallReason: s.group === 'character' && s.lastAutoMatch ? (s.lastAutoMatch === '사용자 고정' ? '사용자 고정' : (s.lastAutoReason ? `신뢰도 ${Number(s.lastAutoConfidence || 0)}% · 감지: ${s.lastAutoReason}` : `“${s.lastAutoMatch}” 감지`)) : '',
       });
     }
     const log = (room.slots || []).find(s => s.id === 'logSummary');
@@ -3430,6 +3481,10 @@ NO → 압축한다.
   }
 
   function itemReason(item) {
+    if (item.autoType === 'character' && item.matchedAlias === '사용자 고정') return '사용자 고정';
+    if (item.autoType === 'character' && item.autoDetectionReason) {
+      return `신뢰도 ${Number(item.autoConfidence || 0)}% · 감지: ${item.autoDetectionReason}`;
+    }
     if (item.recallReason) return String(item.recallReason);
     if (item.autoType === 'character' && item.matchedAlias) return `“${item.matchedAlias}” 감지`;
     if (item.autoType === 'manual-log') return '사용자 직접 선택';
@@ -4285,7 +4340,6 @@ NO → 압축한다.
     return { restored: true, reason: 'ok' };
   }
 
-
   function clonePendingItems(items) {
     return (Array.isArray(items) ? items : []).map(i => ({ ...i }));
   }
@@ -4300,7 +4354,9 @@ NO → 압축한다.
       usedTurns: 0,
       autoType: slot.group === 'character' && slot.lastAutoMatch ? 'character' : undefined,
       matchedAlias: slot.group === 'character' ? String(slot.lastAutoMatch || '') : '',
-      recallReason: slot.group === 'character' && slot.lastAutoMatch ? (slot.lastAutoMatch === '사용자 고정' ? '사용자 고정' : `“${slot.lastAutoMatch}” 감지`) : '',
+      autoConfidence: slot.group === 'character' ? Number(slot.lastAutoConfidence || 0) : 0,
+      autoDetectionReason: slot.group === 'character' ? String(slot.lastAutoReason || '') : '',
+      recallReason: slot.group === 'character' && slot.lastAutoMatch ? (slot.lastAutoMatch === '사용자 고정' ? '사용자 고정' : (slot.lastAutoReason ? `신뢰도 ${Number(slot.lastAutoConfidence || 0)}% · 감지: ${slot.lastAutoReason}` : `“${slot.lastAutoMatch}” 감지`)) : '',
     };
   }
 
@@ -4491,7 +4547,7 @@ NO → 압축한다.
   async function autoDetectCharacters(room, freshMessages) {
     if (!room.autoCharacterDetection) return { detected: [], added: 0, reset: 0 };
     const library = room.autoCharacterLibraryId ? await getCharacterLibrary(room.autoCharacterLibraryId) : null;
-    const text = (freshMessages || []).map(m => stripAutomationNoise(messageTextOf(m))).filter(Boolean).join('\n');
+    const text = (freshMessages || []).map(m => stripAutomationNoise(messageTextOf(m), true)).filter(Boolean).join('\n\n');
     const chars = (room.slots || []).filter(s => s.group === 'character');
     const byKey = new Map(chars.map(s => [libraryItemKey(s), s]));
     const detected = [];
@@ -4500,8 +4556,8 @@ NO → 압축한다.
     for (const src of (library?.characters || [])) {
       const key = libraryItemKey(src);
       let slot = byKey.get(key);
-      const terms = characterDetectionTerms(src);
-      let matched = text ? terms.find(term => aliasAppears(text, term)) : null;
+      const evidence = text ? characterCandidateEvidence(text, src) : { accepted:false };
+      const matched = evidence.accepted ? evidence.matched : null;
       // 📌 자동 고정은 '감지 이벤트'가 아니라 항상 유지되는 사용자 상태입니다.
       // 매 폴링마다 감지된 것으로 반환하면 토스트가 반복되고 모달이 재렌더링되어 스크롤이 위로 튀므로
       // 실제 최근 RP에서 이름/별칭이 잡힌 경우에만 detected에 포함합니다.
@@ -4522,8 +4578,10 @@ NO → 압축한다.
       if (!Array.isArray(slot.aliases) || !slot.aliases.length) slot.aliases = Array.isArray(src.aliases) ? [...src.aliases] : [];
       slot.enabled = true;
       slot.lastAutoMatch = matched;
+      slot.lastAutoConfidence = Number(evidence.confidence || 0);
+      slot.lastAutoReason = String(evidence.reason || '실제 RP 본문에서 이름/별칭 등장');
       slot.lastAutoDetectedAt = Date.now();
-      detected.push({ slot, matched });
+      detected.push({ slot, matched, confidence:slot.lastAutoConfidence, reason:slot.lastAutoReason });
 
       if (room.pending) {
         const items = Array.isArray(room.pending.items) ? room.pending.items : (room.pending.items = []);
@@ -4531,7 +4589,9 @@ NO → 압축한다.
         const next = slotToPendingItem(slot);
         next.autoType = 'character';
         next.matchedAlias = matched;
-        next.recallReason = matched === '사용자 고정' ? '사용자 고정' : `“${matched}” 감지`;
+        next.autoConfidence = slot.lastAutoConfidence;
+        next.autoDetectionReason = slot.lastAutoReason;
+        next.recallReason = `신뢰도 ${slot.lastAutoConfidence}% · 감지: ${slot.lastAutoReason}`;
         if (idx < 0) items.push(next);
         else if (room.autoCharacterResetOnReappear || matched === '사용자 고정') { items[idx] = next; reset++; }
       }
@@ -5416,22 +5476,20 @@ NO → 압축한다.
     try { el?.style?.setProperty(name, value, 'important'); } catch (_) {}
   }
 
-  function mobileManagerBottomOffset() {
+  function mobileManagerTopOffset() {
     const viewportWidth = Math.max(1, window.innerWidth || document.documentElement.clientWidth || 1);
     const viewportHeight = Math.max(1, window.visualViewport?.height || window.innerHeight || document.documentElement.clientHeight || 1);
     const size = 48;
     const right = 14;
     const gap = 10;
-    let bottom = 88;
+    let top = 76;
     let obstacles = [];
     try {
       obstacles = visibleButtonLikes(document).filter(el => {
         if (el === state.fab || el.closest?.(`#${MANAGER_MOBILE_HOST_ID}`)) return false;
-        const style = getComputedStyle(el);
-        if (style.position !== 'fixed' && style.position !== 'sticky') return false;
         const rect = el.getBoundingClientRect();
         return rect.width >= 24 && rect.height >= 24 && rect.width <= 180 && rect.height <= 180 &&
-          rect.right >= viewportWidth - 150 && rect.bottom >= viewportHeight - 360;
+          rect.right >= viewportWidth - 150 && rect.top <= 260 && rect.bottom >= 0;
       }).map(el => el.getBoundingClientRect());
     } catch (_) {}
 
@@ -5439,17 +5497,17 @@ NO → 압축한다.
       const target = {
         left: viewportWidth - right - size,
         right: viewportWidth - right,
-        top: viewportHeight - bottom - size,
-        bottom: viewportHeight - bottom,
+        top,
+        bottom: top + size,
       };
       const overlap = obstacles.find(rect =>
         target.left < rect.right + gap && target.right > rect.left - gap &&
         target.top < rect.bottom + gap && target.bottom > rect.top - gap
       );
       if (!overlap) break;
-      bottom = Math.min(Math.max(bottom + size + gap, viewportHeight - overlap.top + gap), Math.max(88, viewportHeight - size - gap));
+      top = Math.min(Math.max(top + size + gap, overlap.bottom + gap), Math.max(76, viewportHeight - size - 18));
     }
-    return Math.round(bottom);
+    return Math.round(top);
   }
 
   function ensureManagerMobileHostGuard() {
@@ -5492,12 +5550,13 @@ NO → 압축한다.
       }
     }
 
-    const bottom = mobileManagerBottomOffset();
+    const top = mobileManagerTopOffset();
     setImportantStyle(managerMobileHost, 'position', 'fixed');
     setImportantStyle(managerMobileHost, 'width', '48px');
     setImportantStyle(managerMobileHost, 'height', '48px');
     setImportantStyle(managerMobileHost, 'right', '14px');
-    setImportantStyle(managerMobileHost, 'bottom', `calc(${bottom}px + env(safe-area-inset-bottom, 0px))`);
+    managerMobileHost.style.removeProperty('bottom');
+    setImportantStyle(managerMobileHost, 'top', `max(calc(env(safe-area-inset-top, 0px) + 12px), ${top}px)`);
     setImportantStyle(managerMobileHost, 'z-index', '2147483646');
     setImportantStyle(managerMobileHost, 'pointer-events', 'none');
     setImportantStyle(managerMobileHost, 'contain', 'layout style paint');
@@ -5743,7 +5802,7 @@ NO → 압축한다.
             </div>
 
             <div class="rpcm-section" id="rpcm-section-character">
-              <div class="rpcm-section-head rpcm-character-head"><div><div class="rpcm-section-title">캐릭터 설정</div><div class="rpcm-section-desc">캐릭터별로 저장·체크하고 인물마다 유지 주기를 따로 설정합니다.<br>전역 설정집 하나를 자동감지용으로 지정하면 최근 실제 RP에서 정식 이름·성·영문명을 자동 감지해 필요한 캐릭터만 불러옵니다.<br>‘추가 별칭’은 설정팩에 없는 애칭·약칭·호칭을 등록할 때만 사용합니다. 체크 상태와 남은 턴은 공유하지 않습니다.</div></div><div class="rpcm-charlib-actions"><button class="rpcm-add-btn" id="rpcm-charlib-save">설정집 저장</button><button class="rpcm-add-btn" id="rpcm-charlib-load">설정집 불러오기</button><button class="rpcm-add-btn" id="rpcm-add-character">＋ 캐릭터 추가</button></div></div>
+              <div class="rpcm-section-head rpcm-character-head"><div><div class="rpcm-section-title">캐릭터 설정</div><div class="rpcm-section-desc">캐릭터별로 저장·체크하고 인물마다 유지 주기를 따로 설정합니다.<br>자동 감지는 숨김 주입·로어 참고자료를 제외한 최근 RP 본문에서 이름·별칭이 등장한 캐릭터를 감지합니다.<br>‘추가 별칭’은 설정팩에 없는 애칭·약칭·호칭을 등록할 때만 사용합니다. 체크 상태와 남은 턴은 공유하지 않습니다.</div></div><div class="rpcm-charlib-actions"><button class="rpcm-add-btn" id="rpcm-charlib-save">설정집 저장</button><button class="rpcm-add-btn" id="rpcm-charlib-load">설정집 불러오기</button><button class="rpcm-add-btn" id="rpcm-add-character">＋ 캐릭터 추가</button></div></div>
               <div class="rpcm-auto-panel"><label><input type="checkbox" id="rpcm-auto-char" ${room.autoCharacterDetection ? 'checked' : ''}> 캐릭터 자동 감지</label><label>자동감지 설정집 <select id="rpcm-auto-char-library"><option value="">선택 안 함</option></select></label><label><input type="checkbox" id="rpcm-auto-char-reset" ${room.autoCharacterResetOnReappear ? 'checked' : ''}> 다시 등장하면 유지턴 리셋</label><div class="rpcm-auto-note">자동 감지·관련 로그 선택은 주입 전에도 <b>다음 주입 준비</b>를 위해 갱신됩니다. 실제 서버 숨김 주입은 <b>주입 시작</b>을 누른 뒤에만 동작합니다.</div></div>
               <div id="rpcm-character-slots"></div>
             </div>
