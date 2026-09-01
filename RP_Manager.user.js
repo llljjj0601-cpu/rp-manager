@@ -1859,6 +1859,23 @@ NO → 압축한다.
       .replace(/-->/g, '--\u200B>');
   }
 
+  function stripStatusHudBlocks(text, preserveLineBreaks = false) {
+    // 채팅 상·하단에 렌더링되는 상태창은 보통 ``` ``` 안의 별도 블록입니다.
+    // 실제 RP 대사/서술까지 지우지 않도록 상태창 표식이나 구조가 확인된
+    // 펜스만 제거합니다. 이 함수는 감지용 복사본에만 적용됩니다.
+    const src = normalizeLineBreaks(String(text || ''));
+    const fenceRe = /```([^\n`]*)\n?([\s\S]*?)```/g;
+    const statusMarkerRe = /(?:상태\s*창|상태\s*HUD|HUD|status\s*(?:hud|window|panel|card)|character\s*(?:status|info)|current\s*(?:state|status)|현재\s*상태)/iu;
+    const statusFieldRe = /(?:위치|장소|상태|행동|관계|동행|성별|나이|age|gender|location|position|status|relationship)\s*[:：|｜]/iu;
+    const identityRe = /(?:\d{1,3}\s*세|남성|여성|남자|여자|male|female|age\s*[:：|｜]|gender\s*[:：|｜])/iu;
+    return src.replace(fenceRe, (full, info, body) => {
+      const probe = String(info || '') + '\n' + String(body || '').slice(0, 1800);
+      const isStatusHud = statusMarkerRe.test(probe) || (statusFieldRe.test(probe) && identityRe.test(probe));
+      if (!isStatusHud) return full;
+      return preserveLineBreaks ? '\n' : ' ';
+    });
+  }
+
   function stripAutomationNoise(text, preserveLineBreaks = false) {
     let src = String(text || '');
     src = stripOurContextBlock(src).text || src;
@@ -1871,6 +1888,9 @@ NO → 압축한다.
       // 로어 인젝터의 참고 블록도 자동 캐릭터/과거로그 검색 대상에서 제외합니다.
       .replace(/<ooc_lore_context>[\s\S]*?<\/ooc_lore_context>/gi, ' ')
       .replace(/&lt;ooc_lore_context&gt;[\s\S]*?&lt;\/ooc_lore_context&gt;/gi, ' ');
+
+    // 화면에 보이는 상태창(HUD)도 RP 본문이 아니므로 이름 감지에서 제외합니다.
+    src = stripStatusHudBlocks(src, preserveLineBreaks);
 
     // 자동 감지에서 숨김 참고자료를 제외합니다.
     // Manager 블록은 위에서 전용 마커로 제거하고, 아래는 로어 인젝터가
@@ -5493,38 +5513,43 @@ NO → 압축한다.
     } catch (_) { return null; }
   }
 
-  function mobileManagerAnchorPosition() {
-    const model = findMobileModelSelectorButton();
-    if (!model) return null;
-    const rect = model.getBoundingClientRect();
-    const viewportWidth = Math.max(1, window.innerWidth || document.documentElement.clientWidth || 1);
+  function findMobileComposerRect() {
     const viewportHeight = Math.max(1, window.visualViewport?.height || window.innerHeight || document.documentElement.clientHeight || 1);
-    const size = 42;
-    const gap = 8;
-    const edge = 8;
-    if (!Number.isFinite(rect.left) || !Number.isFinite(rect.top) || rect.top < 0 || rect.bottom > viewportHeight || rect.width < 90) return null;
-
-    let left = Math.round(rect.left - size - gap);
-    if (left < edge) {
-      const rightCandidate = Math.round(rect.right + gap);
-      if (rightCandidate + size <= viewportWidth - edge) left = rightCandidate;
-      else return null;
+    const minWidth = Math.min(420, Math.max(280, Math.floor((window.innerWidth || 360) * .62)));
+    const editors = [...document.querySelectorAll('[contenteditable="true"],.ProseMirror,textarea,[placeholder*="메시지"],[aria-label*="메시지"]')]
+      .filter(isElementVisible)
+      .sort((a, b) => b.getBoundingClientRect().bottom - a.getBoundingClientRect().bottom);
+    for (const editor of editors) {
+      let node = editor;
+      let best = null;
+      for (let depth = 0; node && node !== document.body && depth < 7; depth++, node = node.parentElement) {
+        const rect = node.getBoundingClientRect();
+        if (rect.width >= minWidth && rect.height >= 42 && rect.height <= 300 &&
+            rect.bottom >= viewportHeight - 280 && rect.top < viewportHeight) {
+          best = rect;
+        }
+      }
+      if (best) return best;
     }
-    const top = Math.round(rect.top + (rect.height - size) / 2);
-    if (top < edge || top + size > viewportHeight - edge) return null;
-    // 모델 버튼 주변의 다른 상단 액션과 겹치면 화면 위에 덮어쓰지 않습니다.
-    try {
-      const target = { left, right: left + size, top, bottom: top + size };
-      const blocked = visibleButtonLikes(document).some(el => {
-        if (!el || el === model || el === state.fab || el.closest?.('#' + MANAGER_MOBILE_HOST_ID)) return false;
-        const obstacle = el.getBoundingClientRect();
-        if (obstacle.width < 24 || obstacle.height < 24) return false;
-        return target.left < obstacle.right && target.right > obstacle.left &&
-          target.top < obstacle.bottom && target.bottom > obstacle.top;
-      });
-      if (blocked) return null;
-    } catch (_) {}
-    return { left, top };
+    return null;
+  }
+
+  function mobileManagerBottomOffset() {
+    const viewportHeight = Math.max(1, window.visualViewport?.height || window.innerHeight || document.documentElement.clientHeight || 1);
+    const composer = findMobileComposerRect();
+    // 입력창 위에 원래처럼 두되, 겹침을 피하도록 기존보다 6px 더 띄웁니다.
+    if (composer) {
+      const gap = 18;
+      const fromComposer = viewportHeight - composer.top + gap;
+      return Math.round(Math.min(420, Math.max(118, fromComposer)));
+    }
+    // 입력창이 아직 렌더링되지 않은 순간에도 버튼이 상단으로 튀지 않게 합니다.
+    return Math.round(Math.min(260, Math.max(146, viewportHeight * .14)));
+  }
+
+  function mobileManagerAnchorPosition() {
+    // 모바일은 모델 선택기 옆이 아니라 기존처럼 화면 오른쪽 아래에 둡니다.
+    return { right: 14, bottom: mobileManagerBottomOffset() };
   }
   function ensureManagerMobileHostGuard() {
     if (managerMobileHostGuard || !document.documentElement) return;
@@ -5570,8 +5595,8 @@ NO → 압축한다.
     setImportantStyle(managerMobileHost, 'position', 'fixed');
     setImportantStyle(managerMobileHost, 'width', '42px');
     setImportantStyle(managerMobileHost, 'height', '42px');
-    managerMobileHost.style.removeProperty('right');
-    managerMobileHost.style.removeProperty('bottom');
+    managerMobileHost.style.removeProperty('left');
+    managerMobileHost.style.removeProperty('top');
     setImportantStyle(managerMobileHost, 'z-index', '2147483646');
     setImportantStyle(managerMobileHost, 'pointer-events', 'none');
     setImportantStyle(managerMobileHost, 'overflow', 'visible');
@@ -5585,15 +5610,9 @@ NO → 압축한다.
     setImportantStyle(managerMobileHost, 'filter', 'none');
     setImportantStyle(managerMobileHost, 'opacity', '1');
     ensureManagerMobileHostGuard();
-    if (!position) {
-      managerMobileHost.style.removeProperty('left');
-      managerMobileHost.style.removeProperty('top');
-      setImportantStyle(managerMobileHost, 'visibility', 'hidden');
-      setImportantStyle(managerMobileHost, 'display', 'none');
-      return managerMobileMount;
-    }
-    setImportantStyle(managerMobileHost, 'left', String(position.left) + 'px');
-    setImportantStyle(managerMobileHost, 'top', String(position.top) + 'px');
+    if (!position) return managerMobileMount;
+    setImportantStyle(managerMobileHost, 'right', String(position.right) + 'px');
+    setImportantStyle(managerMobileHost, 'bottom', 'calc(' + String(position.bottom) + 'px + env(safe-area-inset-bottom, 0px))');
     setImportantStyle(managerMobileHost, 'visibility', 'visible');
     setImportantStyle(managerMobileHost, 'display', 'block');
     return managerMobileMount;
