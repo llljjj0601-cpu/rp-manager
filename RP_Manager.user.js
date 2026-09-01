@@ -5142,8 +5142,8 @@ NO → 압축한다.
       #rpcm-fab.rpcm-armed .rpcm-dot{background:#22c55e!important;box-shadow:0 0 0 2px rgba(34,197,94,.16)!important}
       #rpcm-fab[hidden]{display:none!important}
       #rpcm-fab .rpcm-fab-wing{display:none!important}
-      #rpcm-fab.rpcm-fallback{position:fixed!important;z-index:2147483645!important;height:34px!important;margin:0!important;border-radius:999px!important;box-shadow:0 4px 14px rgba(0,0,0,.35)!important;backdrop-filter:blur(8px)!important}#rpcm-fab.rpcm-compact-fallback{width:42px!important;min-width:42px!important;padding:0!important}#rpcm-fab.rpcm-compact-fallback .rpcm-fab-label{display:none!important}#rpcm-fab.rpcm-compact-fallback .rpcm-fab-wing{display:inline!important;font-size:18px!important;line-height:1!important}
-      #rpcm-fab.rpcm-mobile-fab{width:48px!important;min-width:48px!important;height:48px!important;min-height:48px!important;padding:0!important;border-radius:50%!important;right:14px!important;touch-action:manipulation!important;-webkit-tap-highlight-color:transparent!important;box-shadow:0 6px 20px rgba(0,0,0,.42)!important}
+      #rpcm-fab.rpcm-fallback{position:fixed!important;z-index:2147483645!important;height:34px!important;margin:0!important;border-radius:999px!important;box-shadow:0 4px 14px rgba(0,0,0,.24)!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important;filter:none!important}#rpcm-fab.rpcm-compact-fallback{width:42px!important;min-width:42px!important;padding:0!important}#rpcm-fab.rpcm-compact-fallback .rpcm-fab-label{display:none!important}#rpcm-fab.rpcm-compact-fallback .rpcm-fab-wing{display:inline!important;font-size:18px!important;line-height:1!important}
+      #rpcm-fab.rpcm-mobile-fab{width:42px!important;min-width:42px!important;height:42px!important;min-height:42px!important;padding:0!important;border-radius:50%!important;right:auto!important;touch-action:manipulation!important;-webkit-tap-highlight-color:transparent!important;box-shadow:none!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important;filter:none!important}
       #rpcm-fab.rpcm-mobile-fab .rpcm-fab-label{display:none!important}
       #rpcm-fab.rpcm-mobile-fab .rpcm-fab-wing{display:inline!important;font-size:22px!important;line-height:1!important}
       #rpcm-fab.rpcm-mobile-fab .rpcm-dot{position:absolute!important;right:5px!important;top:5px!important;width:8px!important;height:8px!important;border:1px solid rgba(24,24,24,.9)!important}
@@ -5458,58 +5458,74 @@ NO → 압축한다.
 
   function mobileManagerButtonStyles() {
     return `
-      :host{all:initial}
-      #mount{width:48px;height:48px;pointer-events:none}
-      button{all:unset;box-sizing:border-box!important;position:relative!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;width:48px!important;height:48px!important;min-width:48px!important;min-height:48px!important;border:1px solid #f472b6!important;border-radius:50%!important;background:rgba(36,24,31,.94)!important;color:#f9a8d4!important;box-shadow:0 6px 20px rgba(0,0,0,.42)!important;font-family:-apple-system,BlinkMacSystemFont,"Pretendard",sans-serif!important;cursor:pointer!important;user-select:none!important;touch-action:manipulation!important;-webkit-tap-highlight-color:transparent!important;pointer-events:auto!important}
+      :host{all:initial;background:transparent!important;box-shadow:none!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important;filter:none!important}
+      #mount{width:42px;height:42px;overflow:visible;pointer-events:none;background:transparent!important;box-shadow:none!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important;filter:none!important}
+      button{all:unset;box-sizing:border-box!important;position:relative!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;width:42px!important;height:42px!important;min-width:42px!important;min-height:42px!important;border:1px solid #f472b6!important;border-radius:50%!important;background:#24181f!important;color:#f9a8d4!important;box-shadow:none!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important;filter:none!important;font-family:-apple-system,BlinkMacSystemFont,"Pretendard",sans-serif!important;cursor:pointer!important;user-select:none!important;touch-action:manipulation!important;-webkit-tap-highlight-color:transparent!important;pointer-events:auto!important}
       button:focus-visible{outline:2px solid #f9a8d4!important;outline-offset:3px!important}
       button[hidden]{display:none!important}
       .rpcm-fab-label{display:none!important}
-      .rpcm-fab-wing{display:inline!important;font-size:22px!important;line-height:1!important}
-      .rpcm-dot{position:absolute!important;right:5px!important;top:5px!important;width:8px!important;height:8px!important;border:1px solid rgba(24,24,24,.9)!important;border-radius:50%!important;background:#f9a8d4!important}
-      button.rpcm-armed{background:rgba(85,36,61,.96)!important;border-color:#fb7185!important;color:#fff!important}
+      .rpcm-fab-wing{display:inline!important;font-size:20px!important;line-height:1!important}
+      .rpcm-dot{position:absolute!important;right:4px!important;top:4px!important;width:7px!important;height:7px!important;border:1px solid #24181f!important;border-radius:50%!important;background:#f9a8d4!important}
+      button.rpcm-armed{background:#55243d!important;border-color:#fb7185!important;color:#fff!important}
       button.rpcm-armed .rpcm-dot{background:#22c55e!important;box-shadow:0 0 0 2px rgba(34,197,94,.16)!important}
-      @media(prefers-color-scheme:light){button{background:#fff1f7!important;color:#b84f7e!important;border-color:#df6298!important}}
+      @media(prefers-color-scheme:light){button{background:#fff1f7!important;color:#b84f7e!important;border-color:#df6298!important}.rpcm-dot{border-color:#fff1f7!important}}
     `;
   }
-
   function setImportantStyle(el, name, value) {
     try { el?.style?.setProperty(name, value, 'important'); } catch (_) {}
   }
 
-  function mobileManagerTopOffset() {
-    const viewportWidth = Math.max(1, window.innerWidth || document.documentElement.clientWidth || 1);
-    const viewportHeight = Math.max(1, window.visualViewport?.height || window.innerHeight || document.documentElement.clientHeight || 1);
-    const size = 48;
-    const right = 14;
-    const gap = 10;
-    let top = 76;
-    let obstacles = [];
-    try {
-      obstacles = visibleButtonLikes(document).filter(el => {
-        if (el === state.fab || el.closest?.(`#${MANAGER_MOBILE_HOST_ID}`)) return false;
-        const rect = el.getBoundingClientRect();
-        return rect.width >= 24 && rect.height >= 24 && rect.width <= 180 && rect.height <= 180 &&
-          rect.right >= viewportWidth - 150 && rect.top <= 260 && rect.bottom >= 0;
-      }).map(el => el.getBoundingClientRect());
-    } catch (_) {}
+  function findMobileModelSelectorButton() {
+    const header = findStableCrackHeaderActionRow();
+    const inHeader = findModelSelectorButtonInHeader(header);
+    if (inHeader && isElementVisible(inHeader)) return inHeader;
 
-    for (let pass = 0; pass < 8; pass++) {
-      const target = {
-        left: viewportWidth - right - size,
-        right: viewportWidth - right,
-        top,
-        bottom: top + size,
-      };
-      const overlap = obstacles.find(rect =>
-        target.left < rect.right + gap && target.right > rect.left - gap &&
-        target.top < rect.bottom + gap && target.bottom > rect.top - gap
-      );
-      if (!overlap) break;
-      top = Math.min(Math.max(top + size + gap, overlap.bottom + gap), Math.max(76, viewportHeight - size - 18));
-    }
-    return Math.round(top);
+    // 헤더 클래스가 바뀐 경우에도 모델 선택 버튼의 텍스트로 보조 탐색합니다.
+    const strongModelWord = /(하이퍼\s*챗|프로\s*챗|프리\s*챗|chat|gpt|claude|gemini|sonnet|opus|flash)/i;
+    try {
+      return visibleButtonLikes(document)
+        .filter(el => el && el !== state.fab && !el.closest?.(`#${MANAGER_MOBILE_HOST_ID}`))
+        .filter(el => !el.closest?.('[role="dialog"],[aria-modal="true"],[role="menu"],[role="listbox"],[data-radix-popper-content-wrapper]'))
+        .filter(isElementVisible)
+        .map(el => ({ el, rect: el.getBoundingClientRect(), text: modelSelectorText(el) }))
+        .filter(x => x.rect.top >= 48 && x.rect.top <= 230 && x.rect.width >= 90 && x.rect.width <= 420 && x.rect.height >= 28 && x.rect.height <= 90 && strongModelWord.test(x.text))
+        .sort((a, b) => (b.rect.width - a.rect.width) || (a.rect.top - b.rect.top))[0]?.el || null;
+    } catch (_) { return null; }
   }
 
+  function mobileManagerAnchorPosition() {
+    const model = findMobileModelSelectorButton();
+    if (!model) return null;
+    const rect = model.getBoundingClientRect();
+    const viewportWidth = Math.max(1, window.innerWidth || document.documentElement.clientWidth || 1);
+    const viewportHeight = Math.max(1, window.visualViewport?.height || window.innerHeight || document.documentElement.clientHeight || 1);
+    const size = 42;
+    const gap = 8;
+    const edge = 8;
+    if (!Number.isFinite(rect.left) || !Number.isFinite(rect.top) || rect.top < 0 || rect.bottom > viewportHeight || rect.width < 90) return null;
+
+    let left = Math.round(rect.left - size - gap);
+    if (left < edge) {
+      const rightCandidate = Math.round(rect.right + gap);
+      if (rightCandidate + size <= viewportWidth - edge) left = rightCandidate;
+      else return null;
+    }
+    const top = Math.round(rect.top + (rect.height - size) / 2);
+    if (top < edge || top + size > viewportHeight - edge) return null;
+    // 모델 버튼 주변의 다른 상단 액션과 겹치면 화면 위에 덮어쓰지 않습니다.
+    try {
+      const target = { left, right: left + size, top, bottom: top + size };
+      const blocked = visibleButtonLikes(document).some(el => {
+        if (!el || el === model || el === state.fab || el.closest?.('#' + MANAGER_MOBILE_HOST_ID)) return false;
+        const obstacle = el.getBoundingClientRect();
+        if (obstacle.width < 24 || obstacle.height < 24) return false;
+        return target.left < obstacle.right && target.right > obstacle.left &&
+          target.top < obstacle.bottom && target.bottom > obstacle.top;
+      });
+      if (blocked) return null;
+    } catch (_) {}
+    return { left, top };
+  }
   function ensureManagerMobileHostGuard() {
     if (managerMobileHostGuard || !document.documentElement) return;
     managerMobileHostGuard = new MutationObserver(() => {
@@ -5550,20 +5566,36 @@ NO → 압축한다.
       }
     }
 
-    const top = mobileManagerTopOffset();
+    const position = mobileManagerAnchorPosition();
     setImportantStyle(managerMobileHost, 'position', 'fixed');
-    setImportantStyle(managerMobileHost, 'width', '48px');
-    setImportantStyle(managerMobileHost, 'height', '48px');
-    setImportantStyle(managerMobileHost, 'right', '14px');
+    setImportantStyle(managerMobileHost, 'width', '42px');
+    setImportantStyle(managerMobileHost, 'height', '42px');
+    managerMobileHost.style.removeProperty('right');
     managerMobileHost.style.removeProperty('bottom');
-    setImportantStyle(managerMobileHost, 'top', `max(calc(env(safe-area-inset-top, 0px) + 12px), ${top}px)`);
     setImportantStyle(managerMobileHost, 'z-index', '2147483646');
     setImportantStyle(managerMobileHost, 'pointer-events', 'none');
-    setImportantStyle(managerMobileHost, 'contain', 'layout style paint');
-    setImportantStyle(managerMobileHost, 'visibility', 'visible');
+    setImportantStyle(managerMobileHost, 'overflow', 'visible');
+    // paint containment은 원형 버튼의 그림자를 사각형으로 잘라 보이게 하므로 사용하지 않습니다.
+    setImportantStyle(managerMobileHost, 'contain', 'none');
+    setImportantStyle(managerMobileHost, 'isolation', 'isolate');
+    setImportantStyle(managerMobileHost, 'background', 'transparent');
+    setImportantStyle(managerMobileHost, 'box-shadow', 'none');
+    setImportantStyle(managerMobileHost, 'backdrop-filter', 'none');
+    setImportantStyle(managerMobileHost, '-webkit-backdrop-filter', 'none');
+    setImportantStyle(managerMobileHost, 'filter', 'none');
     setImportantStyle(managerMobileHost, 'opacity', '1');
-    setImportantStyle(managerMobileHost, 'display', 'block');
     ensureManagerMobileHostGuard();
+    if (!position) {
+      managerMobileHost.style.removeProperty('left');
+      managerMobileHost.style.removeProperty('top');
+      setImportantStyle(managerMobileHost, 'visibility', 'hidden');
+      setImportantStyle(managerMobileHost, 'display', 'none');
+      return managerMobileMount;
+    }
+    setImportantStyle(managerMobileHost, 'left', String(position.left) + 'px');
+    setImportantStyle(managerMobileHost, 'top', String(position.top) + 'px');
+    setImportantStyle(managerMobileHost, 'visibility', 'visible');
+    setImportantStyle(managerMobileHost, 'display', 'block');
     return managerMobileMount;
   }
 
