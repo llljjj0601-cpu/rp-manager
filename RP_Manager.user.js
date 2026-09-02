@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🪽위시 RP Manager
 // @namespace    local.rp.context.manager
-// @version      0.9.5
+// @version      0.9.7
 // @description  장기 RP용 현재상태·날짜로그·캐릭터 설정·OOC를 관리하고 필요한 컨텍스트를 자동 주입합니다.
 // @author       User
 // @license      All Rights Reserved
@@ -33,13 +33,13 @@
   // 버전별 키를 쓰면 구버전과 신버전이 동시에 설치됐을 때 둘 다 실행될 수 있습니다.
   // 모든 버전이 공유하는 고정 키로 중복 실행을 막습니다.
   if (window.__WISH_RP_MANAGER_LOADED__) return;
-  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.9.5', loadedAt: Date.now() };
+  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.9.7', loadedAt: Date.now() };
   // 같은 페이지에 남아 있는 v0.8.10 복사본이 뒤늦게 시작되는 경우도 차단합니다.
   window.__RP_MANAGER_0810_LOADED__ = true;
 
   const APP = {
     name: '🪽위시 RP Manager',
-    version: '0.9.5',
+    version: '0.9.7',
     dbName: 'RPContextManagerDB',
     dbVersion: 2,
     storeName: 'rooms',
@@ -1888,6 +1888,10 @@ NO → 압축한다.
       // 로어 인젝터의 참고 블록도 자동 캐릭터/과거로그 검색 대상에서 제외합니다.
       .replace(/<ooc_lore_context>[\s\S]*?<\/ooc_lore_context>/gi, ' ')
       .replace(/&lt;ooc_lore_context&gt;[\s\S]*?&lt;\/ooc_lore_context&gt;/gi, ' ');
+    // RP 답변에 표시되는 상태창은 실제 지문·대사가 아닙니다. 캐릭터 이름이나 사건 키워드가
+    // 상태창에 반복됐다는 이유만으로 자동 캐릭터/관련로그가 호출되지 않게 공통으로 제거합니다.
+    // 일반 코드 블록까지 지우지는 않고 info/status 계열 또는 상태 필드가 확실한 무표기 펜스만 제외합니다.
+    src = stripRpStatusFences(src);
     if (preserveLineBreaks) {
       return normalizeLineBreaks(src)
         .replace(/[^\S\n]+/g, ' ')
@@ -1899,6 +1903,70 @@ NO → 압축한다.
 
   function escapeRegex(value) {
     return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  function isRpStatusFence(info, body) {
+    const rawInfo = String(info || '').trim().toLowerCase();
+    const tag = (rawInfo.match(/^[\p{L}\p{N}_-]+/u)?.[0] || '').replace(/[_-]+/g, '');
+    const explicitTags = new Set([
+      'info', 'status', 'state', 'statuswindow', 'rpstatus', 'characterstatus',
+      '상태', '상태창', '현재상태', '정보창', '스테이터스',
+    ]);
+    if (explicitTags.has(tag)) return true;
+    // 언어가 명시된 일반 코드 블록(js/json 등)은 상태창 판정을 하지 않습니다.
+    if (tag) return false;
+
+    const sample = normalizeLineBreaks(String(body || '')).slice(0, 3200);
+    if (!sample.trim()) return false;
+    if (/^\s*(?:[#>*-]\s*)?(?:\[\s*)?(?:현재\s*(?:상태|정보)|상태창|캐릭터\s*상태|status(?:\s*window)?|character\s*status|스테이터스)(?:\s*\])?\s*(?:[:：|｜-]|$)/im.test(sample)) return true;
+
+    // 무표기 ``` 상태창은 제목이 잘려 오는 경우가 있어, 전형적인 상태 필드가 3종 이상일 때만 제외합니다.
+    // 단순 대사나 서술 안에 '장소' 같은 단어 하나가 나온 것만으로는 제거되지 않습니다.
+    const fieldNames = new Set();
+    const fieldRe = /(?:^|\n)\s*(?:[-*•]\s*)?(?:\[\s*)?(시간|시각|날짜|장소|위치|등장인물|인물|캐릭터|관계|호감도|친밀도|체력|상태|기분|감정|의상|복장|소지품|목표|퀘스트|날씨|턴)(?:\s*\])?\s*[:：|｜]/gi;
+    let match;
+    while ((match = fieldRe.exec(sample))) fieldNames.add(String(match[1] || '').toLowerCase());
+    return fieldNames.size >= 3;
+  }
+
+  function stripRpStatusFences(text) {
+    const lines = normalizeLineBreaks(String(text || '')).split('\n');
+    const out = [];
+    let i = 0;
+    while (i < lines.length) {
+      const open = lines[i].match(/^[ \t]{0,3}(`{3,}|~{3,})[ \t]*([^\n]*)$/);
+      if (!open) {
+        out.push(lines[i]);
+        i++;
+        continue;
+      }
+
+      const fenceChar = open[1][0];
+      const minimumLength = open[1].length;
+      let closeIndex = -1;
+      for (let j = i + 1; j < lines.length; j++) {
+        const candidate = lines[j].trim();
+        if (candidate.length >= minimumLength && [...candidate].every(ch => ch === fenceChar)) {
+          closeIndex = j;
+          break;
+        }
+      }
+
+      const bodyEnd = closeIndex >= 0 ? closeIndex : lines.length;
+      const body = lines.slice(i + 1, bodyEnd).join('\n');
+      if (isRpStatusFence(open[2], body)) {
+        // 줄 경계 하나는 남겨 앞뒤 실제 RP 문장이 붙지 않게 합니다.
+        out.push('');
+        i = closeIndex >= 0 ? closeIndex + 1 : lines.length;
+        continue;
+      }
+
+      // 상태창이 아닌 코드 펜스는 원문 그대로 보존합니다. 닫히지 않은 펜스도 임의 삭제하지 않습니다.
+      const keepEnd = closeIndex >= 0 ? closeIndex + 1 : lines.length;
+      out.push(...lines.slice(i, keepEnd));
+      i = keepEnd;
+    }
+    return out.join('\n');
   }
 
   function aliasAppears(text, alias) {
@@ -5448,6 +5516,7 @@ NO → 압축한다.
       .rpcm-lib-row small [data-lib-count]{display:inline}
       .rpcm-tools{display:flex;gap:7px;flex-wrap:wrap;margin:12px 0 2px}.rpcm-mini{font-size:11px;padding:7px 9px;border-radius:7px;border:1px solid #3b3b3b;background:#232323;color:#aaa;cursor:pointer}.rpcm-mini:hover{color:#fff;background:#303030}.rpcm-shortcuts{flex-basis:100%;color:#666;font-size:10px;margin-top:3px}
       .rpcm-breakdown{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:18px;row-gap:0;margin-top:10px;border-top:1px solid #292929}.rpcm-breakdown-chip{display:flex;align-items:center;justify-content:flex-start;gap:7px;border:0;border-bottom:1px solid #292929;background:transparent;color:#777;border-radius:0;padding:6px 1px;font-size:10px}.rpcm-breakdown-chip strong{color:#bdbdbd;font-weight:700}.rpcm-breakdown-chip>span:last-child{margin-left:auto}.rpcm-auto-active{margin:0 0 12px;padding:10px 12px;border:1px solid #303030;border-radius:10px;background:#191919}.rpcm-auto-active-title{font-size:11px;font-weight:800;color:#bbb;margin-bottom:6px}.rpcm-auto-active-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:7px;align-items:center;padding:5px 0;border-top:1px solid #252525;font-size:10px;color:#888}.rpcm-auto-active-row:first-of-type{border-top:0}.rpcm-auto-badge{border:1px solid color-mix(in srgb,var(--rpcm-tone,#6f7782) 72%,#3c3c3c);border-radius:999px;padding:2px 7px;color:var(--rpcm-tone,#bbb);background:color-mix(in srgb,var(--rpcm-tone,#6f7782) 11%,transparent);font-weight:750}.rpcm-auto-active-row strong{display:block;color:#ddd;font-size:11px}.rpcm-auto-active-copy{min-width:0}.rpcm-auto-reason{display:block;color:#888;margin-top:1px}.rpcm-auto-evidence{display:block;margin-top:3px;color:#c496ac;font-size:9px;line-height:1.45}.rpcm-auto-active-meta{display:flex;align-items:center;justify-content:flex-end;gap:6px;white-space:nowrap}.rpcm-auto-inline-toggle{width:25px;height:24px;padding:0;border:1px solid #3b3b3b;border-radius:6px;background:#222;color:#aaa;cursor:pointer;font-size:11px;line-height:1}.rpcm-auto-inline-toggle:hover{border-color:#70405a;background:#2b1d25;color:#e9abc8}.rpcm-auto-inline-content{grid-column:1/-1;white-space:pre-wrap;word-break:break-word;max-height:220px;overflow:auto;margin:4px 0 3px;padding:9px 10px;border:1px solid #303030;border-left:2px solid #b55a84;border-radius:7px;background:#101010;color:#aaa;font:10px/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.rpcm-auto-inline-content[hidden]{display:none!important}.rpcm-warnings{margin:0 0 12px;padding:9px 11px;border:1px solid rgba(245,158,11,.35);background:rgba(245,158,11,.08);border-radius:9px;color:#fbbf24;font-size:10px;line-height:1.55}.rpcm-warning-action{display:inline-flex;align-items:center;margin-top:7px;padding:5px 8px;border:1px solid rgba(245,158,11,.45);border-radius:6px;background:rgba(245,158,11,.10);color:#fbbf24;font-size:10px;font-weight:750;cursor:pointer}.rpcm-warning-action:hover{background:rgba(245,158,11,.18);color:#fde68a}.rpcm-save-status{font-size:10px;white-space:nowrap}.rpcm-save-status.saved{color:#6b9f7b}.rpcm-save-status.saving{color:#d1a64b}.rpcm-save-status.error{color:#ef7777}#rpcm-log-dialog-backdrop{position:fixed;inset:0;z-index:1000005;background:rgba(0,0,0,.64);display:flex;align-items:center;justify-content:center;padding:18px}.rpcm-log-dialog{width:min(720px,95vw);max-height:min(820px,90vh);display:flex;flex-direction:column;background:#171717;border:1px solid #3b3b3b;border-radius:14px;overflow:hidden;color:#ddd}.rpcm-log-list{overflow:auto;padding:10px 12px}.rpcm-log-row{padding:10px 11px;border:1px solid #303030;border-radius:9px;background:#1d1d1d;margin-bottom:8px}.rpcm-log-row-head{display:flex;gap:8px;align-items:center}.rpcm-log-row-head strong{flex:1;font-size:12px}.rpcm-log-row-head span,.rpcm-log-row-reason{font-size:10px;color:#777}.rpcm-log-row-reason{margin-top:3px}.rpcm-log-row-controls{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:7px;font-size:10px;color:#aaa}.rpcm-log-row-controls label{display:flex;align-items:center;gap:4px}.rpcm-log-content{white-space:pre-wrap;word-break:break-word;max-height:220px;overflow:auto;background:#101010;border:1px solid #2d2d2d;border-radius:7px;padding:9px;margin:8px 0 0;color:#aaa;font:10px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.rpcm-log-help{padding:9px 14px;border-bottom:1px solid #292929;background:#1b1719;color:#9c9096;font-size:10px;line-height:1.55}.rpcm-log-help b{color:#d8b2c4}.rpcm-log-year,.rpcm-log-month{border:1px solid #2f2f2f;border-radius:10px;background:#191919;margin-bottom:9px;overflow:hidden}.rpcm-log-year>summary,.rpcm-log-month>summary{display:flex;align-items:center;gap:8px;cursor:pointer;list-style:none;padding:10px 11px;background:#1d1d1d;color:#ddd}.rpcm-log-year>summary::-webkit-details-marker,.rpcm-log-month>summary::-webkit-details-marker{display:none}.rpcm-log-year>summary:before,.rpcm-log-month>summary:before{content:"▸";color:#8b7c83;font-size:10px}.rpcm-log-year[open]>summary:before,.rpcm-log-month[open]>summary:before{content:"▾"}.rpcm-log-year>summary strong,.rpcm-log-month>summary strong{flex:1}.rpcm-log-year>summary span,.rpcm-log-month>summary span{color:#777;font-size:10px}.rpcm-log-month{margin:8px;border-color:#2a2a2a}.rpcm-log-month>summary{padding:8px 9px;background:#1b1b1b}.rpcm-log-groupbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 10px;border-top:1px solid #252525;border-bottom:1px solid #252525;background:#181518;color:#9b9095;font-size:10px}.rpcm-log-groupbar label{display:flex;align-items:center;gap:4px;cursor:pointer}.rpcm-log-groupbar input,.rpcm-log-manual{accent-color:#df6298}.rpcm-log-month .rpcm-log-row{margin:7px 8px;background:#1b1b1b}.rpcm-log-dialog .rpcm-spacer{flex:1}#rpcm-dup-dialog-backdrop{position:fixed;inset:0;z-index:1000006;background:rgba(0,0,0,.68);display:flex;align-items:center;justify-content:center;padding:18px}.rpcm-dup-dialog{width:min(860px,95vw)}.rpcm-dup-list{padding:12px 14px}.rpcm-dup-group{border:1px solid #3b3326;border-radius:10px;background:#1b1916;margin-bottom:12px;overflow:hidden}.rpcm-dup-group-head{display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid #332d24;background:#211d18}.rpcm-dup-group-head strong{color:#f0cf8a;font-size:12px}.rpcm-dup-group-head span{color:#8e8270;font-size:10px}.rpcm-dup-choice{margin:9px;border:1px solid #303030;border-radius:9px;background:#1b1b1b;overflow:hidden;transition:border-color .15s,box-shadow .15s}.rpcm-dup-choice.is-selected{border-color:#b75d86;box-shadow:0 0 0 1px rgba(223,98,152,.12)}.rpcm-dup-choice-head{display:flex;align-items:center;gap:8px;padding:8px 10px;background:#202020;cursor:pointer}.rpcm-dup-choice-head strong{flex:1;color:#ddd;font-size:11px}.rpcm-dup-choice-head span{color:#777;font-size:10px}.rpcm-dup-editor{display:block;width:100%;min-height:130px;max-height:260px;resize:vertical;box-sizing:border-box;border:0;border-top:1px solid #2b2b2b;background:#101010;color:#c7c7c7;padding:10px 11px;outline:none;font:10px/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.rpcm-dup-editor:focus{box-shadow:inset 0 0 0 1px rgba(223,98,152,.42)}
+      #rpcm-log-dialog-backdrop .rpcm-date-row input[type=number],#rpcm-log-dialog-backdrop #rpcm-date-bulk-year,#rpcm-log-dialog-backdrop .rpcm-date-full{box-sizing:border-box;color:#151515!important;-webkit-text-fill-color:#151515!important;background:#fff!important;border:1px solid #c9c9ce!important;border-radius:6px;padding:6px 8px;opacity:1!important;caret-color:#151515!important;color-scheme:light;transition:background .14s,border-color .14s,box-shadow .14s}#rpcm-log-dialog-backdrop .rpcm-date-row input[type=number]:focus,#rpcm-log-dialog-backdrop #rpcm-date-bulk-year:focus,#rpcm-log-dialog-backdrop .rpcm-date-full:focus{color:#151515!important;-webkit-text-fill-color:#151515!important;background:#ededf0!important;border-color:#df6298!important;box-shadow:0 0 0 2px rgba(223,98,152,.22)!important;outline:none}#rpcm-log-dialog-backdrop .rpcm-date-row input[type=number]::placeholder,#rpcm-log-dialog-backdrop #rpcm-date-bulk-year::placeholder,#rpcm-log-dialog-backdrop .rpcm-date-full::placeholder{color:#8b8b93!important;-webkit-text-fill-color:#8b8b93!important;opacity:1!important}
       .rpcm-retention{display:flex;align-items:center;gap:9px;flex-wrap:wrap;padding:10px 12px;margin:10px 0 0;border:1px solid #343434;border-radius:10px;background:#191919;color:#bbb;font-size:12px}.rpcm-retention strong{color:#eee}.rpcm-retention select{height:32px;border:1px solid #444;border-radius:8px;background:#242424;color:#f2f2f2;padding:0 9px;font:inherit;outline:none}.rpcm-retention .rpcm-retention-help{color:#888;font-size:11px}
       #rpcm-preview-backdrop,#rpcm-import-backdrop{position:fixed;inset:0;z-index:1000009;background:rgba(0,0,0,.7);display:flex;align-items:center;justify-content:center;padding:18px;animation:rpcm-fade-in .14s ease-out}.rpcm-preview-dialog,.rpcm-import-dialog{width:min(820px,96vw);max-height:min(860px,92vh);display:flex;flex-direction:column;background:#171717;border:1px solid #40343a;border-radius:15px;box-shadow:0 28px 90px rgba(0,0,0,.72);color:#ddd;overflow:hidden}.rpcm-preview-list,.rpcm-import-list{overflow:auto;padding:12px 14px}.rpcm-preview-card{border:1px solid #333;border-left:3px solid var(--rpcm-tone);border-radius:10px;background:#1d1d1d;margin-bottom:8px;overflow:hidden}.rpcm-preview-card summary{display:flex;align-items:center;gap:8px;list-style:none;padding:11px 12px;cursor:pointer}.rpcm-preview-card summary::-webkit-details-marker{display:none}.rpcm-preview-card summary:hover{background:#242424}.rpcm-preview-card[open] summary{border-bottom:1px solid #303030}.rpcm-preview-index{color:#666;font:10px/1 ui-monospace,SFMono-Regular,Menlo,monospace}.rpcm-preview-kind{padding:3px 7px;border-radius:999px;background:color-mix(in srgb,var(--rpcm-tone) 16%,transparent);color:#ddd;font-size:9px;font-weight:800}.rpcm-preview-card strong{flex:1;min-width:0;font-size:12px}.rpcm-preview-meta{font-size:10px;color:#888;white-space:nowrap}.rpcm-preview-reason{padding:8px 12px 0;color:#a68d99;font-size:10px}.rpcm-preview-evidence{padding:5px 12px 0;color:#c496ac;font-size:9px;line-height:1.45}.rpcm-preview-card pre{white-space:pre-wrap;word-break:break-word;max-height:420px;overflow:auto;margin:8px 12px 12px;padding:11px;border:1px solid #2d2d2d;border-radius:8px;background:#0e0e0e;color:#bbb;font:11px/1.58 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.rpcm-import-toolbar{display:flex;align-items:center;gap:7px;padding:10px 14px;border-bottom:1px solid #2c2c2c}.rpcm-import-list{min-height:180px}.rpcm-import-group-title{margin:5px 2px 7px;color:#888;font-size:10px;font-weight:800;letter-spacing:.03em}.rpcm-import-group-title:not(:first-child){margin-top:17px}.rpcm-import-row{display:flex;align-items:flex-start;gap:10px;padding:10px;border-radius:9px;cursor:pointer}.rpcm-import-row:hover{background:#222}.rpcm-import-row.is-current{background:rgba(223,98,152,.07)}.rpcm-import-row.is-blocked{opacity:.55;cursor:not-allowed}.rpcm-import-row input{margin-top:3px;accent-color:#df6298}.rpcm-import-row span{display:flex;flex-direction:column;gap:3px;min-width:0}.rpcm-import-row strong{font-size:12px;color:#e6e6e6}.rpcm-import-row small{font-size:10px;color:#777}.rpcm-import-diff{font-style:normal;font-size:9px;font-weight:700;color:#c596ad;margin-left:5px}.rpcm-import-note{padding:9px 14px;background:#1c181a;border-top:1px solid #2d292b;color:#9c878f;font-size:10px}
       #rpcm-raw-viewer{position:fixed;inset:0;z-index:10001;background:rgba(0,0,0,.56);display:flex;align-items:center;justify-content:center;padding:24px;pointer-events:auto}.rpcm-raw-card{width:min(920px,94vw);height:min(760px,88vh);display:flex;flex-direction:column;background:#161616;border:1px solid #444;border-radius:14px;box-shadow:0 24px 80px rgba(0,0,0,.65);overflow:hidden}.rpcm-raw-head{display:flex;align-items:center;gap:12px;padding:13px 15px;border-bottom:1px solid #333}.rpcm-raw-head>div:first-child{flex:1;font-size:12px;color:#999}.rpcm-raw-head strong{display:block;color:#f5f5f5;font-size:14px;margin-bottom:3px}.rpcm-raw-note{padding:10px 15px;background:#202020;color:#aaa;font-size:11px;line-height:1.45;border-bottom:1px solid #303030}.rpcm-raw-text{flex:1;min-height:0;resize:none;background:#0c0c0c;color:#ddd;border:0;outline:0;padding:15px;font:12px/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:pre-wrap;word-break:break-word}
