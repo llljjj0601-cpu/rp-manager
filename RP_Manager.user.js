@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🪽위시 RP Manager
 // @namespace    local.rp.context.manager
-// @version      0.9.7
+// @version      0.9.8
 // @description  장기 RP용 현재상태·날짜로그·캐릭터 설정·OOC를 관리하고 필요한 컨텍스트를 자동 주입합니다.
 // @author       User
 // @license      All Rights Reserved
@@ -33,13 +33,13 @@
   // 버전별 키를 쓰면 구버전과 신버전이 동시에 설치됐을 때 둘 다 실행될 수 있습니다.
   // 모든 버전이 공유하는 고정 키로 중복 실행을 막습니다.
   if (window.__WISH_RP_MANAGER_LOADED__) return;
-  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.9.7', loadedAt: Date.now() };
+  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.9.8', loadedAt: Date.now() };
   // 같은 페이지에 남아 있는 v0.8.10 복사본이 뒤늦게 시작되는 경우도 차단합니다.
   window.__RP_MANAGER_0810_LOADED__ = true;
 
   const APP = {
     name: '🪽위시 RP Manager',
-    version: '0.9.7',
+    version: '0.9.8',
     dbName: 'RPContextManagerDB',
     dbVersion: 2,
     storeName: 'rooms',
@@ -2515,20 +2515,20 @@ NO → 압축한다.
   }
 
   function retentionLabel(totalTurns) {
-    return Number(totalTurns) === 0 ? '직접 해제 전까지' : `${Number(totalTurns)}턴`;
+    return Number(totalTurns) === 0 ? '계속 유지(직접 해제)' : `${Number(totalTurns)}턴 연속`;
   }
 
   function retentionOptionsHtml(value) {
     const selected = normalizeRetentionTurns(value);
     return [
-      [1, '1턴'], [3, '3턴'], [5, '5턴'], [10, '10턴'], [0, '직접 해제']
+      [1, '1턴'], [3, '3턴'], [5, '5턴'], [10, '10턴'], [0, '계속 유지(직접 해제)']
     ].map(([turns, label]) => `<option value="${turns}" ${selected === turns ? 'selected' : ''}>${label}</option>`).join('');
   }
 
   function remainingLabelForItem(item) {
     const total = Number(item?.totalTurns || 0);
     const used = Number(item?.usedTurns || 0);
-    if (total === 0) return '직접 해제';
+    if (total === 0) return '계속 유지';
     return `${Math.max(0, total - used)}턴`;
   }
 
@@ -2542,7 +2542,7 @@ NO → 압축한다.
     const active = items.filter(i => Number(i.totalTurns || 0) === 0 || Number(i.usedTurns || 0) < Number(i.totalTurns || 0));
     const persistentCount = active.filter(i => Number(i.totalTurns || 0) === 0).length;
     const preview = active.slice(0, 4).map(i => `${i.title}: ${remainingLabelForItem(i)}`).join(' · ');
-    return `${active.length}개 항목 유지 중${persistentCount ? ` · 직접 해제 ${persistentCount}개` : ''}${preview ? ` · ${preview}` : ''}${active.length > 4 ? ' · …' : ''}`;
+    return `${active.length}개 항목 유지 중${persistentCount ? ` · 계속 유지 ${persistentCount}개` : ''}${preview ? ` · ${preview}` : ''}${active.length > 4 ? ' · …' : ''}`;
   }
 
   function notifyInjectionEnded(room, reason = 'completed', detail = '') {
@@ -2665,7 +2665,7 @@ NO → 압축한다.
             <summary><input type="checkbox" data-manager-select="${index}" aria-label="${esc(String(item.title || (isExtra ? '기타' : '캐릭터')))} 선택"><span class="rpcm-library-item-number">${String(index + 1).padStart(2, '0')}.</span><strong data-manager-summary-title>${esc(String(item.title || (isExtra ? '기타' : '캐릭터')))}</strong><span>${formatCount(String(item.content || '').length)}자 · ${retentionLabel(item.retentionTurns)}</span><button type="button" class="rpcm-library-item-delete" data-manager-delete="${index}">삭제</button><span class="rpcm-chevron">▶</span></summary>
             <div class="rpcm-library-item-edit">
               <label>항목 이름<input type="text" data-manager-title value="${esc(String(item.title || ''))}" placeholder="${isExtra ? '기타 항목 이름' : '캐릭터 이름'}"></label>
-              ${isExtra ? '' : `<label>추가 별칭<input type="text" data-manager-aliases value="${esc((item.aliases || []).join(', '))}" placeholder="애칭·약칭·호칭을 쉼표로 구분"></label>`}
+              ${isExtra ? '' : `<label>자동감지용 별칭 · 주입 안 됨<input type="text" data-manager-aliases value="${esc((item.aliases || []).join(', '))}" placeholder="애칭·약칭·호칭을 쉼표로 구분"></label>`}
               <label class="rpcm-library-retention-label">유지 주기<select data-manager-retention>${retentionOptionsHtml(item.retentionTurns)}</select></label>
               <label>내용<textarea data-manager-content data-rpcm-editor="true" spellcheck="false">${esc(String(item.content || ''))}</textarea></label>
             </div>
@@ -6139,7 +6139,7 @@ NO → 압축한다.
             </div>
 
             <div class="rpcm-section" id="rpcm-section-character">
-              <div class="rpcm-section-head rpcm-character-head"><div><div class="rpcm-section-title">캐릭터 설정</div><div class="rpcm-section-desc">캐릭터별로 저장·체크하고 인물마다 유지 주기를 따로 설정합니다.<br>자동 감지는 최근 실제 RP 본문에서 정식 이름·성·영문명·등록 별칭을 확인합니다. Manager가 숨겨 주입한 현재상태·날짜로그·캐릭터·기타/OOC와 로어 참고 블록은 감지 대상에서 제외합니다.<br>‘추가 별칭’은 설정팩에 없는 애칭·약칭·호칭을 등록할 때만 사용합니다. 체크 상태와 남은 턴은 공유하지 않습니다.</div></div><div class="rpcm-charlib-actions"><button class="rpcm-add-btn" id="rpcm-charlib-save">설정집 저장</button><button class="rpcm-add-btn" id="rpcm-charlib-load">설정집 불러오기</button><button class="rpcm-add-btn" id="rpcm-add-character">＋ 캐릭터 추가</button></div></div>
+              <div class="rpcm-section-head rpcm-character-head"><div><div class="rpcm-section-title">캐릭터 설정</div><div class="rpcm-section-desc">캐릭터별로 저장·체크하고 인물마다 연속 유지 주기를 따로 설정합니다.<br>자동 감지는 최근 실제 RP 본문에서 정식 이름·성·영문명·등록 별칭을 확인합니다. Manager가 숨겨 주입한 현재상태·날짜로그·캐릭터·기타/OOC와 로어 참고 블록은 감지 대상에서 제외합니다.<br>‘자동감지용 별칭’은 설정팩에 없는 애칭·약칭·호칭을 감지할 때만 사용하며, 별칭 자체는 주입 내용에 포함되지 않습니다. AI도 알아야 하는 별칭은 캐릭터 설정 본문에 적어주세요.</div></div><div class="rpcm-charlib-actions"><button class="rpcm-add-btn" id="rpcm-charlib-save">설정집 저장</button><button class="rpcm-add-btn" id="rpcm-charlib-load">설정집 불러오기</button><button class="rpcm-add-btn" id="rpcm-add-character">＋ 캐릭터 추가</button></div></div>
               <div class="rpcm-auto-panel"><label><input type="checkbox" id="rpcm-auto-char" ${room.autoCharacterDetection ? 'checked' : ''}> 캐릭터 자동 감지</label><label>자동감지 설정집 <select id="rpcm-auto-char-library"><option value="">선택 안 함</option></select></label><label><input type="checkbox" id="rpcm-auto-char-reset" ${room.autoCharacterResetOnReappear ? 'checked' : ''}> 다시 등장하면 유지턴 리셋</label><div class="rpcm-auto-note">자동 감지·관련 로그 선택은 주입 전에도 <b>다음 주입 준비</b>를 위해 갱신됩니다. 실제 서버 숨김 주입은 <b>주입 시작</b>을 누른 뒤에만 동작합니다.</div></div>
               <div id="rpcm-character-slots"></div>
             </div>
@@ -6223,7 +6223,7 @@ NO → 압축한다.
         <summary>
           <input class="rpcm-enable" type="checkbox" ${slot.enabled ? 'checked' : ''}>
           <span class="rpcm-slot-name">${slot.id === 'currentState' ? '🧭 ' : slot.id === 'logSummary' ? '🗓️ ' : ''}${esc(slot.title)}</span>
-          ${inlineRetention ? `<label class="rpcm-inline-retention" title="앞으로 몇 번의 AI 응답에 매번 유지할지 선택"><span>유지</span><select class="rpcm-slot-retention" aria-label="${esc(slot.title)} 유지 턴">${retentionOptionsHtml(slot.retentionTurns)}</select></label>` : ''}
+          ${inlineRetention ? `<label class="rpcm-inline-retention" title="호출 후 앞으로 몇 번의 AI 응답에 연속 주입할지 선택 · 주기 반복 아님"><span>연속 유지</span><select class="rpcm-slot-retention" aria-label="${esc(slot.title)} 연속 유지 턴">${retentionOptionsHtml(slot.retentionTurns)}</select></label>` : ''}
           ${DEFAULT_GUIDES[slot.id] ? `<button class="rpcm-guide-toggle" type="button" title="GPT/Gemini에 복사해 쓸 수 있는 업데이트 지침">지침</button>` : ''}
           ${pendingItem ? `<span class="rpcm-slot-remain">${esc(remainingLabelForItem(pendingItem))}</span>` : ''}
           <span class="rpcm-slot-count">${formatCount(String(slot.content || '').length)}자</span>
@@ -6232,8 +6232,8 @@ NO → 압축한다.
         </summary>
         <div class="rpcm-edit">
           ${titleEditable ? `<input class="rpcm-title-input" value="${esc(slot.title)}" placeholder="항목 이름">` : `<div class="rpcm-fixed-note">${slot.id === 'currentState' ? '다음 RP에 필요한 최신 상태·관계·정보격차·비밀·미해결 후크·현재 부상/소유물 등 현재 유효한 HOT MEMORY를 넣습니다. 통째로 주입합니다.' : '날짜별 사건 요약 전체를 붙여넣습니다. 원문은 저장소로 보관하고, 날짜 블록 단위로 분해해 직접 선택·최신·관련·고정 로그만 골라 주입합니다.'}</div>${DEFAULT_GUIDES[slot.id] ? `<div class="rpcm-guide-panel" hidden><div class="rpcm-guide-head"><span>GPT / Gemini용 업데이트 지침 · 수정 내용은 이 브라우저에 자동 저장됩니다.</span><button class="rpcm-guide-icon" type="button" data-guide-copy title="지침 복사" aria-label="지침 복사">${GUIDE_COPY_ICON}</button><button class="rpcm-guide-reset" type="button" data-guide-reset>기본값 복원</button></div><textarea class="rpcm-guide-textarea" data-rpcm-editor="true" spellcheck="false"></textarea></div>` : ''}`}
-          ${slot.group === 'character' ? `<div class="rpcm-auto-terms"><strong>자동 감지어</strong> · ${esc(characterAutomaticTerms(slot).slice(0, 10).join(' · ') || '캐릭터 이름을 입력하면 자동 생성됩니다.')}${characterAutomaticTerms(slot).length > 10 ? ' · …' : ''}</div><div class="rpcm-alias-row"><input class="rpcm-alias-input" value="${esc((slot.aliases || []).join(', '))}" placeholder="추가 별칭 (선택): 애칭·약칭·호칭"><label class="rpcm-auto-pin"><input type="checkbox" class="rpcm-auto-pinned" ${slot.autoPinned ? 'checked' : ''}> 📌 자동 고정</label><label class="rpcm-auto-exclude"><input type="checkbox" class="rpcm-auto-excluded" ${slot.autoExcluded ? 'checked' : ''}> 🚫 자동감지 제외</label></div>` : ''}
-          ${slot.id === 'logSummary' ? `<div class="rpcm-slot-options"><span>이 항목 유지</span><select class="rpcm-slot-retention">${retentionOptionsHtml(slot.retentionTurns)}</select><span>AI 응답마다 날짜 로그 항목을 개별 차감</span></div>` : ''}
+          ${slot.group === 'character' ? `<div class="rpcm-auto-terms"><strong>자동 감지어</strong> · ${esc(characterAutomaticTerms(slot).slice(0, 10).join(' · ') || '캐릭터 이름을 입력하면 자동 생성됩니다.')}${characterAutomaticTerms(slot).length > 10 ? ' · …' : ''}</div><div class="rpcm-alias-row"><input class="rpcm-alias-input" value="${esc((slot.aliases || []).join(', '))}" placeholder="자동감지용 별칭 (주입 안 됨): 애칭·약칭·호칭"><label class="rpcm-auto-pin"><input type="checkbox" class="rpcm-auto-pinned" ${slot.autoPinned ? 'checked' : ''}> 📌 자동 고정</label><label class="rpcm-auto-exclude"><input type="checkbox" class="rpcm-auto-excluded" ${slot.autoExcluded ? 'checked' : ''}> 🚫 자동감지 제외</label></div>` : ''}
+          ${slot.id === 'logSummary' ? `<div class="rpcm-slot-options"><span>이 항목 연속 유지</span><select class="rpcm-slot-retention" title="호출 후 선택한 횟수만큼 연속 주입 · 만료 후 자동 종료 · 주기 반복 아님">${retentionOptionsHtml(slot.retentionTurns)}</select><span>AI 응답마다 1턴 차감 · 만료 후 자동 종료 · 주기 반복 아님</span></div>` : ''}
           <div class="rpcm-editor-actions"><button type="button" class="rpcm-editor-action" data-editor-copy>내용 복사</button><button type="button" class="rpcm-editor-action" data-editor-select>전체 선택</button><button type="button" class="rpcm-editor-action" data-editor-clean>붙여넣기 정리</button><span class="rpcm-editor-hint">Ctrl+Z로 편집 되돌리기</span>${slot.group !== 'extra' ? `<button type="button" class="rpcm-editor-action rpcm-focus-toggle" data-editor-focus>크게 편집</button>` : ''}</div>
           <textarea class="rpcm-textarea" data-rpcm-editor="true" style="height:${editorHeightPreference(slot)}px" placeholder="여기에 ${esc(slot.title)} 내용을 붙여넣으세요."></textarea>
         </div>`;
