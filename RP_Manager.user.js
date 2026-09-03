@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🪽위시 RP Manager
 // @namespace    local.rp.context.manager
-// @version      0.9.8
+// @version      0.9.9
 // @description  장기 RP용 현재상태·날짜로그·캐릭터 설정·OOC를 관리하고 필요한 컨텍스트를 자동 주입합니다.
 // @author       User
 // @license      All Rights Reserved
@@ -33,13 +33,13 @@
   // 버전별 키를 쓰면 구버전과 신버전이 동시에 설치됐을 때 둘 다 실행될 수 있습니다.
   // 모든 버전이 공유하는 고정 키로 중복 실행을 막습니다.
   if (window.__WISH_RP_MANAGER_LOADED__) return;
-  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.9.8', loadedAt: Date.now() };
+  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.9.9', loadedAt: Date.now() };
   // 같은 페이지에 남아 있는 v0.8.10 복사본이 뒤늦게 시작되는 경우도 차단합니다.
   window.__RP_MANAGER_0810_LOADED__ = true;
 
   const APP = {
     name: '🪽위시 RP Manager',
-    version: '0.9.8',
+    version: '0.9.9',
     dbName: 'RPContextManagerDB',
     dbVersion: 2,
     storeName: 'rooms',
@@ -47,8 +47,13 @@
     defaultMaxChars: 45000,
     safeChars: 42000,
     absoluteUiMax: 45000,
-    pollMs: 2000,
-    idleAutoScanMs: 10000,
+    activePollMs: 4000,
+    idleAutoScanMs: 15000,
+    idlePollMs: 30000,
+    backgroundPollMs: 60000,
+    carrierVerifyMs: 60000,
+    routePollMs: 2000,
+    backgroundRoutePollMs: 15000,
     defaultRetentionTurns: 5,
     allowedRetentionTurns: [1, 3, 5, 10, 0], // 0 = 직접 해제 전까지
     reanchorDelayMs: 800,
@@ -1489,14 +1494,20 @@ NO → 압축한다.
     lastUrl: location.href,
     modalPos: null,
     domObserver: null,
+    domObserverActive: false,
     domSanitizeTimer: null,
     domSanitizing: false,
+    routeTimer: null,
+    recoveryTimer: null,
+    lastCarrierVerifyKey: '',
+    lastCarrierVerifyAt: 0,
     autoSaveTimers: new Map(),
     idleAutoScanAt: new Map(),
     routeEpoch: 0,
     lastSavedAt: 0,
     saveStatus: 'saved',
     viewportMetricsBound: false,
+    performanceVisibilityBound: false,
   };
 
   function upgradeCurrentStateGuideV3(value) {
@@ -5081,6 +5092,7 @@ NO → 압축한다.
     savePendingBackup(room.chatId, pending);
     room.pending = pending; await saveRoom(room);
     if (room.chatId === state.currentChatId) state.currentRoom = room;
+    scheduleRecovery(APP.activePollMs);
     sanitizeRenderedContextSoon();
     notify(`서버 주입 확인됨 ✓ · ${items.length}개 항목 독립 유지 시작`, 'success', 6500);
     renderModalIfOpen();
@@ -5223,7 +5235,16 @@ NO → 압축한다.
         }
         return;
       }
-      // 새로고침/렌더링 재구성 후에도 현재 carrier의 서버 주입이 살아있는지 가볍게 확인합니다.
+      // carrier 무결성 확인은 매 폴링마다 하지 않습니다. 기존 코드는 활성 주입 중
+      // 2초마다 최근 메시지 + carrier 본문을 연속 조회해 탭과 서버 모두에 부담을 줬습니다.
+      const verifyKey = `${room.chatId}:${p.messageId}`;
+      const lastVerifiedAt = state.lastCarrierVerifyKey === verifyKey
+        ? Number(state.lastCarrierVerifyAt || 0)
+        : Number(p.verifiedAt || 0);
+      if (Date.now() - lastVerifiedAt < APP.carrierVerifyMs) return;
+      state.lastCarrierVerifyKey = verifyKey;
+      state.lastCarrierVerifyAt = Date.now();
+      // 새로고침/렌더링 재구성 후에도 현재 carrier의 서버 주입이 살아있는지 주기적으로 확인합니다.
       try {
         const carrier = await fetchMessage(apiChatIdOf(room), p.messageId);
         const carrierText = messageTextOf(carrier);
@@ -5284,37 +5305,55 @@ NO → 압축한다.
     if (state.recovering || !state.db) return;
     state.recovering = true;
     try {
-      const rooms = await getAllRooms();
-      for (const room of rooms) {
-        try {
-          normalizeRoomSlots(room);
-          // 자동 캐릭터 감지는 주입 전에도 현재 방에서 동작해 다음 주입 준비를 해둡니다.
-          if (!room.pending && (room.autoCharacterDetection || room.autoLogRecallEnabled) && room.chatId === state.currentChatId) {
-            const lastScanAt = Number(state.idleAutoScanAt.get(room.chatId) || 0);
-            if (Date.now() - lastScanAt < APP.idleAutoScanMs) continue;
-            state.idleAutoScanAt.set(room.chatId, Date.now());
-            const recent = await fetchRecentMessages(apiChatIdOf(room), APP.autoScanMessageLimit);
-            const auto = await refreshAutomaticMemories(room, recent);
-            if (auto.detected?.length && room.chatId === state.currentChatId) {
-              notify(`캐릭터 자동 감지 · ${auto.detected.map(x => x.slot.title).join(', ')} 설정 활성화`, 'success', 3800);
-              renderModalIfOpen();
-            }
-            continue;
+      // 화면에 없는 모든 방을 getAll()로 복제하지 않습니다. 현재 보고 있는 방만
+      // 검사하고, 다른 방의 pending은 그 방에 다시 들어갔을 때 이어서 복구합니다.
+      const room = state.currentRoom;
+      if (!room || room.chatId !== state.currentChatId) return;
+      try {
+        normalizeRoomSlots(room);
+        // 자동 캐릭터 감지는 주입 전에도 현재 방에서 동작해 다음 주입 준비를 해둡니다.
+        if (!room.pending && (room.autoCharacterDetection || room.autoLogRecallEnabled)) {
+          const lastScanAt = Number(state.idleAutoScanAt.get(room.chatId) || 0);
+          if (Date.now() - lastScanAt < APP.idleAutoScanMs) return;
+          state.idleAutoScanAt.set(room.chatId, Date.now());
+          const recent = await fetchRecentMessages(apiChatIdOf(room), APP.autoScanMessageLimit);
+          const auto = await refreshAutomaticMemories(room, recent);
+          if (auto.detected?.length && room.chatId === state.currentChatId) {
+            notify(`캐릭터 자동 감지 · ${auto.detected.map(x => x.slot.title).join(', ')} 설정 활성화`, 'success', 3800);
+            renderModalIfOpen();
           }
-          if (!room.pending) continue;
-          if (!Array.isArray(room.pending.items) || !room.pending.items.length) {
-            const legacyTotal = room.pending.totalTurns == null ? APP.defaultRetentionTurns : normalizeRetentionTurns(room.pending.totalTurns);
-            const legacyUsed = Number(room.pending.usedTurns || 0);
-            room.pending.items = selectedSlots(room).map(slot => ({ slotId: slot.id, title: slot.title, group: slot.group, content: String(slot.content || ''), totalTurns: normalizeRetentionTurns(slot.retentionTurns ?? legacyTotal), usedTurns: legacyUsed }));
-          }
-          await checkPendingRoom(room);
-        } catch (e) {
-          console.warn('[RP매니저] pending check failed:', room.chatId, e);
+          return;
         }
+        if (!room.pending) return;
+        if (!Array.isArray(room.pending.items) || !room.pending.items.length) {
+          const legacyTotal = room.pending.totalTurns == null ? APP.defaultRetentionTurns : normalizeRetentionTurns(room.pending.totalTurns);
+          const legacyUsed = Number(room.pending.usedTurns || 0);
+          room.pending.items = selectedSlots(room).map(slot => ({ slotId: slot.id, title: slot.title, group: slot.group, content: String(slot.content || ''), totalTurns: normalizeRetentionTurns(slot.retentionTurns ?? legacyTotal), usedTurns: legacyUsed }));
+        }
+        await checkPendingRoom(room);
+      } catch (e) {
+        console.warn('[RP매니저] pending check failed:', room.chatId, e);
       }
     } finally {
       state.recovering = false;
     }
+  }
+
+  function nextRecoveryDelay() {
+    if (document.hidden) return APP.backgroundPollMs;
+    if (state.currentRoom?.pending) return APP.activePollMs;
+    if (state.currentRoom?.autoCharacterDetection || state.currentRoom?.autoLogRecallEnabled) return APP.idleAutoScanMs;
+    return APP.idlePollMs;
+  }
+
+  function scheduleRecovery(delay = nextRecoveryDelay()) {
+    clearTimeout(state.recoveryTimer);
+    state.recoveryTimer = setTimeout(async () => {
+      state.recoveryTimer = null;
+      try { await recoveryTick(); }
+      catch (e) { console.warn('[RP매니저] recovery loop failed', e); }
+      scheduleRecovery();
+    }, Math.max(0, Number(delay) || 0));
   }
 
   // ---------------------------------------------------------------------------
@@ -5383,13 +5422,22 @@ NO → 압축한다.
 
   function sanitizeRenderedContextBlocks(root = document.body) {
     if (!root) return;
-    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-    const starts = []; let node;
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_COMMENT);
+    const starts = [];
+    const comments = [];
+    let node;
     while ((node = walker.nextNode())) {
-      if (node.parentElement?.closest('#rpcm-overlay,#rpcm-toast-wrap,#rpcm-lib-dialog-backdrop')) continue;
       const v = node.nodeValue || '';
+      if (!v.includes('RP_CONTEXT_MANAGER')) continue;
+      if (node.nodeType === Node.COMMENT_NODE) {
+        comments.push(node);
+        continue;
+      }
+      if (node.parentElement?.closest('#rpcm-overlay,#rpcm-toast-wrap,#rpcm-lib-dialog-backdrop')) continue;
       if (v.includes('RP_CONTEXT_MANAGER_START')) starts.push(node);
     }
+    // Markdown이 실제 HTML 주석으로 만든 경우에는 4만 자짜리 Comment 노드 자체를 제거합니다.
+    comments.forEach(comment => comment.remove());
     for (const start of starts) sanitizeOneRenderedBlock(start);
   }
 
@@ -5398,33 +5446,63 @@ NO → 압축한다.
     state.domSanitizeTimer = setTimeout(() => sanitizeRenderedContextBlocks(document.body || document.documentElement || document), 0);
   }
 
+  function nodeContainsRenderedContextMarker(node) {
+    if (!node) return false;
+    if (node.nodeType === Node.TEXT_NODE || node.nodeType === Node.COMMENT_NODE) {
+      return String(node.nodeValue || '').includes('RP_CONTEXT_MANAGER');
+    }
+    if (!node.ownerDocument && node !== document) return false;
+    const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_COMMENT);
+    let child;
+    while ((child = walker.nextNode())) {
+      if (String(child.nodeValue || '').includes('RP_CONTEXT_MANAGER')) return true;
+    }
+    return false;
+  }
+
   function startRenderedContextObserver() {
-    if (state.domObserver) return;
+    if (document.hidden) return;
     const target = document.documentElement || document;
-    state.domObserver = new MutationObserver((mutations) => {
-      if (state.domSanitizing) return;
-      let relevant = false;
-      for (const m of mutations) {
-        const probe = m.type === 'characterData' ? m.target?.parentElement : m.target;
-        const text = probe?.textContent || '';
-        if (text.includes('RP_CONTEXT_MANAGER_START') || text.includes('RP_CONTEXT_MANAGER_END')) { relevant = true; break; }
-        for (const added of (m.addedNodes || [])) {
-          const addedText = added?.textContent || added?.nodeValue || '';
-          if (addedText.includes('RP_CONTEXT_MANAGER_START') || addedText.includes('RP_CONTEXT_MANAGER_END')) { relevant = true; break; }
+    if (!state.domObserver) {
+      state.domObserver = new MutationObserver((mutations) => {
+        if (state.domSanitizing || document.hidden) return;
+        const roots = new Set();
+        for (const m of mutations) {
+          if (m.type === 'characterData') {
+            if (nodeContainsRenderedContextMarker(m.target)) roots.add(m.target.parentElement || m.target);
+            continue;
+          }
+          // mutation.target의 textContent는 채팅 전체 문자열을 새로 만들 수 있으므로 읽지 않습니다.
+          // 실제로 추가된 노드만 검사해 스트리밍 중 반복되는 전체 DOM 직렬화를 막습니다.
+          for (const added of (m.addedNodes || [])) {
+            if (!nodeContainsRenderedContextMarker(added)) continue;
+            if (added.nodeType === Node.COMMENT_NODE) {
+              added.remove();
+            } else {
+              roots.add(added.nodeType === Node.ELEMENT_NODE ? added : (added.parentElement || m.target));
+            }
+          }
         }
-        if (relevant) break;
-      }
-      if (!relevant) return;
-      state.domSanitizing = true;
-      try {
-        // MutationObserver 콜백은 렌더 페인트 전에 실행되므로 UI 초기화와 무관하게 즉시 제거합니다.
-        sanitizeRenderedContextBlocks(document.body || document.documentElement || document);
-      } finally {
-        state.domSanitizing = false;
-      }
-    });
-    state.domObserver.observe(target, { childList: true, subtree: true, characterData: true });
+        if (!roots.size) return;
+        state.domSanitizing = true;
+        try {
+          for (const root of roots) sanitizeRenderedContextBlocks(root);
+        } finally {
+          state.domSanitizing = false;
+        }
+      });
+    }
+    if (!state.domObserverActive) {
+      state.domObserver.observe(target, { childList: true, subtree: true, characterData: true });
+      state.domObserverActive = true;
+    }
     sanitizeRenderedContextBlocks(document.body || document.documentElement || document);
+  }
+
+  function pauseRenderedContextObserver() {
+    if (!state.domObserver || !state.domObserverActive) return;
+    state.domObserver.disconnect();
+    state.domObserverActive = false;
   }
 
   // ---------------------------------------------------------------------------
@@ -7126,11 +7204,39 @@ NO → 압축한다.
     if (href !== state.lastUrl || roomKey !== state.currentChatId) {
       state.lastUrl = href;
       await ensureCurrentRoom(apiChatId, true);
+      await cleanOrphanMarkerInCurrentRoom();
       if (state.modal) closeModal();
     }
-    // 버튼은 React 재렌더에 대비해 가볍게 재배치하지만, 전체 채팅 DOM 스캔은
-    // 관련 Mutation과 실제 라우트 변경 때만 수행합니다.
-    ensureManagerButton();
+    // 정상적으로 연결된 버튼은 다시 찾지 않습니다. React가 실제로 버튼을 제거했거나
+    // 첫 렌더에서 아직 헤더가 없었던 경우에만 위치 탐색을 다시 수행합니다.
+    if (state.currentChatId && !state.fab?.isConnected) ensureManagerButton();
+  }
+
+  function scheduleRouteTick(delay = (document.hidden ? APP.backgroundRoutePollMs : APP.routePollMs)) {
+    clearTimeout(state.routeTimer);
+    state.routeTimer = setTimeout(async () => {
+      state.routeTimer = null;
+      try { await routeTick(); }
+      catch (e) { console.warn('[RP매니저] route check failed', e); }
+      scheduleRouteTick();
+    }, Math.max(0, Number(delay) || 0));
+  }
+
+  function bindPerformanceVisibility() {
+    if (state.performanceVisibilityBound) return;
+    state.performanceVisibilityBound = true;
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) {
+        pauseRenderedContextObserver();
+        scheduleRouteTick(APP.backgroundRoutePollMs);
+        scheduleRecovery(APP.backgroundPollMs);
+        return;
+      }
+      // 다시 탭을 열면 숨겨야 할 marker와 새 응답을 즉시 한 번 확인합니다.
+      startRenderedContextObserver();
+      scheduleRouteTick(0);
+      scheduleRecovery(0);
+    });
   }
 
   async function cleanOrphanMarkerInCurrentRoom() {
@@ -7160,15 +7266,15 @@ NO → 압축한다.
     try {
       addStyles();
       bindViewportMetrics();
+      bindPerformanceVisibility();
       state.db = await openDb();
       createFab();
       startRenderedContextObserver();
       await ensureCurrentRoom(getChatIdFromPath(), true);
       await cleanOrphanMarkerInCurrentRoom();
-      setInterval(() => routeTick().catch(console.warn), 1000);
-      setInterval(() => recoveryTick().catch(console.warn), APP.pollMs);
+      scheduleRouteTick();
       // 새로고침 후에도 활성 자동 유지 세션을 이어가기 위한 즉시 복구 패스입니다.
-      recoveryTick().catch(console.warn);
+      scheduleRecovery(0);
       console.log(`[위시RPManager] ${APP.name} v${APP.version} loaded`);
     } catch (e) {
       console.error('[RP매니저] init failed', e);
