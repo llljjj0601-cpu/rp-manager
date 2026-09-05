@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🪽위시 RP Manager
 // @namespace    local.rp.context.manager
-// @version      0.9.9
+// @version      0.9.11
 // @description  장기 RP용 현재상태·날짜로그·캐릭터 설정·OOC를 관리하고 필요한 컨텍스트를 자동 주입합니다.
 // @author       User
 // @license      All Rights Reserved
@@ -33,13 +33,13 @@
   // 버전별 키를 쓰면 구버전과 신버전이 동시에 설치됐을 때 둘 다 실행될 수 있습니다.
   // 모든 버전이 공유하는 고정 키로 중복 실행을 막습니다.
   if (window.__WISH_RP_MANAGER_LOADED__) return;
-  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.9.9', loadedAt: Date.now() };
+  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.9.11', loadedAt: Date.now() };
   // 같은 페이지에 남아 있는 v0.8.10 복사본이 뒤늦게 시작되는 경우도 차단합니다.
   window.__RP_MANAGER_0810_LOADED__ = true;
 
   const APP = {
     name: '🪽위시 RP Manager',
-    version: '0.9.9',
+    version: '0.9.11',
     dbName: 'RPContextManagerDB',
     dbVersion: 2,
     storeName: 'rooms',
@@ -67,7 +67,7 @@
     legacyMarkerEnd: '</rp_context_manager>',
     modalPosKey: 'RPCM_modal_position_v1',
     uiPrefsKey: 'RPCM_ui_preferences_v1',
-    logRecallRevision: 2, // v0.8.10: 실제 날짜 기준 최근로그 + 주입 중 로그 편집 즉시 재선정
+    logRecallRevision: 4, // v0.9.11: 자동 최근로그가 유지턴 종료 뒤에도 최신 개수만큼 계속 재선정됨
   };
 
   const DEFAULT_GUIDES = Object.freeze({
@@ -76,14 +76,14 @@
 ## 1. 작업 목적
 
 입력된 기존 현재상태, 날짜별 로그요약, 신규 RP 로그, 사용자 직접 정정·고정설정을 모두 비교하여
-“지금 당장 다음 RP를 이어가기 위해 필요한 최신 HOT MEMORY”만 남긴 통합 현재상태를 작성한다.
+“하루~사흘 동안 RP를 진행해도 쉽게 낡지 않는 최신 지속 상태”만 남긴 통합 현재상태를 작성한다.
 
 현재상태는 줄거리 요약이나 과거 사건 보관소가 아니다.
 
-다음 RP를 시작했을 때 AI가 반드시 알고 있어야 현재 장면·관계·정보상태·부상·비밀·미완료 사건이 틀어지지 않는 값만 남긴다.
+실시간 장면을 재현하는 메모가 아니라, 앞으로의 RP에서 관계·정보상태·지속 부상·비밀·미완료 사건이 틀어지지 않도록 현재 유효한 기준값만 남긴다.
 
 날짜별 로그요약이 “현재값이 만들어진 사건 경위와 증거를 보존하는 EPISODIC MEMORY”라면,
-현재상태는 “현재 시점에서 유효한 정답만 모은 HOT MEMORY”다.
+현재상태는 “다음 업데이트 전까지 계속 유효할 정답만 모은 ROLLING STATE”다.
 
 ━━━━━━━━━━━━━━━━━━━━
 2. 정사 판단 우선순위
@@ -153,16 +153,16 @@ AI의 과거 실수·덮어쓰기·정정 메타는 현재상태에 남기지 �
 
 침묵은 상태 변경의 근거가 아니다.
 
-반대로 장면성·일회성 상태는 최신 장면이 바뀌면 제거할 수 있다.
+반대로 장면성·일회성 상태는 기본적으로 기록하지 않는다.
 
 예:
+- 정확한 방·좌석·동행자(WITH)
 - 직전 장면에서 손에 들고 있던 컵
-- 특정 순간의 자세
-- 이미 끝난 식사
-- 이동 중이었던 차량
-- 장면 전환으로 종료된 일시적 행동
+- 특정 순간의 자세·표정·행동
+- 식사 중·이동 중 같은 짧은 진행 상태
+- 일시적인 피로·취중·당황·분노
 
-지속 상태와 일회성 장면상태를 구분한다.
+이런 값은 다음 업데이트 전에 쉽게 낡으므로, 며칠간 이어지고 연속성에 영향을 주는 경우에만 지속 상태로 승격해 기록한다.
 
 ━━━━━━━━━━━━━━━━━━━━
 4. 사용자 캐릭터 보호 / 자동추론 금지
@@ -194,7 +194,7 @@ AI의 과거 실수·덮어쓰기·정정 메타는 현재상태에 남기지 �
 
 판단 기준:
 
-현재 행동·관계·지식상태를 지금 바꾸는 값
+현재 진행 중인 사건·관계·지식상태를 앞으로도 바꾸는 값
 → 현재상태
 
 과거 사건을 다시 회수할 때 필요한 경위
@@ -210,8 +210,8 @@ AI의 과거 실수·덮어쓰기·정정 메타는 현재상태에 남기지 �
 현재상태에 넣을 정보는 아래 순서로 우선한다.
 
 [최우선 — 항상 보존]
-1. 최신 시점·장소·WITH·진행 중 행동
-2. 현재 부상·피로·취중·구속·위험 등 즉시 이어지는 신체상태
+1. 최신 인게임 날짜·기간·스토리 진행 단계
+2. 지속되는 부상·회복·구속·위험 등 며칠간 유효한 신체상태
 3. 현재 관계의 최신값
 4. 캐릭터별 KNOWS / DOES NOT KNOW
 5. 현재 존재하는 비밀·정보격차
@@ -221,10 +221,10 @@ AI의 과거 실수·덮어쓰기·정정 메타는 현재상태에 남기지 �
 9. AI가 자주 되돌리는 최신 확정값
 
 [필요한 경우만 보존]
-10. 현재 행동에 직접 영향을 주는 특수특성·한계
+10. 현재 진행 중인 사건에 직접 영향을 주는 특수특성·한계
 11. 현재 관계에 직접 영향을 주는 과거 사건의 결과
 12. 아직 유효한 장기 약속
-13. 현재 장면에서 호출 가능성이 높은 취향·습관
+13. 현재 진행 중인 사건에 실제 영향을 주는 취향·습관
 14. 실제 정보와 공식적으로 알려진 정보처럼 반드시 구분해야 하는 이중 상태
 
 [기본적으로 현재상태에서 제외]
@@ -249,19 +249,18 @@ AI의 과거 실수·덮어쓰기·정정 메타는 현재상태에 남기지 �
 
 기본 우선순위는 다음과 같다.
 
-1. 최신 시점 / 턴 / 장소 / WITH
-2. 현재 장면 상태
-3. 현재 부상·신체상태
-4. 현재 신분·소속·직업·합의
-5. 현재 관계 최신값
-6. 주요 NPC의 현재 상태
-7. 현재 정보격차
-8. 중요한 비밀
-9. 중요 물건·자산의 현재 상태
-10. 현재 유효한 특수특성 제한·변화
-11. 현재 진행중 사건·약속·계획
-12. 현재 미해결 후크
-13. ANTI-DRIFT
+1. 기준 시점 / 진행 단계
+2. 지속 부상·회복·신체상태
+3. 현재 신분·소속·직업·합의
+4. 현재 관계 최신값
+5. 주요 NPC의 지속 상태
+6. 현재 정보격차
+7. 중요한 비밀
+8. 중요 물건·자산의 현재 상태
+9. 현재 유효한 특수특성 제한·변화
+10. 현재 진행중 사건·약속·계획
+11. 현재 미해결 후크
+12. ANTI-DRIFT
 
 아래 항목은 독립 섹션으로 반드시 둘 필요가 없다.
 
@@ -276,7 +275,7 @@ AI의 과거 실수·덮어쓰기·정정 메타는 현재상태에 남기지 �
 현재값에 직접 영향을 줄 때만 짧게 포함한다.
 
 섹션 개수는 고정하지 않는다.
-현재 HOT MEMORY에 필요한 만큼만 만든다.
+현재 지속 상태에 필요한 만큼만 만든다.
 
 ━━━━━━━━━━━━━━━━━━━━
 7-1. 현재상태 블록 편집용 고정 문법
@@ -286,7 +285,7 @@ AI의 과거 실수·덮어쓰기·정정 메타는 현재상태에 남기지 �
 
 정확한 형식:
 ━━━━━━━━━━━━━━━━━━━━
-1. 최신 시점 / 현재 장면
+1. 기준 시점 / 진행 단계
 ━━━━━━━━━━━━━━━━━━━━
 내용
 
@@ -330,39 +329,29 @@ AI의 과거 실수·덮어쓰기·정정 메타는 현재상태에 남기지 �
 이 문법은 🪽위시 RP Manager가 현재상태를 대블록·하위블록으로 인식해 목차·접기·블록 복사·빠른 이동을 제공하기 위한 고정 출력 문법이다.
 
 ━━━━━━━━━━━━━━━━━━━━
-8. 최신 시점 / 현재 장면 작성법
+8. 기준 시점 / 진행 단계 작성법
 ━━━━━━━━━━━━━━━━━━━━
 
-현재상태 최상단에는 반드시 다음 RP가 그대로 이어질 수 있을 정도의 장면 앵커를 둔다.
+현재상태 최상단에는 다음 업데이트 전까지 기준점이 될 시간대와 진행 단계를 둔다.
 
 가능하면 다음을 기록한다.
 
-- 최신 턴
-- 날짜·시간
-- 장소
-- 함께 있는 인물
-- 각 인물의 현재 위치·행동 중 중요한 것
-- 사용자 캐릭터의 직접 확정된 현재 상태
-- 즉시 이어질 신체적 여파
-- 직접 RP에서 명시적으로 확인된 현재 감정 또는 정서적 여파
+- 최신 인게임 날짜 또는 대략적인 기간
+- 학기·여행 일차·수사 단계처럼 장기간 유지되는 진행 단계
+- 입원·여행·동거·구금처럼 지속되는 거점 또는 생활 상태
+- 현재 진행 중인 주요 사건·갈등·계획
+- 며칠간 영향을 주는 부상·회복·제약
 
 예:
 
-- 최신=T120｜5/10 14:07.
-- 장소=카페.
-- WITH=A·B.
-- PC=A와 대화 중.
-- B=맞은편 자리에 앉아 있음.
-- 직전 다툼으로 인한 정서적 여파가 PC의 직접 서술로 확인된 경우에만 기록.
+- 기준일=5/10 전후｜여행 3일차.
+- PC·A=며칠간 별장에 체류 중.
+- 협상=조건 조율 단계, 최종 합의 전.
+- PC의 팔 부상=치료 중이며 무리한 사용 제한.
 
-현재 장면을 재개하는 데 필요하지 않은 몇 시간 전 이동경로나 전체 사건경위는 넣지 않는다.
+정확한 최신 턴·시각·방·좌석·동행자·자세·손에 든 물건·진행 중 행동은 기본적으로 기록하지 않는다.
 
-「1. 최신 시점 / 현재 장면」은 누적 기록이 아니라 매 업데이트마다 최신 장면으로 교체하는 휘발성 블록이다.
-
-- 이전 장면의 장소·WITH·자세·진행 중 행동은 현재 장면에 더 이상 영향을 주지 않으면 남기지 않는다.
-- 장소 이동이나 장면 전환이 끝났다면 이전 장면을 같은 블록에 누적하지 않는다.
-- 직전 장면의 사건이 현재 부상·감정·관계·후크에 지속적인 영향을 남겼다면, 과거 장면 자체가 아니라 현재까지 살아 있는 결과만 적절한 섹션에 남긴다.
-- 최신 장면 블록만 읽어도 “지금 어디서 누구와 무엇을 하고 있는가”가 한 번에 확인되어야 한다.
+일시적인 정보는 다음 업데이트 때까지 계속 유효하고 RP 연속성에 영향을 주는 경우에만 남긴다. 직전 장면의 사건이 관계·부상·정보격차·후크에 지속적인 결과를 남겼다면 장면 자체가 아니라 살아 있는 결과를 해당 섹션에 기록한다.
 
 ━━━━━━━━━━━━━━━━━━━━
 9. 고정설정 / 로어와 현재상태 분리
@@ -573,7 +562,7 @@ DOES NOT KNOW는 직접 RP·기존 기록·현장부재 등으로 실제 정보�
 
 우선순위:
 
-1. 현재 진행 중인 장면
+1. 장면이 전환돼도 끝나지 않는 진행 중 사건
 2. 아직 완료되지 않은 약속
 3. 관계 정의·고백·갈등
 4. 공개되지 않은 비밀
@@ -608,7 +597,7 @@ AI가 실제로 자주 틀릴 가능성이 높은 “오류 방지용 최신값�
 
 우선 남길 것:
 
-- 최신 시점·장소
+- 최신 인게임 날짜·진행 단계
 - 최근 변경된 관계상태
 - 완료/미완료가 자주 뒤집히는 사건
 - 중요한 정보격차
@@ -621,7 +610,7 @@ AI가 실제로 자주 틀릴 가능성이 높은 “오류 방지용 최신값�
 
 예:
 
-- 최신=TXXX｜날짜｜장소｜WITH.
+- 기준=날짜｜여행 3일차｜협상 진행 중.
 - A↔B=공식결별 완료. 관계유예 상태 폐기.
 - PC는 해당 결별대화를 듣지 못해 공식결별 사실 KNOWS X.
 - 목걸이=A 보관함 보관. B는 위치 KNOWS X.
@@ -683,7 +672,7 @@ A와 B는 공식연인.
 
 각 정보에 대해 다음 질문을 한다.
 
-① 이 사실이 지금 다음 RP의 행동·관계·지식상태를 바꾸는가?
+① 이 사실이 앞으로의 RP에서 행동·관계·지식상태를 바꾸는가?
 → YES: 현재상태 유지.
 
 ② 지금은 직접 영향을 주지 않지만 과거 회상 시 필요할 수 있는가?
@@ -707,7 +696,7 @@ A와 B는 공식연인.
 - 날짜별 로그요약이나 캐릭터 설정/로어에서 필요할 때 다시 회수할 수 있는 정보는 현재상태에 중복 보존하지 않는다.
 - 같은 사실을 여러 섹션에서 표현만 바꿔 반복하지 않는다.
 - 현재상태의 분량을 채우기 위해 중요도가 낮은 정보를 추가하지 않는다.
-- 단, 압축 때문에 최신 장면 앵커·현재 관계값·정보격차·중요 비밀·미완료 후크·소유상태·현재 부상처럼 RP 연속성에 직접 필요한 핵심값을 희생하지 않는다.
+- 단, 압축 때문에 기준 시점·진행 단계·현재 관계값·정보격차·중요 비밀·미완료 후크·소유상태·지속 부상처럼 RP 연속성에 직접 필요한 핵심값을 희생하지 않는다.
 
 현재상태는 길수록 좋은 문서가 아니다.
 다음 RP에 필요한 최신 정보의 신호가 과거 세부사항에 묻히지 않도록 구성한다.
@@ -718,8 +707,8 @@ A와 B는 공식연인.
 
 압축하더라도 다음은 쉽게 제거하지 않는다.
 
-- 최신 장면 앵커
-- 현재 부상·신체여파
+- 최신 인게임 날짜·진행 단계
+- 지속 부상·회복·신체여파
 - 최신 관계전환
 - 공식연애·독점·성적관계 여부
 - 캐릭터별 정보격차
@@ -752,7 +741,7 @@ N. 섹션명
 독립적으로 찾아볼 가치가 있는 하위 항목은 [제목] 다음 줄부터 내용을 작성한다.
 
 현재상태 본문 안에서 과거 로그를 장황하게 재서술하지 않는다.
-기존 섹션 번호는 유지 의무가 없으며 최신 HOT MEMORY에 맞게 섹션을 추가·삭제·재배열할 수 있다.
+기존 섹션 번호는 유지 의무가 없으며 현재 지속 상태에 맞게 섹션을 추가·삭제·재배열할 수 있다.
 단 최종 출력 시 번호는 반드시 1부터 연속되게 다시 정리한다.
 
 정보가 사라진 이유를 설명하는 편집 메타문장은 쓰지 않는다.
@@ -768,10 +757,9 @@ N. 섹션명
 □ 위 3줄 사이에 빈 줄·공백·들여쓰기가 없는가?
 □ 대섹션 번호가 1부터 연속되는가?
 □ [제목] 하위 블록이 필요한 경우 줄 전체 단독 형태로 작성됐는가?
-□ 다음 턴을 바로 이어갈 최신 장면이 있는가?
-□ 「1. 최신 시점 / 현재 장면」이 이전 장면을 누적한 기록이 아니라 지금 장면으로 교체되어 있는가?
-□ 최신 턴·날짜·시간·장소·WITH가 맞는가?
-□ 현재 부상·피로·취중 등 신체여파가 반영됐는가?
+□ 최신 인게임 날짜 또는 기간과 스토리 진행 단계가 있는가?
+□ 정확한 턴·시각·방·좌석·동행자·자세·순간 행동처럼 곧 낡을 정보를 불필요하게 넣지 않았는가?
+□ 다음 업데이트 때까지 이어질 부상·회복·구속·위험 등 지속 신체상태가 반영됐는가?
 □ 최신 로그에 재언급되지 않았다는 이유로 지속 상태를 삭제하지 않았는가?
 □ 과거 관계상태가 최신 관계상태와 함께 남아 있지 않은가?
 □ 완료된 사건의 상세 과정이 불필요하게 반복되고 있지 않은가?
@@ -803,7 +791,7 @@ N. 섹션명
 - 위 3줄 사이에 빈 줄을 넣지 않고 구분선에 들여쓰기하지 않는다.
 - 대섹션 번호는 1부터 연속하여 사용한다.
 - 독립적으로 확인할 가치가 있을 때만 [제목] 하위 블록을 사용한다.
-- 최신 장면 앵커를 최상단에 둔다.
+- 기준 시점과 진행 단계를 최상단에 둔다.
 - 현재값에 직접 필요하지 않은 과거 사건 경위는 삭제하고 날짜별 로그로 넘긴다.
 - 고정 세계관·외형·기본특수특성·일반취향은 필요한 경우만 짧게 남긴다.
 - 관계는 현재 최신값 중심으로 쓴다.
@@ -812,7 +800,7 @@ N. 섹션명
 - stale state는 최신값으로 치환한다.
 - ANTI-DRIFT는 본문 요약이 아니라 오류방지값만 기록한다.
 - 최대 정보량이 아니라 최대 정보밀도를 목표로 한다. 같은 연속성을 유지할 수 있다면 더 짧고 직접적인 표현을 우선한다.
-- 현재상태는 길수록 좋은 문서가 아니다. 다음 RP에 필요한 HOT MEMORY만 남긴다.
+- 현재상태는 길수록 좋은 문서가 아니다. 다음 업데이트 전까지 유효한 지속 상태만 남긴다.
 - 결과 전체를 Markdown 코드블록으로 감싸지 않는다.`,
     logSummary: String.raw`# 날짜별 로그요약 최종 프롬프트
 
@@ -824,7 +812,7 @@ N. 섹션명
 
 날짜별 로그요약은 후속 RP에서 과거 사건을 다시 호출했을 때 사실·관계·행동 이유·정보격차·약속·비밀·특수특성 발현 경위를 정확히 복원할 수 있도록 보존하는 EPISODIC MEMORY다.
 
-현재상태가 “지금 이 순간의 최신 HOT MEMORY”라면,
+현재상태가 “다음 업데이트 전까지 유효한 ROLLING STATE”라면,
 날짜별 로그요약은 “그 현재값이 어떻게 만들어졌는지 다시 찾을 수 있는 사건기록”이다.
 
 즉,
@@ -945,7 +933,7 @@ AI가 과거 출력에서 실수한 내용, 사용자에게 정정된 내용, �
 - 문단 중간에 소제목·번호·구분선을 넣지 않는다.
 - 다음 날짜가 시작될 때만 새 [날짜-키워드] 블록을 시작한다.
 - 날짜별 로그 끝에 “최신 T120은...”, “현재 최신 장면은...”, “이 날짜의 마지막 장면은...” 같은 메타 장면정리 문장을 붙이지 않는다.
-- 최신 턴·장소·WITH·진행 중 행동은 현재상태 문서에서 관리한다.
+- 정확한 최신 턴·장소·동행자·진행 중 행동은 어느 문서에도 억지로 덧붙이지 않는다. 며칠간 지속되는 결과만 현재상태에서 관리한다.
 
 연도가 직접 확정되어 있으면 [714년 6월 15일-...]·[2026년 8월 31일-...]처럼 실제 연도 자릿수를 그대로 사용한다.
 특히 여러 해가 흐르는 장기 RP에서는 같은 월·일의 중복을 피하기 위해 연도가 확인되는 모든 날짜 블록에 연도를 반드시 포함한다.
@@ -1406,7 +1394,7 @@ NO → 압축한다.
 24. 날짜별 로그에서 금지할 메타 문장
 ━━━━━━━━━━━━━━━━━━━━
 
-날짜 로그는 사건기록이지 현재 장면 앵커가 아니다.
+날짜 로그는 사건기록이지 실시간 장면 앵커가 아니다.
 
 따라서 아래 유형의 문장을 날짜 블록 끝에 붙이지 않는다.
 
@@ -1416,7 +1404,7 @@ NO → 압축한다.
 - “최신 시점 기준 ○○하고 있다.”
 - “다음 RP는 여기서 이어진다.”
 
-최신 턴·현재 위치·WITH·진행 중 행동은 현재상태에서만 관리한다.
+정확한 최신 턴·현재 위치·동행자·진행 중 행동은 기본적으로 생략하고, 지속되는 거점·진행 단계·부상·관계 변화만 현재상태에서 관리한다.
 
 날짜 로그의 마지막 문장은 해당 날짜 사건의 실제 결과·관계 변화·정보격차·남은 후크 중 하나로 자연스럽게 끝낸다.
 
@@ -1462,17 +1450,17 @@ NO → 압축한다.
 - 제목과 본문 사이에는 빈 줄을 넣지 않는다.
 - 서로 다른 날짜 블록 사이는 빈 줄 1줄로 구분한다.
 - 한 날짜 본문은 하나의 연속 문단으로 작성한다.
-- 최신 턴·현재 위치·WITH를 날짜 로그 마지막에 덧붙이지 않는다.
+- 최신 턴·현재 위치·동행자를 날짜 로그 마지막에 덧붙이지 않는다.
 - 결과 전체를 Markdown 코드블록으로 감싸지 않는다.`,
   });
 
   const GUIDE_STORAGE_KEYS = Object.freeze({
-    currentState: 'RPCM_guide_currentState_v3',
+    currentState: 'RPCM_guide_currentState_v4',
     logSummary: 'RPCM_guide_logSummary_v2',
   });
 
   const GUIDE_PREVIOUS_STORAGE_KEYS = Object.freeze({
-    currentState: 'RPCM_guide_currentState_v2',
+    currentState: 'RPCM_guide_currentState_v3',
   });
 
   const GUIDE_COPY_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="2"></rect><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"></path></svg>';
@@ -1526,6 +1514,47 @@ NO → 압축한다.
     return text;
   }
 
+  function upgradeCurrentStateGuideV4(value) {
+    let text = String(value || '');
+    if (!text || text.includes('하루~사흘 동안 RP를 진행해도 쉽게 낡지 않는 최신 지속 상태')) return text;
+
+    const divider = '━━━━━━━━━━━━━━━━━━━━';
+    const sectionMarker = title => `${divider}\n${title}\n${divider}`;
+    const replaceSectionFromDefault = (source, oldTitle, nextOldTitle, newTitle = oldTitle, nextNewTitle = nextOldTitle) => {
+      const start = source.indexOf(sectionMarker(oldTitle));
+      const end = nextOldTitle ? source.indexOf(`\n\n${sectionMarker(nextOldTitle)}`, start + 1) : source.length;
+      const defaultText = DEFAULT_GUIDES.currentState;
+      const replacementStart = defaultText.indexOf(sectionMarker(newTitle));
+      const replacementEnd = nextNewTitle ? defaultText.indexOf(`\n\n${sectionMarker(nextNewTitle)}`, replacementStart + 1) : defaultText.length;
+      if (start < 0 || end < 0 || replacementStart < 0 || replacementEnd < 0) return source;
+      return source.slice(0, start) + defaultText.slice(replacementStart, replacementEnd) + source.slice(end);
+    };
+
+    // 제목·개별 사용자 메모는 가능한 한 남기고, 즉발성 판단에 직접 관여하는 핵심 규칙만 v4 기본값으로 교체합니다.
+    const section2 = `\n\n${sectionMarker('2. 정사 판단 우선순위')}`;
+    const introEnd = text.indexOf(section2);
+    const defaultIntroEnd = DEFAULT_GUIDES.currentState.indexOf(section2);
+    if (introEnd >= 0 && defaultIntroEnd >= 0) text = DEFAULT_GUIDES.currentState.slice(0, defaultIntroEnd) + text.slice(introEnd);
+
+    const replacements = [
+      ['3. 지속 상태 보존 / 침묵은 변경이 아님', '4. 사용자 캐릭터 보호 / 자동추론 금지'],
+      ['5. 기억층 역할 분리', '6. 현재상태의 기억 우선순위'],
+      ['6. 현재상태의 기억 우선순위', '7. 현재상태 권장 구성'],
+      ['7. 현재상태 권장 구성', '7-1. 현재상태 블록 편집용 고정 문법'],
+      ['7-1. 현재상태 블록 편집용 고정 문법', '8. 최신 시점 / 현재 장면 작성법', '7-1. 현재상태 블록 편집용 고정 문법', '8. 기준 시점 / 진행 단계 작성법'],
+      ['8. 최신 시점 / 현재 장면 작성법', '9. 고정설정 / 로어와 현재상태 분리', '8. 기준 시점 / 진행 단계 작성법', '9. 고정설정 / 로어와 현재상태 분리'],
+      ['15. 현재 진행중 후크', '16. ANTI-DRIFT 작성법'],
+      ['16. ANTI-DRIFT 작성법', '17. stale state 방지 규칙'],
+      ['18. 현재상태 압축 원칙', '19. 현재상태 작성 시 절대 보존할 것'],
+      ['19. 현재상태 작성 시 절대 보존할 것', '20. 현재상태 문서 출력 방식'],
+      ['20. 현재상태 문서 출력 방식', '21. 현재상태 최종 검수 체크리스트'],
+      ['21. 현재상태 최종 검수 체크리스트', '22. 최종 출력 규칙'],
+      ['22. 최종 출력 규칙', null],
+    ];
+    for (const args of replacements) text = replaceSectionFromDefault(text, ...args);
+    return text;
+  }
+
   function migrateStoredGuideText(slotId, value) {
     let text = String(value || '');
     if (slotId === 'currentState') {
@@ -1542,7 +1571,7 @@ NO → 압축한다.
         }
       }
     }
-    if (slotId === 'currentState') text = upgradeCurrentStateGuideV3(text);
+    if (slotId === 'currentState') text = upgradeCurrentStateGuideV4(upgradeCurrentStateGuideV3(text));
     return text;
   }
 
@@ -4798,8 +4827,11 @@ NO → 압축한다.
       const prev = previousBySource.get(String(item.sourceKey || item.slotId || ''));
       if (!prev) continue;
       // 같은 날짜 블록이 재선정되면 이미 사용한 유지턴은 그대로 이어갑니다.
-      // 새로 생긴 날짜 블록만 0턴부터 시작합니다.
-      item.usedTurns = Number(prev.usedTurns || 0);
+      // 단, 자동 최근로그는 설정이 켜져 있는 한 최신 N개 유지가 우선이므로 만료됐다면 0턴부터 다시 시작합니다.
+      const previousTotal = Number(prev.totalTurns || 0);
+      const previousUsed = Number(prev.usedTurns || 0);
+      const previousActive = previousTotal === 0 || previousUsed < previousTotal;
+      item.usedTurns = item.autoType === 'recent-log' && !previousActive ? 0 : previousUsed;
       item.totalTurns = normalizeRetentionTurns(slot.retentionTurns);
     }
     p.items.push(...next);
@@ -4962,6 +4994,44 @@ NO → 압축한다.
     return { detected, added, reset };
   }
 
+  function refreshAutoRecentLogsToPending(room) {
+    if (!room.pending || !room.autoLogRecallEnabled) return 0;
+    const slot = (room.slots || []).find(s => s.id === 'logSummary');
+    if (!slot?.enabled || !String(slot.content || '').trim()) return 0;
+    const blocks = parseDatedLogBlocks(slot.content);
+    if (!blocks.length) return 0;
+
+    const excludedKeys = new Set((room.autoLogExcludedKeys || []).map(String));
+    const pinnedKeys = new Set((room.autoLogPinnedKeys || []).map(String));
+    const manualKeys = new Set((room.manualLogSelectedKeys || []).map(String));
+    const occupied = new Set([...pinnedKeys, ...manualKeys]);
+    const eligible = blocks.filter(b => !excludedKeys.has(b.key) && !occupied.has(b.key));
+    const recentCount = Math.max(1, Math.min(2, Number(room.autoLogRecentBlocks) || APP.defaultRecentLogBlocks));
+    const recent = selectRecentLogBlocks(eligible, recentCount);
+
+    // 자동 최근로그는 일반 메모의 유지턴과 달리 '최신 N개 자동 호출' 설정 자체가 유지 조건입니다.
+    // 매 응답 뒤 최신 목록을 다시 계산해 오래된 자동 최근로그는 빼고, 최신 목록은 유지턴이
+    // 끝났더라도 0턴부터 다시 시작시킵니다. 같은 항목이 아직 활성 상태라면 진행도는 이어갑니다.
+    const items = Array.isArray(room.pending.items) ? room.pending.items : [];
+    const previousRecent = items.filter(item => item?.autoType === 'recent-log');
+    const previousBySource = new Map(previousRecent.map(item => [
+      String(item.sourceKey || item.slotId || '').replace(/^auto-log:/, ''),
+      item,
+    ]));
+    room.pending.items = items.filter(item => item?.autoType !== 'recent-log');
+
+    for (const block of recent) {
+      const next = makeLogRecallItem(block, slot, 'recent-log', '최근로그', '최신 날짜 기본 유지');
+      const previous = previousBySource.get(String(block.key));
+      const previousTotal = Number(previous?.totalTurns || 0);
+      const previousUsed = Number(previous?.usedTurns || 0);
+      const previousActive = !!previous && (previousTotal === 0 || previousUsed < previousTotal);
+      if (previousActive) next.usedTurns = previousUsed;
+      room.pending.items.push(next);
+    }
+    return recent.length;
+  }
+
   function addAutoRelatedLogsToPending(room, contextText) {
     if (!room.pending || !room.autoLogRecallEnabled) return 0;
     const slot = (room.slots || []).find(s => s.id === 'logSummary');
@@ -4970,20 +5040,30 @@ NO → 압축한다.
     if (!blocks.length) return 0;
     const excludedKeys = new Set((room.autoLogExcludedKeys || []).map(String));
     const pinnedKeys = new Set((room.autoLogPinnedKeys || []).map(String));
+    const manualKeys = new Set((room.manualLogSelectedKeys || []).map(String));
     const eligible = blocks.filter(b => !excludedKeys.has(b.key));
+    const occupied = new Set([...pinnedKeys, ...manualKeys]);
     const recentCount = Math.max(1, Math.min(2, Number(room.autoLogRecentBlocks) || APP.defaultRecentLogBlocks));
-    const recent = selectRecentLogBlocks(eligible.filter(b => !pinnedKeys.has(b.key)), recentCount);
-    const skip = new Set([...excludedKeys, ...pinnedKeys, ...recent.map(b => b.key)]);
+    const recent = selectRecentLogBlocks(eligible.filter(b => !occupied.has(b.key)), recentCount);
+    const skip = new Set([...excludedKeys, ...occupied, ...recent.map(b => b.key)]);
     const relatedCount = Math.max(1, Math.min(4, Number(room.autoLogRelatedBlocks) || APP.defaultRelatedLogBlocks));
     const relatedCandidates = scoreRelatedLogBlocks(eligible, contextText, skip, room);
     const related = relatedCandidates.slice(0, relatedCount);
-    const items = Array.isArray(room.pending.items) ? room.pending.items : (room.pending.items = []);
+
+    // 이전 턴의 관련로그를 계속 쌓지 않고 이번 검색 결과로 교체합니다.
+    // 같은 로그가 다시 선정되면 남은 유지턴은 이어가되, 순위에서 빠진 로그는 즉시 제외합니다.
+    const items = Array.isArray(room.pending.items) ? room.pending.items : [];
+    const previousRelated = items.filter(item => item?.autoType === 'related-log');
+    const previousBySource = new Map(previousRelated.map(item => [
+      String(item.sourceKey || item.slotId || '').replace(/^auto-log:/, ''),
+      item,
+    ]));
+    room.pending.items = items.filter(item => item?.autoType !== 'related-log');
+    const nextItems = room.pending.items;
     let added = 0;
     for (let relatedIndex = 0; relatedIndex < related.length; relatedIndex++) {
       const scored = related[relatedIndex];
       const b = scored.block;
-      const id = `auto-log:${b.key}`;
-      const idx = items.findIndex(i => i.slotId === id);
       // 최초 주입 경로와 자동 갱신 경로가 같은 메타데이터 구조를 사용하게 해서
       // 총점만 있고 핵심/인물 점수·매칭어·후보순위가 사라지는 현상을 막습니다.
       const next = makeLogRecallItem(b, slot, 'related-log', '관련로그', relatedLogReason(scored), {
@@ -4996,26 +5076,17 @@ NO → 압축한다.
         matchedCoreTerms:[...(scored.matchedPhrases || []), ...(scored.matchedCoreTokens || []), ...(scored.matchedRareTokens || [])],
         matchedCharacterTerms:[...(scored.matchedCharacterTerms || [])],
       });
+      const previous = previousBySource.get(String(b.key));
+      const previousTotal = Number(previous?.totalTurns || 0);
+      const previousUsed = Number(previous?.usedTurns || 0);
+      const previousActive = !!previous && (previousTotal === 0 || previousUsed < previousTotal);
+      if (previousActive) next.usedTurns = previousUsed;
+
       const activeNow = activePendingItems(room.pending);
-      const baseWithoutSame = activeNow.filter(i => i.slotId !== id);
-      const canFit = buildContextBlockFromItems([...baseWithoutSame, next]).length <= contextBudgetForCarrier(room, String(room.pending.originalText || '').length);
+      const canFit = buildContextBlockFromItems([...activeNow, next]).length <= contextBudgetForCarrier(room, String(room.pending.originalText || '').length);
       if (!canFit) continue;
-      if (idx < 0) { items.push(next); added++; }
-      else if (Number(items[idx].usedTurns || 0) >= Number(items[idx].totalTurns || 0) && Number(items[idx].totalTurns || 0) !== 0) { items[idx] = next; added++; }
-      else {
-        // 이미 유지 중인 같은 관련로그는 유지턴을 리셋하지 않고 선정 근거만 최신값으로 보강합니다.
-        Object.assign(items[idx], {
-          recallReason: next.recallReason,
-          recallScore: next.recallScore,
-          recallCoreScore: next.recallCoreScore,
-          recallCharacterScore: next.recallCharacterScore,
-          recallRank: next.recallRank,
-          recallCandidateCount: next.recallCandidateCount,
-          matchedTerms: next.matchedTerms,
-          matchedCoreTerms: next.matchedCoreTerms,
-          matchedCharacterTerms: next.matchedCharacterTerms,
-        });
-      }
+      nextItems.push(next);
+      if (!previousActive) added++;
     }
     return added;
   }
@@ -5144,6 +5215,7 @@ NO → 압축한다.
     const recentForAuto = await fetchRecentMessages(apiChatIdOf(room), APP.autoScanMessageLimit);
     const autoResult = await refreshAutomaticMemories(room, recentForAuto);
     if (room.pending) room.pending.items = p.items;
+    refreshAutoRecentLogsToPending(room);
     const persistenceRepair = ensureDirectReleasePendingItems(room, p);
     if (persistenceRepair.added) console.info('[RP매니저] 직접 해제 항목 유지 복구:', persistenceRepair.added);
     let active = activePendingItems(p);
@@ -6210,7 +6282,7 @@ NO → 압축한다.
             ${autoDisplayItems.length ? `<div class="rpcm-auto-active"><div class="rpcm-auto-active-title">자동 호출된 항목 · 왜 들어왔는지</div>${autoDisplayItems.map(i => { const isLogItem = i.group === 'log-auto' || i.sourceSlotId === 'logSummary' || /-log$/.test(String(i.autoType || '')); const category = itemCategory(i); const evidence = relatedLogEvidence(i); return `<div class="rpcm-auto-active-row"><span class="rpcm-auto-badge tone-${categoryTone(category)}">${esc(category)}</span><div class="rpcm-auto-active-copy"><strong>${esc(i.title)}</strong><span class="rpcm-auto-reason">${esc(itemReason(i) || '자동 호출')}</span>${evidence ? `<span class="rpcm-auto-evidence">선정 근거 · ${esc(evidence)}</span>` : ''}</div><div class="rpcm-auto-active-meta"><span>${formatCount(String(i.content || '').length)}자 · ${esc(remainingLabelForItem(i))}</span>${isLogItem ? `<button type="button" class="rpcm-auto-inline-toggle" title="로그 내용 펼치기" aria-label="로그 내용 펼치기">▾</button>` : ''}</div>${isLogItem ? `<pre class="rpcm-auto-inline-content" hidden>${esc(String(i.content || '').trim())}</pre>` : ''}</div>`; }).join('')}</div>` : ''}
 
             <div class="rpcm-section" id="rpcm-section-basic">
-              <div class="rpcm-section-head"><div><div class="rpcm-section-title">기본 메모</div><div class="rpcm-section-desc">현재상태는 HOT MEMORY로 통째 유지합니다. 로그요약 원문은 날짜 블록 저장소로만 보관하고, 직접 선택·최신·관련·고정 날짜 블록만 45,000자 예산 안에서 골라 주입합니다.</div></div></div>
+              <div class="rpcm-section-head"><div><div class="rpcm-section-title">기본 메모</div><div class="rpcm-section-desc">현재상태는 다음 업데이트 전까지 유효한 지속 상태로 통째 유지합니다. 로그요약 원문은 날짜 블록 저장소로만 보관하고, 직접 선택·최신·관련·고정 날짜 블록만 45,000자 예산 안에서 골라 주입합니다.</div></div></div>
               <div id="rpcm-current-state-slot"></div>
               <div class="rpcm-auto-panel"><label><input type="checkbox" id="rpcm-auto-log" ${room.autoLogRecallEnabled ? 'checked' : ''}> 날짜별 로그 자동 호출</label><label>최신 <select id="rpcm-auto-log-recent"><option value="1" ${Number(room.autoLogRecentBlocks)===1?'selected':''}>1개</option><option value="2" ${Number(room.autoLogRecentBlocks)!==1?'selected':''}>2개</option></select></label><label>관련 과거 최대 <select id="rpcm-auto-log-related"><option value="1" ${Number(room.autoLogRelatedBlocks)===1?'selected':''}>1개</option><option value="2" ${Number(room.autoLogRelatedBlocks)===2?'selected':''}>2개</option><option value="3" ${Number(room.autoLogRelatedBlocks)===3?'selected':''}>3개</option><option value="4" ${Number(room.autoLogRelatedBlocks)===4?'selected':''}>4개</option></select></label><button type="button" class="rpcm-lib-small" id="rpcm-log-date-fix">🛠 날짜 수정</button><button type="button" class="rpcm-lib-small" id="rpcm-log-manage">🗓️ 로그 저장소 · 주입 선택${manualLogStats.count ? ` (직접 ${manualLogStats.count})` : ''}</button></div>${manualLogStats.count ? `<div class="rpcm-log-help"><b>직접 선택 중</b> ${manualLogStats.count}개 · ${formatCount(manualLogStats.chars)}자 · 로그 저장소에서 직접 선택·📌항상 호출·🚫자동 제외를 한 번에 관리합니다. 자동 호출을 꺼도 직접 선택한 날짜는 유지됩니다.</div>` : ''}
               <div id="rpcm-log-summary-slot"></div>
@@ -6309,7 +6381,7 @@ NO → 압축한다.
           <span class="rpcm-chevron">▶</span>
         </summary>
         <div class="rpcm-edit">
-          ${titleEditable ? `<input class="rpcm-title-input" value="${esc(slot.title)}" placeholder="항목 이름">` : `<div class="rpcm-fixed-note">${slot.id === 'currentState' ? '다음 RP에 필요한 최신 상태·관계·정보격차·비밀·미해결 후크·현재 부상/소유물 등 현재 유효한 HOT MEMORY를 넣습니다. 통째로 주입합니다.' : '날짜별 사건 요약 전체를 붙여넣습니다. 원문은 저장소로 보관하고, 날짜 블록 단위로 분해해 직접 선택·최신·관련·고정 로그만 골라 주입합니다.'}</div>${DEFAULT_GUIDES[slot.id] ? `<div class="rpcm-guide-panel" hidden><div class="rpcm-guide-head"><span>GPT / Gemini용 업데이트 지침 · 수정 내용은 이 브라우저에 자동 저장됩니다.</span><button class="rpcm-guide-icon" type="button" data-guide-copy title="지침 복사" aria-label="지침 복사">${GUIDE_COPY_ICON}</button><button class="rpcm-guide-reset" type="button" data-guide-reset>기본값 복원</button></div><textarea class="rpcm-guide-textarea" data-rpcm-editor="true" spellcheck="false"></textarea></div>` : ''}`}
+          ${titleEditable ? `<input class="rpcm-title-input" value="${esc(slot.title)}" placeholder="항목 이름">` : `<div class="rpcm-fixed-note">${slot.id === 'currentState' ? '다음 업데이트 전까지 유효한 관계·정보격차·비밀·미해결 후크·지속 부상/소유물 등 지속 상태를 넣습니다. 통째로 주입합니다.' : '날짜별 사건 요약 전체를 붙여넣습니다. 원문은 저장소로 보관하고, 날짜 블록 단위로 분해해 직접 선택·최신·관련·고정 로그만 골라 주입합니다.'}</div>${DEFAULT_GUIDES[slot.id] ? `<div class="rpcm-guide-panel" hidden><div class="rpcm-guide-head"><span>GPT / Gemini용 업데이트 지침 · 수정 내용은 이 브라우저에 자동 저장됩니다.</span><button class="rpcm-guide-icon" type="button" data-guide-copy title="지침 복사" aria-label="지침 복사">${GUIDE_COPY_ICON}</button><button class="rpcm-guide-reset" type="button" data-guide-reset>기본값 복원</button></div><textarea class="rpcm-guide-textarea" data-rpcm-editor="true" spellcheck="false"></textarea></div>` : ''}`}
           ${slot.group === 'character' ? `<div class="rpcm-auto-terms"><strong>자동 감지어</strong> · ${esc(characterAutomaticTerms(slot).slice(0, 10).join(' · ') || '캐릭터 이름을 입력하면 자동 생성됩니다.')}${characterAutomaticTerms(slot).length > 10 ? ' · …' : ''}</div><div class="rpcm-alias-row"><input class="rpcm-alias-input" value="${esc((slot.aliases || []).join(', '))}" placeholder="자동감지용 별칭 (주입 안 됨): 애칭·약칭·호칭"><label class="rpcm-auto-pin"><input type="checkbox" class="rpcm-auto-pinned" ${slot.autoPinned ? 'checked' : ''}> 📌 자동 고정</label><label class="rpcm-auto-exclude"><input type="checkbox" class="rpcm-auto-excluded" ${slot.autoExcluded ? 'checked' : ''}> 🚫 자동감지 제외</label></div>` : ''}
           ${slot.id === 'logSummary' ? `<div class="rpcm-slot-options"><span>이 항목 연속 유지</span><select class="rpcm-slot-retention" title="호출 후 선택한 횟수만큼 연속 주입 · 만료 후 자동 종료 · 주기 반복 아님">${retentionOptionsHtml(slot.retentionTurns)}</select><span>AI 응답마다 1턴 차감 · 만료 후 자동 종료 · 주기 반복 아님</span></div>` : ''}
           <div class="rpcm-editor-actions"><button type="button" class="rpcm-editor-action" data-editor-copy>내용 복사</button><button type="button" class="rpcm-editor-action" data-editor-select>전체 선택</button><button type="button" class="rpcm-editor-action" data-editor-clean>붙여넣기 정리</button><span class="rpcm-editor-hint">Ctrl+Z로 편집 되돌리기</span>${slot.group !== 'extra' ? `<button type="button" class="rpcm-editor-action rpcm-focus-toggle" data-editor-focus>크게 편집</button>` : ''}</div>
