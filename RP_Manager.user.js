@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🪽위시 RP Manager
 // @namespace    local.rp.context.manager
-// @version      0.9.11
+// @version      0.10.0
 // @description  장기 RP용 현재상태·날짜로그·캐릭터 설정·OOC를 관리하고 필요한 컨텍스트를 자동 주입합니다.
 // @author       User
 // @license      All Rights Reserved
@@ -33,13 +33,13 @@
   // 버전별 키를 쓰면 구버전과 신버전이 동시에 설치됐을 때 둘 다 실행될 수 있습니다.
   // 모든 버전이 공유하는 고정 키로 중복 실행을 막습니다.
   if (window.__WISH_RP_MANAGER_LOADED__) return;
-  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.9.11', loadedAt: Date.now() };
+  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.10.0', loadedAt: Date.now() };
   // 같은 페이지에 남아 있는 v0.8.10 복사본이 뒤늦게 시작되는 경우도 차단합니다.
   window.__RP_MANAGER_0810_LOADED__ = true;
 
   const APP = {
     name: '🪽위시 RP Manager',
-    version: '0.9.11',
+    version: '0.10.0',
     dbName: 'RPContextManagerDB',
     dbVersion: 2,
     storeName: 'rooms',
@@ -1496,6 +1496,10 @@ NO → 압축한다.
     saveStatus: 'saved',
     viewportMetricsBound: false,
     performanceVisibilityBound: false,
+    mobileViewportMaxHeight: 0,
+    mobileMenuBound: false,
+    mobileMenuTimer: null,
+    mobileSectionId: 'rpcm-section-basic',
   };
 
   function upgradeCurrentStateGuideV3(value) {
@@ -2792,7 +2796,7 @@ NO → 압축한다.
       };
       backdrop.onclick = event => { if (event.target === backdrop) finish(null); };
       backdrop.onkeydown = event => { if (event.key === 'Escape') finish(null); };
-      setTimeout(() => nameInput.focus(), 0);
+      if (!isMobileManagerLayout()) setTimeout(() => nameInput.focus(), 0);
     });
   }
 
@@ -4002,6 +4006,7 @@ NO → 압축한다.
           <div class="rpcm-detached-head-main"><strong>${slot.id === 'currentState' ? '🧭' : slot.id === 'logSummary' ? '🗓️' : '✏️'} ${esc(slot.title)} 크게 편집</strong><span id="rpcm-detached-format"></span></div>
           <span class="rpcm-detached-chars" id="rpcm-detached-chars">${formatCount(originalText.length)}자</span>
           <span class="rpcm-detached-save-state" id="rpcm-detached-save-state">원본 유지</span>
+          <button type="button" class="rpcm-detached-mobile-done" id="rpcm-detached-mobile-done">완료</button>
           <button type="button" class="rpcm-iconbtn" id="rpcm-detached-x" aria-label="닫기">✕</button>
         </div>
         <div class="rpcm-detached-toolbar">
@@ -4121,6 +4126,7 @@ NO → 압축한다.
 
     const autoGrow = textarea => {
       if (!textarea) return;
+      if (isMobileManagerLayout()) return;
       textarea.style.height = 'auto';
       textarea.style.height = `${Math.max(92, textarea.scrollHeight + 2)}px`;
     };
@@ -4174,11 +4180,16 @@ NO → 압축한다.
       }
     };
 
+    const refreshDetachedAfterInput = debounce(() => {
+      refreshDirty();
+      if (kind === 'logSummary') refreshDetachedLogSelectionUi();
+    }, isMobileManagerLayout() ? 280 : 60);
+
     const bindEditorTextareas = () => {
       main.querySelectorAll('textarea').forEach(ta => {
         ta.dataset.rpcmEditor = 'true';
         autoGrow(ta);
-        ta.addEventListener('input', () => { userEdited = true; autoGrow(ta); refreshDirty(); if (kind === 'logSummary') refreshDetachedLogSelectionUi(); });
+        ta.addEventListener('input', () => { userEdited = true; autoGrow(ta); refreshDetachedAfterInput(); });
       });
     };
 
@@ -4480,8 +4491,35 @@ NO → 압축한다.
       if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); backdrop.querySelector('#rpcm-detached-apply')?.click(); }
     });
 
+    const exitDetachedMobileEditing = () => {
+      backdrop.classList.remove('rpcm-detached-keyboard-editing');
+      backdrop.querySelectorAll('.rpcm-mobile-active-card,.rpcm-mobile-active-editor').forEach(node => node.classList.remove('rpcm-mobile-active-card','rpcm-mobile-active-editor'));
+      updateViewportMetrics();
+    };
+    backdrop.addEventListener('focusin', event => {
+      const textarea = event.target.closest?.('.rpcm-detached-main textarea');
+      if (!textarea || !isMobileManagerLayout()) return;
+      backdrop.querySelectorAll('.rpcm-mobile-active-card,.rpcm-mobile-active-editor').forEach(node => node.classList.remove('rpcm-mobile-active-card','rpcm-mobile-active-editor'));
+      textarea.closest('.rpcm-detached-card')?.classList.add('rpcm-mobile-active-card');
+      textarea.classList.add('rpcm-mobile-active-editor');
+      backdrop.classList.add('rpcm-detached-keyboard-editing');
+      updateViewportMetrics();
+    });
+    backdrop.addEventListener('focusout', () => {
+      setTimeout(() => {
+        if (document.activeElement?.matches?.('.rpcm-detached-main textarea')) return;
+        exitDetachedMobileEditing();
+      }, 80);
+    });
+    const detachedMobileDone = backdrop.querySelector('#rpcm-detached-mobile-done');
+    if (detachedMobileDone) detachedMobileDone.onclick = () => {
+      const active = document.activeElement;
+      if (active instanceof HTMLElement) active.blur();
+      exitDetachedMobileEditing();
+    };
+
     renderInitial();
-    backdrop.querySelector('#rpcm-detached-search')?.focus();
+    if (!isMobileManagerLayout()) backdrop.querySelector('#rpcm-detached-search')?.focus();
   }
 
   function openContextPreviewDialog(room, items) {
@@ -5582,8 +5620,11 @@ NO → 압축한다.
   // ---------------------------------------------------------------------------
 
   function isMobileManagerLayout() {
-    try { return window.matchMedia('(max-width: 680px)').matches; }
-    catch (_) { return window.innerWidth <= 680; }
+    try {
+      const narrow = window.matchMedia('(max-width: 680px)').matches;
+      const touchTablet = window.matchMedia('(pointer: coarse) and (max-width: 1024px)').matches;
+      return narrow || touchTablet;
+    } catch (_) { return window.innerWidth <= 680; }
   }
 
   function updateViewportMetrics() {
@@ -5592,8 +5633,16 @@ NO → 압축한다.
     const top = Math.max(0, Math.round(vv?.offsetTop || 0));
     const root = document.documentElement;
     if (!root) return;
+    const mobile = isMobileManagerLayout();
+    root.classList.toggle('rpcm-mobile-layout', mobile);
+    if (!mobile) state.mobileViewportMaxHeight = 0;
+    else if (height > state.mobileViewportMaxHeight) state.mobileViewportMaxHeight = height;
     root.style.setProperty('--rpcm-vvh', `${height}px`);
     root.style.setProperty('--rpcm-vv-top', `${top}px`);
+    const activeInput = document.activeElement;
+    const typingFocus = !!activeInput?.matches?.('textarea,input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="hidden"])') && !!activeInput.closest?.('#rpcm-overlay,#rpcm-detached-backdrop,#rpcm-lib-dialog-backdrop,#rpcm-library-manager-backdrop,#rpcm-log-dialog-backdrop,#rpcm-dup-dialog-backdrop,#rpcm-import-backdrop');
+    const keyboardOpen = mobile && typingFocus && state.mobileViewportMaxHeight > 0 && height < state.mobileViewportMaxHeight * .82;
+    root.classList.toggle('rpcm-mobile-keyboard-open', keyboardOpen);
   }
 
   function bindViewportMetrics() {
@@ -5606,7 +5655,11 @@ NO → 압축한다.
       ensureManagerButton();
     };
     window.addEventListener('resize', refresh, { passive: true });
-    window.addEventListener('orientationchange', () => setTimeout(refresh, 80), { passive: true });
+    window.addEventListener('orientationchange', () => {
+      state.mobileViewportMaxHeight = 0;
+      setTimeout(refresh, 80);
+      setTimeout(refresh, 320);
+    }, { passive: true });
     if (window.visualViewport) {
       window.visualViewport.addEventListener('resize', updateViewportMetrics, { passive: true });
       window.visualViewport.addEventListener('scroll', updateViewportMetrics, { passive: true });
@@ -5675,6 +5728,112 @@ NO → 압축한다.
       @keyframes rpcm-fade-in{from{opacity:0}to{opacity:1}}@media(prefers-reduced-motion:reduce){#rpcm-modal *{scroll-behavior:auto!important;transition:none!important;animation:none!important}}
       .rpcm-library-manager-toolbar{display:flex;align-items:center;gap:6px;padding:8px 14px;border-bottom:1px solid #2b2b2b;background:#191919}.rpcm-library-delete-selected{border-color:#653636;color:#fca5a5}.rpcm-library-selected-count{margin-left:auto;color:#888;font-size:10px}.rpcm-library-item-card>summary>[data-manager-select]{flex:0 0 auto;margin:0;accent-color:#df6298}
       @media(max-width:680px){#rpcm-overlay,#rpcm-lib-dialog-backdrop,#rpcm-library-manager-backdrop,#rpcm-log-dialog-backdrop,#rpcm-dup-dialog-backdrop,#rpcm-preview-backdrop,#rpcm-import-backdrop,#rpcm-raw-viewer{inset:auto 0 auto 0!important;top:var(--rpcm-vv-top,0px)!important;width:100vw!important;height:var(--rpcm-vvh,100vh)!important;max-height:var(--rpcm-vvh,100vh)!important;box-sizing:border-box!important}#rpcm-overlay{padding:0;pointer-events:none}#rpcm-modal-wrap{position:absolute!important;top:12px!important;left:10px!important;right:10px!important;width:auto!important;max-height:calc(100% - 24px)!important;height:calc(100% - 24px)!important;pointer-events:auto}#rpcm-modal{width:100%!important;max-height:100%!important;height:100%!important;border-radius:16px!important;box-sizing:border-box!important}.rpcm-body{padding:12px 12px calc(120px + env(safe-area-inset-bottom,0px));-webkit-overflow-scrolling:touch}.rpcm-header{padding:12px}.rpcm-quickbar{top:-12px}.rpcm-search-box{order:2;flex-basis:100%;min-width:0}.rpcm-summary-head{display:block}.rpcm-summary-side{justify-content:flex-start;margin-top:7px}.rpcm-breakdown{grid-template-columns:1fr}.rpcm-footer{padding:10px 12px calc(10px + env(safe-area-inset-bottom,0px));flex-wrap:wrap}.rpcm-footnote{width:100%;flex-basis:100%}.rpcm-btn{flex:1;min-height:42px}.rpcm-iconbtn{min-width:42px;min-height:42px;touch-action:manipulation}.rpcm-search-nav{width:36px;height:36px;touch-action:manipulation}.rpcm-editor-action.rpcm-focus-toggle{margin-left:0}.rpcm-preview-meta{display:none}.rpcm-preview-dialog,.rpcm-import-dialog{width:100vw;max-height:var(--rpcm-vvh,100vh);height:var(--rpcm-vvh,100vh);border-radius:0}.rpcm-lib-dialog,.rpcm-log-dialog,.rpcm-dup-dialog{max-height:calc(var(--rpcm-vvh,100vh) - 20px)}.rpcm-library-row{flex-wrap:wrap}.rpcm-lib-row-main{flex-basis:calc(100% - 86px)}.rpcm-lib-manage-btn{order:4;margin-left:34px}.rpcm-library-item-edit{grid-template-columns:1fr}.rpcm-library-item-edit label:last-child{grid-column:1}.rpcm-library-manager-actions{flex-wrap:wrap}.rpcm-library-manager-actions [data-act="delete-library"]{flex-basis:100%}.rpcm-raw-card{height:calc(var(--rpcm-vvh,100vh) - 20px);max-height:calc(var(--rpcm-vvh,100vh) - 20px)}.rpcm-import-toolbar{flex-wrap:wrap}}
+      [data-rpcm-settings-entry="1"] [role="button"]{border:0!important;border-radius:0!important;padding:0!important;background:transparent!important;min-height:44px!important;touch-action:manipulation!important;-webkit-tap-highlight-color:transparent!important}
+      [data-rpcm-settings-entry="1"] .rpcm-settings-wing{display:inline-flex;width:24px;height:24px;align-items:center;justify-content:center;font-size:20px;line-height:1}
+      [data-rpcm-settings-entry="1"] .rpcm-settings-state-dot{display:block;width:8px;height:8px;flex:0 0 auto;border-radius:50%;background:#df6298;box-shadow:0 0 0 2px rgba(223,98,152,.14)}
+      [data-rpcm-settings-entry="1"].rpcm-menu-armed .rpcm-settings-state-dot{background:#22c55e;box-shadow:0 0 0 2px rgba(34,197,94,.18)}
+      .rpcm-mobile-nav-strip{display:contents}.rpcm-mobile-search-toggle,.rpcm-mobile-summary-toggle,.rpcm-mobile-editbar,.rpcm-detached-mobile-done{display:none}
+
+      html.rpcm-mobile-layout #rpcm-overlay,html.rpcm-mobile-layout #rpcm-lib-dialog-backdrop,html.rpcm-mobile-layout #rpcm-library-manager-backdrop,html.rpcm-mobile-layout #rpcm-log-dialog-backdrop,html.rpcm-mobile-layout #rpcm-dup-dialog-backdrop,html.rpcm-mobile-layout #rpcm-preview-backdrop,html.rpcm-mobile-layout #rpcm-import-backdrop,html.rpcm-mobile-layout #rpcm-raw-viewer{inset:auto 0 auto 0!important;top:var(--rpcm-vv-top,0px)!important;width:100vw!important;height:var(--rpcm-vvh,100vh)!important;max-height:var(--rpcm-vvh,100vh)!important;box-sizing:border-box!important;padding:0!important}
+      html.rpcm-mobile-layout #rpcm-modal-wrap{position:absolute!important;inset:0!important;width:100%!important;height:100%!important;max-height:none!important;pointer-events:auto!important}
+      html.rpcm-mobile-layout #rpcm-modal{width:100%!important;height:100%!important;max-height:none!important;border:0!important;border-radius:0!important;box-shadow:none!important}
+      html.rpcm-mobile-layout .rpcm-header{flex:0 0 auto;min-height:54px;padding:calc(8px + env(safe-area-inset-top,0px)) 12px 8px;cursor:default}
+      html.rpcm-mobile-layout .rpcm-title{font-size:16px}html.rpcm-mobile-layout .rpcm-sub{display:none}
+      html.rpcm-mobile-layout .rpcm-body{flex:1 1 auto;min-height:0;padding:0 12px 16px;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;scroll-padding:70px 0 24px}
+      html.rpcm-mobile-layout .rpcm-footer{position:static!important;flex:0 0 auto;padding:9px 12px calc(9px + env(safe-area-inset-bottom,0px));gap:8px;flex-wrap:nowrap}
+      html.rpcm-mobile-layout .rpcm-footnote{display:none}html.rpcm-mobile-layout .rpcm-save-status{font-size:11px;flex:0 0 auto}
+      html.rpcm-mobile-layout .rpcm-footer .rpcm-btn{flex:1;min-width:0;min-height:46px;font-size:14px}
+      html.rpcm-mobile-layout .rpcm-quickbar{top:0;z-index:15;display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin:0 -12px 10px;padding:8px 12px;background:rgba(24,24,24,.98)}
+      html.rpcm-mobile-layout .rpcm-mobile-nav-strip{display:flex;align-items:center;gap:6px;flex:1;min-width:0;overflow-x:auto;overscroll-behavior-x:contain;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+      html.rpcm-mobile-layout .rpcm-mobile-nav-strip::-webkit-scrollbar{display:none}
+      html.rpcm-mobile-layout .rpcm-jump{flex:0 0 auto;min-height:40px;padding:0 13px;font-size:13px;touch-action:manipulation}
+      html.rpcm-mobile-layout .rpcm-jump.is-active{border-color:#df6298;color:#ffd6e9;background:#34202a}
+      html.rpcm-mobile-layout .rpcm-mobile-search-toggle{display:inline-flex;align-items:center;justify-content:center;flex:0 0 42px;width:42px;height:42px;border:1px solid #3c3c3c;border-radius:9px;background:#242424;color:#ddd;font-size:20px}
+      html.rpcm-mobile-layout .rpcm-search-box{display:none;order:3;flex-basis:100%;min-width:0}
+      html.rpcm-mobile-layout .rpcm-quickbar.is-search-open .rpcm-search-box{display:flex}
+      html.rpcm-mobile-layout .rpcm-search-input{height:44px;padding:0 12px;font-size:16px}
+      html.rpcm-mobile-layout .rpcm-search-nav{width:44px;height:44px;font-size:18px}html.rpcm-mobile-layout .rpcm-search-count{min-width:48px;font-size:11px}
+      html.rpcm-mobile-layout .rpcm-search-results{top:49px;max-height:calc(var(--rpcm-vvh,100vh) - 150px)}
+      html.rpcm-mobile-layout .rpcm-density-select{display:none}
+      html.rpcm-mobile-layout .rpcm-summary{padding:10px 12px;margin-bottom:10px}
+      html.rpcm-mobile-layout .rpcm-pending{display:grid;grid-template-columns:1fr 1fr;gap:7px;padding:10px;font-size:12px}html.rpcm-mobile-layout .rpcm-pending>div:first-child{grid-column:1/-1}html.rpcm-mobile-layout .rpcm-pending .rpcm-spacer{display:none}html.rpcm-mobile-layout .rpcm-pending .rpcm-btn{min-height:42px;padding:8px;font-size:12px}html.rpcm-mobile-layout .rpcm-pending .rpcm-btn:last-child{grid-column:1/-1}
+      html.rpcm-mobile-layout .rpcm-summary-head{display:flex;align-items:center;gap:8px}html.rpcm-mobile-layout .rpcm-summary-main strong{font-size:16px}
+      html.rpcm-mobile-layout .rpcm-summary-side{margin:0 0 0 auto;flex-wrap:nowrap}html.rpcm-mobile-layout .rpcm-limit{display:none}
+      html.rpcm-mobile-layout .rpcm-mobile-summary-toggle{display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px;border:1px solid #3b3b3b;border-radius:8px;background:#242424;color:#aaa;font-size:16px}
+      html.rpcm-mobile-layout .rpcm-summary>.rpcm-usage-bar,html.rpcm-mobile-layout .rpcm-summary>.rpcm-breakdown{display:none}
+      html.rpcm-mobile-layout .rpcm-summary.is-mobile-expanded>.rpcm-usage-bar{display:flex}html.rpcm-mobile-layout .rpcm-summary.is-mobile-expanded>.rpcm-breakdown{display:grid;grid-template-columns:1fr}
+      html.rpcm-mobile-layout #rpcm-section-basic,html.rpcm-mobile-layout #rpcm-section-character,html.rpcm-mobile-layout #rpcm-section-extra,html.rpcm-mobile-layout #rpcm-section-tools{display:none}
+      html.rpcm-mobile-layout #rpcm-section-basic.rpcm-mobile-section-active,html.rpcm-mobile-layout #rpcm-section-character.rpcm-mobile-section-active,html.rpcm-mobile-layout #rpcm-section-extra.rpcm-mobile-section-active{display:block}html.rpcm-mobile-layout #rpcm-section-tools.rpcm-mobile-section-active{display:flex}
+      html.rpcm-mobile-layout .rpcm-section{margin:11px 0 6px}html.rpcm-mobile-layout .rpcm-section-desc{display:none}
+      html.rpcm-mobile-layout .rpcm-section-head{margin:0 1px 8px}html.rpcm-mobile-layout .rpcm-section-title{font-size:15px}
+      html.rpcm-mobile-layout .rpcm-charlib-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;margin-top:8px}
+      html.rpcm-mobile-layout .rpcm-charlib-actions .rpcm-add-btn{min-height:44px;margin:0;padding:7px 8px;font-size:12px}html.rpcm-mobile-layout .rpcm-charlib-actions .rpcm-add-btn:last-child:nth-child(odd){grid-column:1/-1}
+      html.rpcm-mobile-layout .rpcm-auto-panel{display:grid;grid-template-columns:1fr;gap:10px;margin:7px 0 10px;padding:11px;font-size:13px}
+      html.rpcm-mobile-layout .rpcm-auto-panel label{min-height:36px;justify-content:space-between}html.rpcm-mobile-layout .rpcm-auto-panel select{height:42px;max-width:58%;font-size:16px}
+      html.rpcm-mobile-layout .rpcm-slot summary{min-height:48px;box-sizing:border-box;flex-wrap:wrap;gap:8px;padding:10px 11px}
+      html.rpcm-mobile-layout .rpcm-enable{width:22px;height:22px;flex:0 0 22px}html.rpcm-mobile-layout .rpcm-slot-name{font-size:14px;flex:1 1 calc(100% - 70px)}
+      html.rpcm-mobile-layout .rpcm-inline-retention{order:10;flex:0 0 calc(100% - 30px);margin-left:30px;font-size:12px}html.rpcm-mobile-layout .rpcm-inline-retention select{height:38px;font-size:16px}
+      html.rpcm-mobile-layout .rpcm-guide-toggle,html.rpcm-mobile-layout .rpcm-slot-remain,html.rpcm-mobile-layout .rpcm-slot-count,html.rpcm-mobile-layout .rpcm-delete-btn{order:11;min-height:36px;box-sizing:border-box;font-size:11px}
+      html.rpcm-mobile-layout .rpcm-delete-btn{margin-left:0}html.rpcm-mobile-layout .rpcm-chevron{order:3;font-size:14px}
+      html.rpcm-mobile-layout .rpcm-edit{padding:0 10px 11px}html.rpcm-mobile-layout .rpcm-fixed-note{font-size:12px}
+      html.rpcm-mobile-layout .rpcm-editor-actions{display:flex;flex-wrap:nowrap;overflow-x:auto;gap:7px;padding-bottom:2px;scrollbar-width:none}html.rpcm-mobile-layout .rpcm-editor-actions::-webkit-scrollbar{display:none}
+      html.rpcm-mobile-layout .rpcm-editor-action,html.rpcm-mobile-layout .rpcm-mini,html.rpcm-mobile-layout .rpcm-lib-small{flex:0 0 auto;min-height:42px;padding:0 12px;font-size:12px;touch-action:manipulation}
+      html.rpcm-mobile-layout .rpcm-editor-hint,html.rpcm-mobile-layout .rpcm-shortcuts{display:none}
+      html.rpcm-mobile-layout .rpcm-textarea{height:220px!important;min-height:220px;max-height:none;resize:none;padding:12px;font-size:16px;line-height:1.55;-webkit-text-size-adjust:100%}
+      html.rpcm-mobile-layout .rpcm-title-input,html.rpcm-mobile-layout .rpcm-alias-input,html.rpcm-mobile-layout .rpcm-guide-textarea,html.rpcm-mobile-layout select{font-size:16px}
+      html.rpcm-mobile-layout .rpcm-title-input,html.rpcm-mobile-layout .rpcm-alias-input{min-height:44px}html.rpcm-mobile-layout .rpcm-alias-row{grid-template-columns:1fr;gap:7px}
+      html.rpcm-mobile-layout .rpcm-auto-pin,html.rpcm-mobile-layout .rpcm-auto-exclude{min-height:38px;font-size:12px}html.rpcm-mobile-layout input[type="checkbox"],html.rpcm-mobile-layout input[type="radio"]{min-width:22px;min-height:22px}
+      html.rpcm-mobile-layout .rpcm-tools{gap:8px}html.rpcm-mobile-layout .rpcm-tools .rpcm-mini{flex:1 1 calc(50% - 4px)}
+
+      html.rpcm-mobile-layout .rpcm-mobile-editbar{display:none;flex:0 0 auto;align-items:center;gap:8px;min-height:52px;padding:calc(7px + env(safe-area-inset-top,0px)) 10px 7px;border-bottom:1px solid #303030;background:#1d1d1d}
+      html.rpcm-mobile-layout .rpcm-mobile-editbar strong{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:15px}html.rpcm-mobile-layout .rpcm-mobile-editbar span{font-size:11px;color:#999;white-space:nowrap}
+      html.rpcm-mobile-layout .rpcm-mobile-editbar button{min-width:58px;min-height:40px;border:1px solid #6b3a55;border-radius:8px;background:#34202a;color:#f3bad5;font-size:13px;font-weight:750}
+      html.rpcm-mobile-layout #rpcm-overlay.rpcm-mobile-editing .rpcm-header,html.rpcm-mobile-layout #rpcm-overlay.rpcm-mobile-editing .rpcm-quickbar,html.rpcm-mobile-layout #rpcm-overlay.rpcm-mobile-editing .rpcm-summary,html.rpcm-mobile-layout #rpcm-overlay.rpcm-mobile-editing .rpcm-pending,html.rpcm-mobile-layout #rpcm-overlay.rpcm-mobile-editing .rpcm-warnings,html.rpcm-mobile-layout #rpcm-overlay.rpcm-mobile-editing .rpcm-auto-active,html.rpcm-mobile-layout #rpcm-overlay.rpcm-mobile-editing .rpcm-footer{display:none!important}
+      html.rpcm-mobile-layout #rpcm-overlay.rpcm-mobile-editing .rpcm-mobile-editbar{display:flex}
+      html.rpcm-mobile-layout #rpcm-overlay.rpcm-mobile-editing .rpcm-body{padding:0 8px 8px;overflow:hidden}
+      html.rpcm-mobile-layout #rpcm-overlay.rpcm-mobile-editing .rpcm-section:not(.rpcm-mobile-active-edit-section),html.rpcm-mobile-layout #rpcm-overlay.rpcm-mobile-editing .rpcm-slot:not(.rpcm-mobile-active-slot){display:none!important}
+      html.rpcm-mobile-layout #rpcm-overlay.rpcm-mobile-editing .rpcm-mobile-active-edit-section{display:block!important;margin:0;height:100%}
+      html.rpcm-mobile-layout #rpcm-overlay.rpcm-mobile-editing .rpcm-mobile-active-edit-section>.rpcm-section-head,html.rpcm-mobile-layout #rpcm-overlay.rpcm-mobile-editing .rpcm-mobile-active-edit-section>.rpcm-auto-panel,html.rpcm-mobile-layout #rpcm-overlay.rpcm-mobile-editing .rpcm-mobile-active-edit-section>.rpcm-log-help{display:none!important}
+      html.rpcm-mobile-layout #rpcm-overlay.rpcm-mobile-editing .rpcm-mobile-active-slot{display:block!important;height:100%;margin:0;border:0;background:#181818}
+      html.rpcm-mobile-layout #rpcm-overlay.rpcm-mobile-editing .rpcm-mobile-active-slot>summary,html.rpcm-mobile-layout #rpcm-overlay.rpcm-mobile-editing .rpcm-mobile-active-slot .rpcm-fixed-note,html.rpcm-mobile-layout #rpcm-overlay.rpcm-mobile-editing .rpcm-mobile-active-slot .rpcm-editor-actions,html.rpcm-mobile-layout #rpcm-overlay.rpcm-mobile-editing .rpcm-mobile-active-slot .rpcm-slot-options,html.rpcm-mobile-layout #rpcm-overlay.rpcm-mobile-editing .rpcm-mobile-active-slot .rpcm-auto-terms,html.rpcm-mobile-layout #rpcm-overlay.rpcm-mobile-editing .rpcm-mobile-active-slot .rpcm-alias-row,html.rpcm-mobile-layout #rpcm-overlay.rpcm-mobile-editing .rpcm-mobile-active-slot .rpcm-title-input{display:none!important}
+      html.rpcm-mobile-layout #rpcm-overlay.rpcm-mobile-editing .rpcm-mobile-active-slot textarea[data-rpcm-editor="true"]:not(.rpcm-mobile-active-editor),html.rpcm-mobile-layout #rpcm-overlay.rpcm-mobile-editing .rpcm-mobile-active-slot .rpcm-guide-panel:not(.rpcm-mobile-active-guide){display:none!important}
+      html.rpcm-mobile-layout #rpcm-overlay.rpcm-mobile-editing .rpcm-mobile-active-guide{display:block!important;height:100%;margin:0;border:0;background:#181818}html.rpcm-mobile-layout #rpcm-overlay.rpcm-mobile-editing .rpcm-mobile-active-guide .rpcm-guide-head{display:none!important}
+      html.rpcm-mobile-layout #rpcm-overlay.rpcm-mobile-editing .rpcm-mobile-active-slot .rpcm-edit{height:100%;padding:8px 0 0}
+      html.rpcm-mobile-layout #rpcm-overlay.rpcm-mobile-editing .rpcm-mobile-active-editor{display:block!important;height:calc(var(--rpcm-vvh,100vh) - 76px)!important;min-height:160px!important;max-height:none!important;overflow:auto!important;border-radius:8px}
+
+      html.rpcm-mobile-layout #rpcm-detached-backdrop{inset:auto 0 auto 0;top:var(--rpcm-vv-top,0px);width:100vw;height:var(--rpcm-vvh,100vh);padding:0}
+      html.rpcm-mobile-layout .rpcm-detached-editor{width:100vw;height:var(--rpcm-vvh,100vh);min-height:0;max-width:none;max-height:none;border:0;border-radius:0}
+      html.rpcm-mobile-layout .rpcm-detached-head{min-height:52px;padding:calc(8px + env(safe-area-inset-top,0px)) 10px 8px}html.rpcm-mobile-layout .rpcm-detached-head-main span,html.rpcm-mobile-layout .rpcm-detached-save-state{display:none}
+      html.rpcm-mobile-layout .rpcm-detached-toolbar{padding:8px;gap:6px;flex-wrap:nowrap;overflow-x:auto}html.rpcm-mobile-layout .rpcm-detached-search{min-width:250px}
+      html.rpcm-mobile-layout .rpcm-detached-search input{height:44px;font-size:16px}html.rpcm-mobile-layout .rpcm-detached-search button{width:42px;height:42px;font-size:17px}
+      html.rpcm-mobile-layout .rpcm-detached-nav{min-height:48px}html.rpcm-mobile-layout .rpcm-detached-nav-item{min-height:42px;font-size:12px}
+      html.rpcm-mobile-layout .rpcm-detached-main{padding:10px 9px 72px;overscroll-behavior:contain}html.rpcm-mobile-layout .rpcm-detached-card>summary{min-height:48px;flex-wrap:wrap}
+      html.rpcm-mobile-layout .rpcm-detached-card-copy,html.rpcm-mobile-layout .rpcm-detached-subcopy{min-height:36px;padding:0 10px;font-size:11px}
+      html.rpcm-mobile-layout .rpcm-detached-card textarea,html.rpcm-mobile-layout .rpcm-detached-raw-wrap textarea{height:260px!important;min-height:220px!important;max-height:none!important;overflow:auto!important;font-size:16px;line-height:1.55}
+      html.rpcm-mobile-layout .rpcm-detached-log-controls label{min-height:40px;padding:0 10px;font-size:12px}
+      html.rpcm-mobile-layout .rpcm-detached-foot{padding:8px 10px calc(8px + env(safe-area-inset-bottom,0px))}html.rpcm-mobile-layout .rpcm-detached-foot .rpcm-btn{min-height:44px;font-size:13px}
+      html.rpcm-mobile-layout .rpcm-detached-mobile-done{align-items:center;justify-content:center;min-width:58px;height:40px;border:1px solid #6b3a55;border-radius:8px;background:#34202a;color:#f3bad5;font-size:13px;font-weight:750}
+      html.rpcm-mobile-layout #rpcm-detached-backdrop.rpcm-detached-keyboard-editing .rpcm-detached-toolbar,html.rpcm-mobile-layout #rpcm-detached-backdrop.rpcm-detached-keyboard-editing .rpcm-detached-nav,html.rpcm-mobile-layout #rpcm-detached-backdrop.rpcm-detached-keyboard-editing .rpcm-detached-foot{display:none!important}
+      html.rpcm-mobile-layout #rpcm-detached-backdrop.rpcm-detached-keyboard-editing .rpcm-detached-mobile-done{display:inline-flex}
+      html.rpcm-mobile-layout #rpcm-detached-backdrop.rpcm-detached-keyboard-editing .rpcm-detached-main{padding:8px;overflow:hidden}
+      html.rpcm-mobile-layout #rpcm-detached-backdrop.rpcm-detached-keyboard-editing .rpcm-detached-card:not(.rpcm-mobile-active-card){display:none!important}
+      html.rpcm-mobile-layout #rpcm-detached-backdrop.rpcm-detached-keyboard-editing .rpcm-mobile-active-card{margin:0;border:0}html.rpcm-mobile-layout #rpcm-detached-backdrop.rpcm-detached-keyboard-editing .rpcm-mobile-active-card>summary{display:none}
+      html.rpcm-mobile-layout #rpcm-detached-backdrop.rpcm-detached-keyboard-editing .rpcm-mobile-active-card .rpcm-detached-card-body{padding:0}
+      html.rpcm-mobile-layout #rpcm-detached-backdrop.rpcm-detached-keyboard-editing .rpcm-mobile-active-editor{display:block!important;height:calc(var(--rpcm-vvh,100vh) - 76px)!important;min-height:150px!important;overflow:auto!important}
+
+      html.rpcm-mobile-layout .rpcm-lib-dialog,html.rpcm-mobile-layout .rpcm-log-dialog,html.rpcm-mobile-layout .rpcm-dup-dialog,html.rpcm-mobile-layout .rpcm-preview-dialog,html.rpcm-mobile-layout .rpcm-import-dialog,html.rpcm-mobile-layout .rpcm-raw-card{width:100vw!important;height:var(--rpcm-vvh,100vh)!important;max-width:none!important;max-height:none!important;border:0!important;border-radius:0!important}
+      html.rpcm-mobile-layout .rpcm-lib-dialog-head{flex:0 0 auto;padding:calc(11px + env(safe-area-inset-top,0px)) 12px 11px}html.rpcm-mobile-layout .rpcm-lib-dialog-title{font-size:16px}html.rpcm-mobile-layout .rpcm-lib-dialog-desc{font-size:12px}
+      html.rpcm-mobile-layout .rpcm-lib-close,html.rpcm-mobile-layout .rpcm-iconbtn{min-width:44px;min-height:44px;font-size:19px;touch-action:manipulation}
+      html.rpcm-mobile-layout .rpcm-lib-list,html.rpcm-mobile-layout .rpcm-library-manager-list,html.rpcm-mobile-layout .rpcm-log-list,html.rpcm-mobile-layout .rpcm-preview-list,html.rpcm-mobile-layout .rpcm-import-list{flex:1 1 auto;min-height:0;overflow:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+      html.rpcm-mobile-layout .rpcm-lib-dialog-actions{flex:0 0 auto;padding:9px 10px calc(9px + env(safe-area-inset-bottom,0px));gap:8px}html.rpcm-mobile-layout .rpcm-lib-dialog-actions .rpcm-btn{min-height:46px;font-size:14px}
+      html.rpcm-mobile-layout .rpcm-lib-row{min-height:48px;padding:10px}html.rpcm-mobile-layout .rpcm-lib-row strong{font-size:14px}html.rpcm-mobile-layout .rpcm-lib-row small{font-size:12px}
+      html.rpcm-mobile-layout .rpcm-library-name-row{padding:10px 12px}html.rpcm-mobile-layout .rpcm-library-name-input,html.rpcm-mobile-layout .rpcm-library-item-edit input,html.rpcm-mobile-layout .rpcm-library-item-edit select,html.rpcm-mobile-layout .rpcm-library-item-edit textarea,html.rpcm-mobile-layout .rpcm-dup-editor,html.rpcm-mobile-layout #rpcm-log-dialog-backdrop input{font-size:16px!important}
+      html.rpcm-mobile-layout .rpcm-library-item-edit{grid-template-columns:1fr}html.rpcm-mobile-layout .rpcm-library-item-edit label:last-child{grid-column:1}html.rpcm-mobile-layout .rpcm-library-item-edit textarea{min-height:240px;resize:none}
+      html.rpcm-mobile-layout .rpcm-library-row{flex-wrap:wrap}html.rpcm-mobile-layout .rpcm-lib-row-main{flex-basis:calc(100% - 96px)}html.rpcm-mobile-layout .rpcm-lib-manage-btn{order:4;margin-left:32px;min-height:40px;font-size:12px}
+      html.rpcm-mobile-layout .rpcm-lib-rename-icon,html.rpcm-mobile-layout .rpcm-lib-delete-icon{width:42px;height:42px}html.rpcm-mobile-layout .rpcm-library-manager-actions{flex-wrap:wrap}html.rpcm-mobile-layout .rpcm-library-manager-actions [data-act="delete-library"]{flex-basis:100%}
+      html.rpcm-mobile-layout .rpcm-preview-card summary{min-height:48px}html.rpcm-mobile-layout .rpcm-preview-kind,html.rpcm-mobile-layout .rpcm-preview-card strong{font-size:12px}html.rpcm-mobile-layout .rpcm-preview-meta{display:none}html.rpcm-mobile-layout .rpcm-preview-card pre{font-size:14px;max-height:none}
+      html.rpcm-mobile-layout #rpcm-toast-wrap{top:calc(var(--rpcm-vv-top,0px) + env(safe-area-inset-top,0px) + 10px);width:calc(100vw - 24px)}html.rpcm-mobile-layout .rpcm-toast{box-sizing:border-box;width:100%;max-width:none;font-size:13px}
+      html.rpcm-mobile-keyboard-open .rpcm-lib-dialog-desc,html.rpcm-mobile-keyboard-open .rpcm-lib-toolbar,html.rpcm-mobile-keyboard-open .rpcm-library-manager-toolbar,html.rpcm-mobile-keyboard-open .rpcm-import-toolbar,html.rpcm-mobile-keyboard-open .rpcm-lib-dialog-actions{display:none!important}html.rpcm-mobile-keyboard-open #rpcm-overlay:not(.rpcm-mobile-editing) .rpcm-footer{display:none!important}
     `);
   }
 
@@ -5889,6 +6048,7 @@ NO → 압축한다.
   let managerInlineMounted = false;
   let managerFallbackLocked = false;
   const MANAGER_MOBILE_HOST_ID = 'rpcm-mobile-button-host';
+  const MANAGER_MOBILE_MENU_ATTR = 'data-rpcm-settings-entry';
   let managerMobileHost = null;
   let managerMobileMount = null;
   let managerMobileHostGuard = null;
@@ -6059,6 +6219,106 @@ NO → 압축한다.
     setImportantStyle(managerMobileHost, 'display', 'none');
   }
 
+  function normalizedMenuText(value) {
+    return String(value || '').replace(/\s+/g, ' ').trim();
+  }
+
+  function mobileSettingsAnchorRow(label) {
+    if (!label) return null;
+    const paddedRow = label.closest?.('div[class*="py-"][class*="px-"],li,[role="menuitem"]');
+    if (paddedRow) return paddedRow;
+    const button = label.closest?.('button,a,[role="button"]');
+    if (button) {
+      const parent = button.parentElement;
+      if (parent && parent !== document.body) {
+        const rect = parent.getBoundingClientRect?.();
+        if (!rect || (rect.height >= 32 && rect.height <= 92)) return parent;
+      }
+      return button;
+    }
+    return label.closest?.('div') || label;
+  }
+
+  function createMobileSettingsMenuEntry() {
+    const row = document.createElement('div');
+    row.className = 'px-2.5 h-4 box-content py-[18px]';
+    row.setAttribute(MANAGER_MOBILE_MENU_ATTR, '1');
+    row.innerHTML = `
+      <div role="button" tabindex="0" data-rpcm-open-manager="1" class="w-full flex h-4 items-center justify-between typo-text-base_leading-none_medium space-x-2 [&_svg]:fill-icon_tertiary ring-offset-4 ring-offset-sidebar cursor-pointer">
+        <span class="flex space-x-2 items-center min-w-0">
+          <span class="rpcm-settings-wing" aria-hidden="true">🪽</span>
+          <span class="whitespace-nowrap overflow-hidden text-ellipsis typo-text-sm_leading-none_medium">RP Manager</span>
+        </span>
+        <span class="rpcm-settings-state-dot" aria-hidden="true"></span>
+      </div>`;
+    const open = event => {
+      event.preventDefault();
+      event.stopPropagation();
+      openModal().catch(error => notify(error.message, 'error'));
+    };
+    const button = row.querySelector('[data-rpcm-open-manager]');
+    button?.addEventListener('click', open);
+    button?.addEventListener('keydown', event => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      open(event);
+    });
+    return row;
+  }
+
+  function updateMobileSettingsMenuEntry() {
+    const row = document.querySelector(`[${MANAGER_MOBILE_MENU_ATTR}="1"]`);
+    if (!row) return;
+    const armed = !!state.currentRoom?.pending;
+    row.classList.toggle('rpcm-menu-armed', armed);
+    const button = row.querySelector('[data-rpcm-open-manager]');
+    if (button) button.setAttribute('aria-label', armed ? 'RP Manager · 자동 유지 중' : 'RP Manager');
+  }
+
+  function removeMobileSettingsMenuEntry() {
+    document.querySelectorAll(`[${MANAGER_MOBILE_MENU_ATTR}="1"]`).forEach(node => node.remove());
+  }
+
+  function ensureMobileSettingsMenuEntry() {
+    if (!isMobileManagerLayout() || !state.currentChatId) {
+      removeMobileSettingsMenuEntry();
+      return false;
+    }
+    const existing = document.querySelector(`[${MANAGER_MOBILE_MENU_ATTR}="1"]`);
+    if (existing) {
+      updateMobileSettingsMenuEntry();
+      return true;
+    }
+    const labels = [...document.querySelectorAll('p,span')].filter(node => !node.closest?.('#rpcm-overlay,[data-rpcm-settings-entry="1"]') && isElementVisible(node));
+    const summaryLabel = labels.find(node => normalizedMenuText(node.textContent) === '요약 메모리');
+    const fallbackLabel = labels.find(node => normalizedMenuText(node.textContent) === '전체 설정');
+    const anchorLabel = summaryLabel || fallbackLabel;
+    const anchorRow = mobileSettingsAnchorRow(anchorLabel);
+    if (!anchorRow?.parentElement) return false;
+    const row = createMobileSettingsMenuEntry();
+    anchorRow.parentElement.insertBefore(row, anchorRow.nextSibling);
+    updateMobileSettingsMenuEntry();
+    return true;
+  }
+
+  function scheduleMobileSettingsMenuEntry(delay = 90) {
+    clearTimeout(state.mobileMenuTimer);
+    state.mobileMenuTimer = setTimeout(() => {
+      state.mobileMenuTimer = null;
+      ensureMobileSettingsMenuEntry();
+    }, Math.max(0, Number(delay) || 0));
+  }
+
+  function bindMobileSettingsMenuEntry() {
+    if (state.mobileMenuBound) return;
+    state.mobileMenuBound = true;
+    document.addEventListener('click', () => {
+      if (!isMobileManagerLayout() || !state.currentChatId) return;
+      scheduleMobileSettingsMenuEntry(80);
+      setTimeout(() => scheduleMobileSettingsMenuEntry(0), 280);
+      setTimeout(() => scheduleMobileSettingsMenuEntry(0), 650);
+    }, true);
+  }
+
   function mountManagerMobile(fab) {
     const mount = ensureManagerMobileHost();
     if (!mount) return false;
@@ -6084,6 +6344,7 @@ NO → 압축한다.
     if (managerMobileHost?.isConnected && isMobileManagerLayout()) {
       setImportantStyle(managerMobileHost, 'visibility', visible ? 'visible' : 'hidden');
     }
+    updateMobileSettingsMenuEntry();
   }
 
   function ensureManagerButton() {
@@ -6099,11 +6360,15 @@ NO → 압축한다.
     fab.classList.toggle('rpcm-mobile-fab', mobileLayout);
 
     if (mobileLayout) {
-      mountManagerMobile(fab);
+      hideManagerMobileHost();
+      if (fab.isConnected) fab.remove();
       state.fab = fab;
+      scheduleMobileSettingsMenuEntry(0);
       updateFab();
       return true;
     }
+
+    removeMobileSettingsMenuEntry();
 
     // 데스크톱은 모델 선택 버튼(예: "프로챗 1.0") 바로 왼쪽 한 자리만 사용합니다.
     // Lore/검색창/메뉴 등 여러 후보를 따라다니지 않으므로 Manager가 화면 여기저기로 이동하지 않습니다.
@@ -6168,7 +6433,7 @@ NO → 압축한다.
 
   function applyModalPosition() {
     const wrap = state.modal?.querySelector('#rpcm-modal-wrap');
-    if (!wrap || window.innerWidth <= 680) return;
+    if (!wrap || isMobileManagerLayout()) return;
     const p = state.modalPos || loadModalPosition();
     if (!p) return;
     const maxLeft = Math.max(0, window.innerWidth - wrap.offsetWidth);
@@ -6182,7 +6447,7 @@ NO → 압축한다.
     const overlay = state.modal;
     const wrap = overlay?.querySelector('#rpcm-modal-wrap');
     const header = overlay?.querySelector('.rpcm-header');
-    if (!wrap || !header || window.innerWidth <= 680) return;
+    if (!wrap || !header || isMobileManagerLayout()) return;
     applyModalPosition();
 
     header.onmousedown = (e) => {
@@ -6263,17 +6528,19 @@ NO → 압축한다.
             <div class="rpcm-spacer"></div>
             <button class="rpcm-iconbtn" id="rpcm-close">✕</button>
           </div>
+          <div class="rpcm-mobile-editbar"><button type="button" id="rpcm-mobile-edit-done">완료</button><strong id="rpcm-mobile-edit-title">내용 편집</strong><span id="rpcm-mobile-edit-count">0자</span></div>
           <div class="rpcm-body">
             ${pending ? `<div class="rpcm-pending"><div>🟠 <strong>${pending.verified ? '서버 주입 확인됨 ✓' : '서버 주입 확인 필요'}</strong><br>${esc(pendingProgressText(pending))}<br>현재 carrier AI ${esc(shortId(pending.messageId))} · 숨김 컨텍스트 ${formatCount(pending.injectedChars)}자 · 서버 raw ${formatCount(pending.serverChars || pending.carrierChars)}자</div><div class="rpcm-spacer"></div><button class="rpcm-btn secondary" id="rpcm-show-raw">주입 내용 확인</button><button class="rpcm-btn secondary" id="rpcm-reverify">서버 재검증</button><button class="rpcm-btn warn" id="rpcm-restore-now">지금 해제</button></div>` : ''}
             <div class="rpcm-quickbar">
-              <button type="button" class="rpcm-jump" data-jump="rpcm-section-basic">기본 메모</button><button type="button" class="rpcm-jump" data-jump="rpcm-section-character">캐릭터</button><button type="button" class="rpcm-jump" data-jump="rpcm-section-extra">기타</button><button type="button" class="rpcm-jump" data-jump="rpcm-section-tools">도구</button>
+              <div class="rpcm-mobile-nav-strip"><button type="button" class="rpcm-jump" data-jump="rpcm-section-basic">기본 메모</button><button type="button" class="rpcm-jump" data-jump="rpcm-section-character">캐릭터</button><button type="button" class="rpcm-jump" data-jump="rpcm-section-extra">기타</button><button type="button" class="rpcm-jump" data-jump="rpcm-section-tools">도구</button></div>
+              <button type="button" class="rpcm-mobile-search-toggle" id="rpcm-mobile-search-toggle" aria-label="통합 검색">⌕</button>
               <div class="rpcm-search-box"><input class="rpcm-search-input" id="rpcm-search-input" placeholder="현재상태·로그·캐릭터·기타 검색"><button type="button" class="rpcm-search-nav" id="rpcm-search-prev" aria-label="이전 검색 결과">↑</button><button type="button" class="rpcm-search-nav" id="rpcm-search-next" aria-label="다음 검색 결과">↓</button><span class="rpcm-search-count" id="rpcm-search-count">0 / 0</span><div class="rpcm-search-results" id="rpcm-search-results" hidden></div></div>
               <select class="rpcm-density-select" id="rpcm-density" aria-label="화면 여백"><option value="comfortable" ${uiPrefs.density !== 'compact' ? 'selected' : ''}>편안하게</option><option value="compact" ${uiPrefs.density === 'compact' ? 'selected' : ''}>간결하게</option></select>
             </div>
             <div class="rpcm-summary">
               <div class="rpcm-summary-head">
                 <div><div class="rpcm-summary-label">${pending ? '현재 주입 중인 컨텍스트' : '다음 주입 컨텍스트'}</div><div class="rpcm-summary-main"><strong>${formatCount(stats.block)} / 45,000자</strong><span class="rpcm-summary-count">${stats.count}개 항목</span></div></div>
-                <div class="rpcm-summary-side"><span class="rpcm-summary-status" style="color:${st.color}">${st.label}</span><label class="rpcm-limit"><input id="rpcm-maxchars" type="hidden" value="45000">최대 45,000자 고정</label></div>
+                <div class="rpcm-summary-side"><span class="rpcm-summary-status" style="color:${st.color}">${st.label}</span><label class="rpcm-limit"><input id="rpcm-maxchars" type="hidden" value="45000">최대 45,000자 고정</label><button type="button" class="rpcm-mobile-summary-toggle" id="rpcm-mobile-summary-toggle" aria-label="용량 세부정보 펼치기">▾</button></div>
               </div>
               <div class="rpcm-usage-bar" aria-label="섹션별 주입 용량">${usage.bar}</div>
               <div class="rpcm-breakdown">${usage.chips}</div>
@@ -6412,8 +6679,8 @@ NO → 압축한다.
         ta.dispatchEvent(new Event('input', { bubbles:true }));
       };
       if (['currentState', 'logSummary'].includes(slot.id)) {
-        ta.addEventListener('pointerup', () => rememberEditorHeight(slot, ta));
-        ta.addEventListener('keyup', event => { if (event.key === 'ArrowUp' || event.key === 'ArrowDown') rememberEditorHeight(slot, ta); });
+        ta.addEventListener('pointerup', () => { if (!isMobileManagerLayout()) rememberEditorHeight(slot, ta); });
+        ta.addEventListener('keyup', event => { if (!isMobileManagerLayout() && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) rememberEditorHeight(slot, ta); });
       }
       // 현재상태/로그요약은 한 번 클릭해 포커스된 동안에만 textarea 내부를 스크롤합니다.
       // 포커스되지 않은 축소 편집창 위에서는 휠이 RP Manager 본문 스크롤로 이어집니다.
@@ -6432,6 +6699,7 @@ NO → 압축한다.
       if (slot.group === 'extra') {
         const compactHeight = editorHeightPreference(slot);
         const fitExtraHeight = () => {
+          if (isMobileManagerLayout()) return;
           ta.style.height = 'auto';
           ta.style.height = `${Math.max(compactHeight, Math.min(620, ta.scrollHeight + 6))}px`;
         };
@@ -6583,6 +6851,11 @@ NO → 압축한다.
           queueRoomAutoSave(room);
         };
       }
+      const mobileEditing = isMobileManagerLayout();
+      const refreshSlotStatsSoon = debounce(() => {
+        refreshStatsOnly();
+        refreshAutoTerms();
+      }, mobileEditing ? 450 : 100);
       const syncPendingContentEdit = debounce(async () => {
         if (!room.pending) return;
         try {
@@ -6592,15 +6865,16 @@ NO → 압축한다.
         } catch (e) {
           notify(`현재 주입 내용 갱신 실패: ${e.message}`, 'error', 6500);
         }
-      }, 700);
-      ta.oninput = debounce(() => {
+      }, mobileEditing ? 1800 : 700);
+      ta.oninput = () => {
         slot.content = ta.value;
         count.textContent = `${formatCount(ta.value.length)}자`;
-        refreshStatsOnly();
-        refreshAutoTerms();
-        queueRoomAutoSave(room);
+        const mobileEditCount = overlay.querySelector('#rpcm-mobile-edit-count');
+        if (ta.classList.contains('rpcm-mobile-active-editor') && mobileEditCount) mobileEditCount.textContent = `${formatCount(ta.value.length)}자`;
+        refreshSlotStatsSoon();
+        queueRoomAutoSave(room, mobileEditing ? 900 : 500);
         syncPendingContentEdit();
-      }, 100);
+      };
 
       const del = d.querySelector('.rpcm-delete-btn');
       if (del) {
@@ -6633,9 +6907,91 @@ NO → 압축한다.
     else chars.forEach(slot => charWrap.appendChild(createSlotCard(slot, false)));
     extras.forEach(slot => extraWrap.appendChild(createSlotCard(slot, false)));
 
+    const mobileSectionIds = ['rpcm-section-basic', 'rpcm-section-character', 'rpcm-section-extra', 'rpcm-section-tools'];
+    const activateMobileSection = (sectionId, resetScroll = true) => {
+      if (!isMobileManagerLayout()) return;
+      const wanted = mobileSectionIds.includes(sectionId) ? sectionId : 'rpcm-section-basic';
+      if (!overlay.querySelector(`#${wanted}`)) return;
+      state.mobileSectionId = wanted;
+      mobileSectionIds.forEach(id => overlay.querySelector(`#${id}`)?.classList.toggle('rpcm-mobile-section-active', id === wanted));
+      overlay.querySelectorAll('.rpcm-jump').forEach(button => button.classList.toggle('is-active', button.dataset.jump === wanted));
+      if (resetScroll) {
+        const body = overlay.querySelector('.rpcm-body');
+        if (body) body.scrollTop = 0;
+      }
+    };
+
+    if (isMobileManagerLayout()) activateMobileSection(state.mobileSectionId, false);
+
     overlay.querySelectorAll('.rpcm-jump').forEach(button => {
-      button.onclick = () => overlay.querySelector(`#${button.dataset.jump}`)?.scrollIntoView({ behavior:'smooth', block:'start' });
+      button.onclick = () => {
+        if (isMobileManagerLayout()) activateMobileSection(button.dataset.jump, true);
+        else overlay.querySelector(`#${button.dataset.jump}`)?.scrollIntoView({ behavior:'smooth', block:'start' });
+      };
     });
+
+    const quickbar = overlay.querySelector('.rpcm-quickbar');
+    const mobileSearchToggle = overlay.querySelector('#rpcm-mobile-search-toggle');
+    if (mobileSearchToggle && quickbar) mobileSearchToggle.onclick = () => {
+      const open = !quickbar.classList.contains('is-search-open');
+      quickbar.classList.toggle('is-search-open', open);
+      mobileSearchToggle.textContent = open ? '✕' : '⌕';
+      mobileSearchToggle.setAttribute('aria-label', open ? '통합 검색 닫기' : '통합 검색');
+      if (open) setTimeout(() => {
+        const input = overlay.querySelector('#rpcm-search-input');
+        try { input?.focus({ preventScroll:true }); } catch (_) { input?.focus(); }
+      }, 0);
+    };
+
+    const summary = overlay.querySelector('.rpcm-summary');
+    const mobileSummaryToggle = overlay.querySelector('#rpcm-mobile-summary-toggle');
+    if (summary && mobileSummaryToggle) mobileSummaryToggle.onclick = () => {
+      const expanded = !summary.classList.contains('is-mobile-expanded');
+      summary.classList.toggle('is-mobile-expanded', expanded);
+      mobileSummaryToggle.textContent = expanded ? '▴' : '▾';
+      mobileSummaryToggle.setAttribute('aria-label', expanded ? '용량 세부정보 접기' : '용량 세부정보 펼치기');
+    };
+
+    const exitMobileEditing = () => {
+      overlay.classList.remove('rpcm-mobile-editing');
+      overlay.querySelectorAll('.rpcm-mobile-active-slot,.rpcm-mobile-active-edit-section,.rpcm-mobile-active-editor,.rpcm-mobile-active-guide').forEach(node => node.classList.remove('rpcm-mobile-active-slot','rpcm-mobile-active-edit-section','rpcm-mobile-active-editor','rpcm-mobile-active-guide'));
+      updateViewportMetrics();
+    };
+    overlay.addEventListener('focusin', event => {
+      const textarea = event.target.closest?.('textarea[data-rpcm-editor="true"]');
+      if (!textarea || !isMobileManagerLayout()) return;
+      const slotCard = textarea.closest('.rpcm-slot');
+      const section = textarea.closest('.rpcm-section,.rpcm-tools');
+      if (!slotCard || !section) return;
+      activateMobileSection(section.id, false);
+      overlay.querySelectorAll('.rpcm-mobile-active-slot,.rpcm-mobile-active-edit-section,.rpcm-mobile-active-editor,.rpcm-mobile-active-guide').forEach(node => node.classList.remove('rpcm-mobile-active-slot','rpcm-mobile-active-edit-section','rpcm-mobile-active-editor','rpcm-mobile-active-guide'));
+      slotCard.classList.add('rpcm-mobile-active-slot');
+      section.classList.add('rpcm-mobile-active-edit-section');
+      textarea.classList.add('rpcm-mobile-active-editor');
+      textarea.closest('.rpcm-guide-panel')?.classList.add('rpcm-mobile-active-guide');
+      overlay.classList.add('rpcm-mobile-editing');
+      const title = slotCard.querySelector('.rpcm-slot-name')?.textContent?.trim() || '내용';
+      const titleEl = overlay.querySelector('#rpcm-mobile-edit-title');
+      const countEl = overlay.querySelector('#rpcm-mobile-edit-count');
+      if (titleEl) titleEl.textContent = `${title}${textarea.classList.contains('rpcm-guide-textarea') ? ' 지침' : ''} 편집`;
+      if (countEl) countEl.textContent = `${formatCount(textarea.value.length)}자`;
+      updateViewportMetrics();
+      requestAnimationFrame(() => { textarea.scrollIntoView({ block:'nearest' }); });
+    });
+    overlay.addEventListener('focusout', () => {
+      setTimeout(() => {
+        const active = document.activeElement;
+        if (!overlay.classList.contains('rpcm-mobile-editing') || active?.matches?.('textarea[data-rpcm-editor="true"]')) return;
+        exitMobileEditing();
+      }, 80);
+    });
+    const mobileEditDone = overlay.querySelector('#rpcm-mobile-edit-done');
+    if (mobileEditDone) mobileEditDone.onclick = () => {
+      const active = document.activeElement;
+      if (active instanceof HTMLElement) active.blur();
+      exitMobileEditing();
+    };
+
     const densitySelect = overlay.querySelector('#rpcm-density');
     if (densitySelect) densitySelect.onchange = () => {
       const prefs = loadUiPrefs();
@@ -6773,6 +7129,12 @@ NO → 압축한다.
       const card = [...overlay.querySelectorAll('.rpcm-slot[data-slot-id]')].find(node => String(node.dataset.slotId) === match.slotId);
       const textarea = card?.querySelector('.rpcm-textarea');
       if (!card || !textarea) return;
+      const targetSection = card.closest('.rpcm-section,.rpcm-tools');
+      if (isMobileManagerLayout() && targetSection?.id) {
+        activateMobileSection(targetSection.id, false);
+        quickbar?.classList.remove('is-search-open');
+        if (mobileSearchToggle) { mobileSearchToggle.textContent = '⌕'; mobileSearchToggle.setAttribute('aria-label', '통합 검색'); }
+      }
       card.open = true;
       card.classList.add('is-search-hit');
       card.scrollIntoView({ behavior:'smooth', block:'center' });
@@ -7281,7 +7643,11 @@ NO → 압축한다.
     }
     // 정상적으로 연결된 버튼은 다시 찾지 않습니다. React가 실제로 버튼을 제거했거나
     // 첫 렌더에서 아직 헤더가 없었던 경우에만 위치 탐색을 다시 수행합니다.
-    if (state.currentChatId && !state.fab?.isConnected) ensureManagerButton();
+    if (state.currentChatId && isMobileManagerLayout()) {
+      updateMobileSettingsMenuEntry();
+    } else if (state.currentChatId && !state.fab?.isConnected) {
+      ensureManagerButton();
+    }
   }
 
   function scheduleRouteTick(delay = (document.hidden ? APP.backgroundRoutePollMs : APP.routePollMs)) {
@@ -7339,6 +7705,7 @@ NO → 압축한다.
       addStyles();
       bindViewportMetrics();
       bindPerformanceVisibility();
+      bindMobileSettingsMenuEntry();
       state.db = await openDb();
       createFab();
       startRenderedContextObserver();
