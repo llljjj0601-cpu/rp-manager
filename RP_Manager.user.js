@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🪽위시 RP Manager
 // @namespace    local.rp.context.manager
-// @version      0.10.4
+// @version      0.10.5
 // @description  장기 RP용 현재상태·날짜로그·캐릭터 설정·OOC를 관리하고 필요한 컨텍스트를 자동 주입합니다.
 // @author       User
 // @license      All Rights Reserved
@@ -33,13 +33,13 @@
   // 버전별 키를 쓰면 구버전과 신버전이 동시에 설치됐을 때 둘 다 실행될 수 있습니다.
   // 모든 버전이 공유하는 고정 키로 중복 실행을 막습니다.
   if (window.__WISH_RP_MANAGER_LOADED__) return;
-  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.10.4', loadedAt: Date.now() };
+  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.10.5', loadedAt: Date.now() };
   // 같은 페이지에 남아 있는 v0.8.10 복사본이 뒤늦게 시작되는 경우도 차단합니다.
   window.__RP_MANAGER_0810_LOADED__ = true;
 
   const APP = {
     name: '🪽위시 RP Manager',
-    version: '0.10.4',
+    version: '0.10.5',
     dbName: 'RPContextManagerDB',
     dbVersion: 2,
     storeName: 'rooms',
@@ -1522,6 +1522,11 @@ NO → 압축한다.
     rerollClickBound: false,
     rerollPreparing: false,
     rerollBypassElement: null,
+    quickPanel: null,
+    quickTrigger: null,
+    quickApplyTimer: null,
+    quickDesired: new Map(),
+    quickApplying: false,
   };
 
   function upgradeCurrentStateGuideV3(value) {
@@ -3896,6 +3901,39 @@ NO → 압축한다.
     });
   }
 
+  function pendingItemIdentity(item) {
+    if (!item) return '';
+    const isLog = item.sourceSlotId === 'logSummary' || item.group === 'log-auto' || item.slotId === 'logSummary';
+    const source = String(item.sourceKey || item.slotId || item.title || '').trim();
+    return source ? `${isLog ? 'log' : 'slot'}:${source.replace(/^auto-log:/, '')}` : '';
+  }
+
+  function quickRemovedPendingItems(pending) {
+    return Array.isArray(pending?.quickRemovedItems) ? pending.quickRemovedItems : [];
+  }
+
+  function applyQuickItemSuppression(pending) {
+    if (!pending) return 0;
+    const removedKeys = new Set(quickRemovedPendingItems(pending).map(pendingItemIdentity).filter(Boolean));
+    if (!removedKeys.size) return 0;
+    const before = Array.isArray(pending.items) ? pending.items.length : 0;
+    pending.items = (Array.isArray(pending.items) ? pending.items : []).filter(item => !removedKeys.has(pendingItemIdentity(item)));
+    return before - pending.items.length;
+  }
+
+  function quickManageItems(pending) {
+    const byKey = new Map();
+    for (const item of activePendingItems(pending)) {
+      const key = pendingItemIdentity(item);
+      if (key) byKey.set(key, { item, active:true });
+    }
+    for (const item of quickRemovedPendingItems(pending)) {
+      const key = pendingItemIdentity(item);
+      if (key && !byKey.has(key)) byKey.set(key, { item, active:false });
+    }
+    return [...byKey.entries()].map(([key, value]) => ({ key, ...value }));
+  }
+
   function buildContextBlockFromItems(items) {
     const active = (items || []).filter(i => String(i.content || '').trim());
     if (!active.length) return '';
@@ -5155,6 +5193,9 @@ NO → 압축한다.
     const live = await carrierOriginalFromServer(room, p);
     if (live.currentText) p.originalText = live.original;
     ensureDirectReleasePendingItems(room, p);
+    // 간편 주입 관리에서 끈 항목은 자동 최근로그 갱신이나 자동 고정 복구가 다시
+    // 추가하더라도 현재 주입 세션이 끝날 때까지 제외 상태를 유지합니다.
+    applyQuickItemSuppression(p);
     let active = activePendingItems(p);
     const nonLogs = active.filter(i => i.sourceSlotId !== 'logSummary' && i.group !== 'log-auto' && i.slotId !== 'logSummary');
     const logs = active.filter(i => i.sourceSlotId === 'logSummary' || i.group === 'log-auto' || i.slotId === 'logSummary');
@@ -5266,12 +5307,18 @@ NO → 압축한다.
     }
     const previousEnabled = !!slot.enabled;
     const previousItems = clonePendingItems(room.pending.items);
+    const previousQuickRemoved = clonePendingItems(room.pending.quickRemovedItems);
     slot.enabled = enabled;
     try {
       const items = Array.isArray(room.pending.items) ? room.pending.items : (room.pending.items = []);
       if (slot.id === 'logSummary') {
+        if (enabled) room.pending.quickRemovedItems = quickRemovedPendingItems(room.pending).filter(item => !(item.sourceSlotId === 'logSummary' || item.group === 'log-auto' || item.slotId === 'logSummary'));
         replacePendingLogItems(room);
       } else {
+        if (enabled) {
+          const key = pendingItemIdentity({ slotId:slot.id, group:slot.group });
+          room.pending.quickRemovedItems = quickRemovedPendingItems(room.pending).filter(item => pendingItemIdentity(item) !== key);
+        }
         const idx = items.findIndex(i => i.slotId === slot.id);
         if (enabled) {
           const nextItem = slotToPendingItem(slot);
@@ -5285,10 +5332,202 @@ NO → 압축한다.
       notify(enabled ? `‘${slot.title}’ 현재 주입에 추가 · ${retentionLabel(slot.retentionTurns)} 새로 시작` : `‘${slot.title}’ 현재 주입에서 제거`, 'success', 4200);
     } catch (e) {
       slot.enabled = previousEnabled;
-      if (room.pending) room.pending.items = previousItems;
+      if (room.pending) {
+        room.pending.items = previousItems;
+        room.pending.quickRemovedItems = previousQuickRemoved;
+      }
       await saveRoom(room);
       throw e;
     }
+  }
+
+  function closeQuickInjectionPanel({ cancelQueued = false } = {}) {
+    if (cancelQueued) {
+      clearTimeout(state.quickApplyTimer);
+      state.quickApplyTimer = null;
+      state.quickDesired.clear();
+    }
+    state.quickPanel?.remove();
+    state.quickPanel = null;
+    updateFab();
+  }
+
+  async function applyQueuedQuickChanges() {
+    state.quickApplyTimer = null;
+    if (state.quickApplying || !state.quickDesired.size) return;
+    const room = state.currentRoom;
+    const pending = room?.pending;
+    if (!room || !pending) {
+      state.quickDesired.clear();
+      closeQuickInjectionPanel({ cancelQueued:true });
+      return;
+    }
+
+    const desired = new Map(state.quickDesired);
+    state.quickDesired.clear();
+    const previousItems = clonePendingItems(pending.items);
+    const previousRemoved = clonePendingItems(pending.quickRemovedItems);
+    const known = new Map();
+    for (const item of [...previousItems, ...previousRemoved]) {
+      const key = pendingItemIdentity(item);
+      if (key && !known.has(key)) known.set(key, item);
+    }
+
+    state.quickApplying = true;
+    renderQuickInjectionPanel();
+    let changed = 0;
+    try {
+      for (const [key, enabled] of desired) {
+        const source = known.get(key);
+        if (!source) continue;
+        const isActive = (pending.items || []).some(item => pendingItemIdentity(item) === key);
+        if (enabled && !isActive) {
+          pending.quickRemovedItems = quickRemovedPendingItems(pending).filter(item => pendingItemIdentity(item) !== key);
+          pending.items = Array.isArray(pending.items) ? pending.items : [];
+          pending.items.push({ ...source });
+          changed++;
+        } else if (!enabled && isActive) {
+          pending.quickRemovedItems = quickRemovedPendingItems(pending).filter(item => pendingItemIdentity(item) !== key);
+          pending.quickRemovedItems.push({ ...source });
+          pending.items = (pending.items || []).filter(item => pendingItemIdentity(item) !== key);
+          changed++;
+        }
+      }
+      if (!changed) return;
+      const result = await syncPendingCarrier(room, 'quick-panel');
+      if (result.cleared || !room.pending) {
+        closeQuickInjectionPanel({ cancelQueued:true });
+        return;
+      }
+      notify(`현재 주입 항목 ${result.active}개로 변경했습니다.`, 'success', 3000);
+    } catch (e) {
+      if (room.pending) {
+        room.pending.items = previousItems;
+        room.pending.quickRemovedItems = previousRemoved;
+        savePendingBackup(room.chatId, room.pending);
+        await saveRoom(room).catch(() => {});
+      }
+      notify(`간편 주입 변경 실패: ${e.message}`, 'error', 6500);
+    } finally {
+      state.quickApplying = false;
+      renderQuickInjectionPanel();
+      updateFab();
+      if (state.quickDesired.size) {
+        clearTimeout(state.quickApplyTimer);
+        state.quickApplyTimer = setTimeout(() => applyQueuedQuickChanges(), 450);
+      }
+    }
+  }
+
+  function queueQuickItemToggle(key, enabled) {
+    if (!key) return;
+    state.quickDesired.set(String(key), !!enabled);
+    clearTimeout(state.quickApplyTimer);
+    state.quickApplyTimer = setTimeout(() => applyQueuedQuickChanges(), 450);
+  }
+
+  function renderQuickInjectionPanel() {
+    const backdrop = state.quickPanel;
+    if (!backdrop?.isConnected) return;
+    const room = state.currentRoom;
+    const pending = room?.pending;
+    if (!pending) {
+      closeQuickInjectionPanel({ cancelQueued:true });
+      return;
+    }
+    const rows = quickManageItems(pending);
+    const active = rows.filter(row => row.active);
+    const removed = rows.filter(row => !row.active);
+    const stats = statsForItems(active.map(row => row.item));
+    const rowHtml = (row, index) => {
+      const item = row.item;
+      const category = itemCategory(item);
+      const queued = state.quickDesired.has(row.key) ? state.quickDesired.get(row.key) : row.active;
+      return `<label class="rpcm-quick-row${queued ? '' : ' is-off'}">
+        <input type="checkbox" data-rpcm-quick-index="${index}" ${queued ? 'checked' : ''} ${state.quickApplying ? 'disabled' : ''}>
+        <span class="rpcm-quick-badge tone-${categoryTone(category)}">${esc(category)}</span>
+        <span class="rpcm-quick-copy"><strong>${esc(item.title || category)}</strong><small>${formatCount(String(item.content || '').length)}자 · ${esc(remainingLabelForItem(item))}</small></span>
+      </label>`;
+    };
+    const ordered = [...active, ...removed];
+    backdrop.innerHTML = `<div class="rpcm-quick-shade"></div><aside class="rpcm-quick-panel" role="dialog" aria-modal="true" aria-label="현재 주입 관리">
+      <div class="rpcm-quick-head"><div><strong>현재 주입 관리</strong><span>${active.length}개 · ${formatCount(stats.block)} / 45,000자</span></div><button type="button" class="rpcm-quick-close" aria-label="닫기">✕</button></div>
+      <div class="rpcm-quick-note">체크를 끄면 현재 주입에서만 빠집니다. 저장된 원문과 다음 주입의 기본 선택은 바뀌지 않습니다.</div>
+      <div class="rpcm-quick-list">
+        ${active.length ? `<div class="rpcm-quick-group-title">주입 중 ${active.length}</div>${active.map((row, index) => rowHtml(row, index)).join('')}` : '<div class="rpcm-quick-empty">현재 주입 중인 항목이 없습니다.</div>'}
+        ${removed.length ? `<div class="rpcm-quick-group-title is-muted">이번 주입에서 끈 항목 ${removed.length}</div>${removed.map((row, index) => rowHtml(row, active.length + index)).join('')}` : ''}
+      </div>
+      <div class="rpcm-quick-foot"><span>${state.quickApplying ? '서버에 반영 중…' : state.quickDesired.size ? '변경 사항을 곧 반영합니다…' : '여러 항목을 연달아 바꾸면 한 번에 반영됩니다.'}</span><button type="button" class="rpcm-btn secondary rpcm-quick-open-full">항목 추가 · 전체 설정</button><button type="button" class="rpcm-btn primary rpcm-quick-done">완료</button></div>
+    </aside>`;
+
+    backdrop.querySelector('.rpcm-quick-shade')?.addEventListener('click', () => closeQuickInjectionPanel());
+    backdrop.querySelector('.rpcm-quick-close')?.addEventListener('click', () => closeQuickInjectionPanel());
+    backdrop.querySelector('.rpcm-quick-done')?.addEventListener('click', () => closeQuickInjectionPanel());
+    backdrop.querySelector('.rpcm-quick-open-full')?.addEventListener('click', async () => {
+      if (state.quickDesired.size) {
+        clearTimeout(state.quickApplyTimer);
+        state.quickApplyTimer = null;
+        await applyQueuedQuickChanges();
+      }
+      closeQuickInjectionPanel();
+      await openModal();
+    });
+    backdrop.querySelectorAll('[data-rpcm-quick-index]').forEach(input => {
+      input.addEventListener('change', () => {
+        const row = ordered[Number(input.dataset.rpcmQuickIndex)];
+        if (!row) return;
+        input.closest('.rpcm-quick-row')?.classList.toggle('is-off', !input.checked);
+        queueQuickItemToggle(row.key, input.checked);
+        const note = backdrop.querySelector('.rpcm-quick-foot>span');
+        if (note) note.textContent = '변경 사항을 곧 반영합니다…';
+      });
+    });
+  }
+
+  async function openQuickInjectionPanel() {
+    const chatId = getChatIdFromPath();
+    if (!chatId) {
+      notify('채팅방 화면에서만 사용할 수 있습니다.', 'warn');
+      return;
+    }
+    await ensureCurrentRoom(chatId, true);
+    if (!state.currentRoom?.pending) {
+      await openModal();
+      return;
+    }
+    if (state.modal) closeModal();
+    closeQuickInjectionPanel();
+    const backdrop = document.createElement('div');
+    backdrop.id = 'rpcm-quick-backdrop';
+    document.body.appendChild(backdrop);
+    state.quickPanel = backdrop;
+    backdrop.addEventListener('keydown', event => {
+      if (event.key === 'Escape') closeQuickInjectionPanel();
+    });
+    renderQuickInjectionPanel();
+    backdrop.querySelector('.rpcm-quick-close')?.focus();
+    updateFab();
+  }
+
+  function updateQuickInjectionTrigger() {
+    const shouldShow = !!state.currentChatId && !!state.currentRoom?.pending && !isMobileManagerLayout() && !state.modal && !state.quickPanel;
+    let trigger = state.quickTrigger;
+    if (!shouldShow) {
+      if (trigger) trigger.hidden = true;
+      return;
+    }
+    if (!trigger?.isConnected) {
+      trigger = document.createElement('button');
+      trigger.id = 'rpcm-quick-trigger';
+      trigger.type = 'button';
+      trigger.addEventListener('click', () => openQuickInjectionPanel().catch(error => notify(error.message, 'error')));
+      document.body.appendChild(trigger);
+      state.quickTrigger = trigger;
+    }
+    const activeCount = activePendingItems(state.currentRoom.pending).length;
+    trigger.innerHTML = `<span aria-hidden="true">✓</span><b>주입 관리</b><em>${activeCount}</em>`;
+    trigger.title = `현재 주입 항목 ${activeCount}개 빠르게 관리`;
+    trigger.hidden = false;
   }
 
   function newMessagesSinceLastScan(room, recentMessages) {
@@ -5611,6 +5850,7 @@ NO → 압축한다.
     refreshAutoRecentLogsToPending(room);
     const persistenceRepair = ensureDirectReleasePendingItems(room, p);
     if (persistenceRepair.added) console.info('[RP매니저] 직접 해제 항목 유지 복구:', persistenceRepair.added);
+    applyQuickItemSuppression(p);
     let active = activePendingItems(p);
     if (!active.length) {
       room.pending = null; clearPendingBackup(room.chatId); await saveRoom(room);
@@ -6107,6 +6347,8 @@ NO → 압축한다.
       .rpcm-detached-foot{display:flex;align-items:center;gap:8px;padding:10px 12px;border-top:1px solid #303030;background:#1d1d1d}.rpcm-detached-note{flex:1;color:#777;font-size:10px}
       @media(max-width:900px){.rpcm-detached-editor{width:100vw;height:100vh;height:100dvh;height:var(--rpcm-vvh,100vh);min-height:0;max-width:none;max-height:none;border-radius:0}.rpcm-detached-layout{grid-template-columns:1fr}.rpcm-detached-nav{display:flex;border-right:0;border-bottom:1px solid #303030;overflow-x:auto;overflow-y:hidden;padding:6px;-webkit-overflow-scrolling:touch}.rpcm-detached-nav-item{width:auto;min-width:130px;grid-template-columns:28px minmax(80px,1fr)}#rpcm-detached-backdrop{inset:auto 0 auto 0;top:var(--rpcm-vv-top,0px);height:var(--rpcm-vvh,100vh);padding:0}.rpcm-detached-main{-webkit-overflow-scrolling:touch}.rpcm-detached-foot{padding-bottom:calc(10px + env(safe-area-inset-bottom,0px))}.rpcm-detached-note{display:none}}
       .rpcm-pending{display:flex;gap:10px;align-items:center;background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.35);border-radius:11px;padding:11px 12px;margin-bottom:12px;color:#fbbf24;font-size:12px}.rpcm-pending strong{color:#fff}.rpcm-pending .rpcm-spacer{flex:1}
+      #rpcm-quick-trigger{position:fixed;z-index:2147483644;right:0;top:46%;display:flex;align-items:center;gap:6px;min-height:42px;padding:0 10px;border:1px solid #d85d93;border-right:0;border-radius:11px 0 0 11px;background:rgba(38,25,32,.96);color:#f4b5d2;box-shadow:0 8px 28px rgba(0,0,0,.42);font:700 11px/1 -apple-system,BlinkMacSystemFont,"Pretendard",sans-serif;cursor:pointer;backdrop-filter:blur(10px)}#rpcm-quick-trigger:hover{background:#3b2430;color:#fff}#rpcm-quick-trigger[hidden]{display:none!important}#rpcm-quick-trigger>span{display:inline-flex;align-items:center;justify-content:center;width:17px;height:17px;border-radius:50%;background:#22c55e;color:#0b2a16;font-size:11px}#rpcm-quick-trigger>b{font:inherit}#rpcm-quick-trigger>em{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:20px;padding:0 5px;border-radius:999px;background:#df6298;color:#fff;font-style:normal;font-size:10px}
+      #rpcm-quick-backdrop{position:fixed;inset:0;z-index:2147483646;font-family:-apple-system,BlinkMacSystemFont,"Pretendard",sans-serif;color:#eee}#rpcm-quick-backdrop .rpcm-quick-shade{position:absolute;inset:0;background:rgba(0,0,0,.48)}.rpcm-quick-panel{position:absolute;right:0;top:0;bottom:0;width:min(390px,94vw);display:flex;flex-direction:column;background:#181818;border-left:1px solid #4a3540;box-shadow:-24px 0 70px rgba(0,0,0,.58);overflow:hidden}.rpcm-quick-head{display:flex;align-items:center;gap:12px;padding:16px 15px;border-bottom:1px solid #303030;background:#1e1b1d}.rpcm-quick-head>div{display:flex;flex-direction:column;gap:4px;min-width:0;flex:1}.rpcm-quick-head strong{font-size:16px}.rpcm-quick-head span{font-size:11px;color:#999}.rpcm-quick-close{display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px;border:1px solid #3b3b3b;border-radius:9px;background:#282828;color:#ddd;font-size:17px;cursor:pointer}.rpcm-quick-note{padding:10px 15px;border-bottom:1px solid #2c2c2c;background:#1b1b1b;color:#9a8b92;font-size:11px;line-height:1.55}.rpcm-quick-list{flex:1;min-height:0;overflow:auto;padding:10px 12px 18px;overscroll-behavior:contain}.rpcm-quick-group-title{padding:8px 4px 7px;color:#dba0bd;font-size:10px;font-weight:800}.rpcm-quick-group-title.is-muted{margin-top:8px;color:#777;border-top:1px solid #2d2d2d;padding-top:14px}.rpcm-quick-row{display:grid;grid-template-columns:22px auto minmax(0,1fr);gap:8px;align-items:center;min-height:54px;padding:7px 9px;margin-bottom:6px;border:1px solid #363636;border-radius:10px;background:#202020;cursor:pointer;transition:opacity .15s,border-color .15s,background .15s}.rpcm-quick-row:hover{border-color:#68475a;background:#272124}.rpcm-quick-row.is-off{opacity:.55;background:#191919}.rpcm-quick-row input{width:20px;height:20px;margin:0;accent-color:#df6298}.rpcm-quick-badge{display:inline-flex;align-items:center;padding:3px 6px;border:1px solid color-mix(in srgb,var(--rpcm-tone) 62%,#333);border-radius:999px;color:var(--rpcm-tone);font-size:9px;font-weight:800;white-space:nowrap}.rpcm-quick-copy{display:flex;flex-direction:column;gap:4px;min-width:0}.rpcm-quick-copy strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:#eee}.rpcm-quick-copy small{font-size:9px;color:#888}.rpcm-quick-empty{padding:28px 12px;color:#777;text-align:center;font-size:12px}.rpcm-quick-foot{display:flex;align-items:center;gap:7px;padding:10px 12px calc(10px + env(safe-area-inset-bottom,0px));border-top:1px solid #303030;background:#1d1d1d}.rpcm-quick-foot>span{flex:1;min-width:0;color:#777;font-size:9px;line-height:1.4}.rpcm-quick-foot .rpcm-btn{min-height:40px;padding:8px 10px;font-size:11px}
       .rpcm-footer{position:absolute;bottom:0;left:0;right:0;display:flex;gap:9px;align-items:center;padding:12px 18px;background:rgba(24,24,24,.96);border-top:1px solid #333;backdrop-filter:blur(8px)}
       #rpcm-modal-wrap{position:fixed;top:64px;right:16px;display:flex;flex-direction:column;max-height:calc(100vh - 140px);width:min(820px,calc(100vw - 32px));pointer-events:auto}
       .rpcm-btn{border:none;border-radius:9px;padding:10px 14px;font-weight:750;font-size:13px;cursor:pointer;white-space:nowrap}.rpcm-btn.primary{background:#df6298;color:#fff}.rpcm-btn.primary:hover{background:#d6538e}.rpcm-btn.secondary{background:#2a2a2a;color:#ddd;border:1px solid #3b3b3b}.rpcm-btn.secondary:hover{background:#353535}.rpcm-btn.warn{background:#92400e;color:#fff}.rpcm-btn.danger{background:#7f1d1d;color:#fff}.rpcm-btn:disabled{opacity:.4;cursor:not-allowed}.rpcm-footnote{font-size:11px;color:#777;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -6153,6 +6395,7 @@ NO → 압축한다.
       html.rpcm-mobile-layout .rpcm-density-select{display:none}
       html.rpcm-mobile-layout .rpcm-summary{padding:10px 12px;margin-bottom:10px}
       html.rpcm-mobile-layout .rpcm-pending{display:grid;grid-template-columns:1fr 1fr;gap:7px;padding:10px;font-size:12px}html.rpcm-mobile-layout .rpcm-pending>div:first-child{grid-column:1/-1}html.rpcm-mobile-layout .rpcm-pending .rpcm-spacer{display:none}html.rpcm-mobile-layout .rpcm-pending .rpcm-btn{min-height:42px;padding:8px;font-size:12px}html.rpcm-mobile-layout .rpcm-pending .rpcm-btn:last-child{grid-column:1/-1}
+      html.rpcm-mobile-layout #rpcm-quick-trigger{display:none!important}html.rpcm-mobile-layout .rpcm-quick-panel{top:auto;left:0;right:0;bottom:0;width:100%;height:min(82vh,var(--rpcm-vvh,82vh));border-left:0;border-top:1px solid #59404d;border-radius:18px 18px 0 0;box-shadow:0 -24px 70px rgba(0,0,0,.64)}html.rpcm-mobile-layout .rpcm-quick-head{padding:12px 13px}html.rpcm-mobile-layout .rpcm-quick-note{padding:9px 13px;font-size:12px}html.rpcm-mobile-layout .rpcm-quick-list{padding:8px 10px 18px;-webkit-overflow-scrolling:touch}html.rpcm-mobile-layout .rpcm-quick-row{grid-template-columns:24px auto minmax(0,1fr);min-height:58px;padding:8px 9px}html.rpcm-mobile-layout .rpcm-quick-row input{width:22px;height:22px}html.rpcm-mobile-layout .rpcm-quick-copy strong{font-size:13px}html.rpcm-mobile-layout .rpcm-quick-copy small{font-size:11px}html.rpcm-mobile-layout .rpcm-quick-foot{flex-wrap:wrap}html.rpcm-mobile-layout .rpcm-quick-foot>span{flex-basis:100%;font-size:10px}html.rpcm-mobile-layout .rpcm-quick-foot .rpcm-btn{flex:1;min-height:44px;font-size:12px}
       html.rpcm-mobile-layout .rpcm-summary-head{display:flex;align-items:center;gap:8px}html.rpcm-mobile-layout .rpcm-summary-main strong{font-size:16px}
       html.rpcm-mobile-layout .rpcm-summary-side{margin:0 0 0 auto;flex-wrap:nowrap}html.rpcm-mobile-layout .rpcm-limit{display:none}
       html.rpcm-mobile-layout .rpcm-mobile-summary-toggle{display:inline-flex;align-items:center;justify-content:center;width:40px;height:40px;border:1px solid #3b3b3b;border-radius:8px;background:#242424;color:#aaa;font-size:16px}
@@ -6650,7 +6893,8 @@ NO → 압축한다.
     const open = event => {
       event.preventDefault();
       event.stopPropagation();
-      openModal().catch(error => notify(error.message, 'error'));
+      const action = state.currentRoom?.pending ? openQuickInjectionPanel : openModal;
+      action().catch(error => notify(error.message, 'error'));
     };
     const button = row.querySelector('[data-rpcm-open-manager]');
     button?.addEventListener('click', open);
@@ -6667,7 +6911,7 @@ NO → 압축한다.
     const armed = !!state.currentRoom?.pending;
     row.classList.toggle('rpcm-menu-armed', armed);
     const button = row.querySelector('[data-rpcm-open-manager]');
-    if (button) button.setAttribute('aria-label', armed ? 'RP Manager · 자동 유지 중' : 'RP Manager');
+    if (button) button.setAttribute('aria-label', armed ? 'RP Manager · 현재 주입 빠른 관리' : 'RP Manager');
   }
 
   function removeMobileSettingsMenuEntry() {
@@ -6730,7 +6974,10 @@ NO → 압축한다.
   }
 
   function updateFab() {
-    if (!state.fab) return;
+    if (!state.fab) {
+      updateQuickInjectionTrigger();
+      return;
+    }
     const visible = !!state.currentChatId && !state.modal;
     state.fab.hidden = !visible;
     const armed = !!state.currentRoom?.pending;
@@ -6741,6 +6988,7 @@ NO → 압축한다.
       setImportantStyle(managerMobileHost, 'visibility', visible ? 'visible' : 'hidden');
     }
     updateMobileSettingsMenuEntry();
+    updateQuickInjectionTrigger();
   }
 
   function ensureManagerButton() {
@@ -6824,6 +7072,7 @@ NO → 압축한다.
 
   function renderModalIfOpen() {
     if (state.modal) renderModal();
+    if (state.quickPanel) renderQuickInjectionPanel();
     updateFab();
   }
 
@@ -8059,6 +8308,7 @@ NO → 압축한다.
     const roomKey = apiChatId ? getRoomScopeKey(apiChatId, href) : null;
     if (href !== state.lastUrl || roomKey !== state.currentChatId) {
       state.lastUrl = href;
+      closeQuickInjectionPanel({ cancelQueued:true });
       await ensureCurrentRoom(apiChatId, true);
       await cleanOrphanMarkerInCurrentRoom();
       if (state.modal) closeModal();
