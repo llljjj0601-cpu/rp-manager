@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🪽위시 RP Manager
 // @namespace    local.rp.context.manager
-// @version      0.10.1
+// @version      0.10.3
 // @description  장기 RP용 현재상태·날짜로그·캐릭터 설정·OOC를 관리하고 필요한 컨텍스트를 자동 주입합니다.
 // @author       User
 // @license      All Rights Reserved
@@ -33,13 +33,13 @@
   // 버전별 키를 쓰면 구버전과 신버전이 동시에 설치됐을 때 둘 다 실행될 수 있습니다.
   // 모든 버전이 공유하는 고정 키로 중복 실행을 막습니다.
   if (window.__WISH_RP_MANAGER_LOADED__) return;
-  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.10.1', loadedAt: Date.now() };
+  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.10.3', loadedAt: Date.now() };
   // 같은 페이지에 남아 있는 v0.8.10 복사본이 뒤늦게 시작되는 경우도 차단합니다.
   window.__RP_MANAGER_0810_LOADED__ = true;
 
   const APP = {
     name: '🪽위시 RP Manager',
-    version: '0.10.1',
+    version: '0.10.3',
     dbName: 'RPContextManagerDB',
     dbVersion: 2,
     storeName: 'rooms',
@@ -52,6 +52,7 @@
     idlePollMs: 30000,
     backgroundPollMs: 60000,
     carrierVerifyMs: 60000,
+    rerollRecoveryMs: 180000,
     routePollMs: 2000,
     backgroundRoutePollMs: 15000,
     defaultRetentionTurns: 5,
@@ -1005,16 +1006,29 @@ A↔B 공식결별.
 8. 날짜별 로그요약 분량
 ━━━━━━━━━━━━━━━━━━━━
 
-날짜별 로그요약은 사건의 밀도와 중요도에 따라 분량을 가변적으로 조절한다.
+날짜별 로그요약은 사건의 밀도와 중요도에 따라 분량을 가변적으로 조절하되,
+각 날짜 블록의 본문은 공백 포함 최대 2,000자 이내로 작성한다.
 
 권장 기준:
 
 - 사건이 적은 날: 600~900자
 - 일반적인 날: 1,000~1,500자
 - 중요 사건이 몰린 날: 1,500~1,800자
-- 아주 복잡한 날: 약 2,000자를 권장 상한으로 삼는다.
+- 아주 복잡한 날: 1,800~2,000자
 
-단, 핵심 사건의 인과·관계 변화·정보격차가 손실되는 경우에는 2,000자에 억지로 맞추기 위해 중요정보를 삭제하지 않는다.
+2,000자는 권장치가 아니라 날짜 블록 하나의 최대 한도다.
+핵심 사건이 많아도 2,000자를 넘기지 않는다.
+
+한도를 넘으면 다음 순서로 다시 압축한다.
+
+1. 분위기·배경·표정·동작의 반복 묘사 삭제
+2. 대사의 전문을 핵심 발언과 결과 중심으로 축약
+3. 같은 관계 변화나 감정 반응을 설명하는 중복 문장 통합
+4. 후속 RP에 영향을 주지 않는 이동·일상 대화·반복 행동 삭제
+5. 핵심 사건의 원인→선택→결과→정보격차만 짧은 문장으로 보존
+
+같은 날짜를 여러 블록으로 쪼개 2,000자 한도를 피하지 않는다.
+출력 전에 각 날짜 블록의 글자수를 확인하고, 2,000자를 넘으면 한도 안으로 다시 작성한 뒤 출력한다.
 
 글자수를 맞추기 위해 의미 없는 묘사를 추가하지 않는다.
 사건이 적으면 짧게 끝내고, 중요한 사건이 많으면 필요한 만큼 충분히 기록한다.
@@ -1037,7 +1051,7 @@ A↔B 공식결별.
 “이 날짜에 핵심 사건이 몇 개나 있으며,
 그 사건들의 원인·선택·결과·정보격차를 복원하려면 어느 정도 분량이 필요한가?”
 
-분량보다 연속성과 검색 가능성을 우선한다.
+2,000자 한도 안에서 연속성과 검색 가능성을 우선한다.
 
 ━━━━━━━━━━━━━━━━━━━━
 9. 날짜별 로그에서 반드시 보존할 사건 구조
@@ -1460,12 +1474,12 @@ NO → 압축한다.
 
   const GUIDE_STORAGE_KEYS = Object.freeze({
     currentState: 'RPCM_guide_currentState_v4',
-    logSummary: 'RPCM_guide_logSummary_v3',
+    logSummary: 'RPCM_guide_logSummary_v4',
   });
 
   const GUIDE_PREVIOUS_STORAGE_KEYS = Object.freeze({
     currentState: 'RPCM_guide_currentState_v3',
-    logSummary: 'RPCM_guide_logSummary_v2',
+    logSummary: ['RPCM_guide_logSummary_v3', 'RPCM_guide_logSummary_v2'],
   });
 
   const GUIDE_COPY_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="2"></rect><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"></path></svg>';
@@ -1505,6 +1519,9 @@ NO → 압축한다.
     mobileMenuBound: false,
     mobileMenuTimer: null,
     mobileSectionId: 'rpcm-section-basic',
+    rerollClickBound: false,
+    rerollPreparing: false,
+    rerollBypassElement: null,
   };
 
   function upgradeCurrentStateGuideV3(value) {
@@ -1573,6 +1590,22 @@ NO → 압축한다.
     return `${text.trim()}\n\n${addition}`.trim();
   }
 
+  function upgradeLogSummaryGuideV4(value) {
+    let text = String(value || '');
+    if (!text || text.includes('각 날짜 블록의 본문은 공백 포함 최대 2,000자 이내로 작성한다')) return text;
+    const divider = '━━━━━━━━━━━━━━━━━━━━';
+    const section8 = `${divider}\n8. 날짜별 로그요약 분량\n${divider}`;
+    const section9 = `${divider}\n9. 날짜별 로그에서 반드시 보존할 사건 구조\n${divider}`;
+    const start = text.indexOf(section8);
+    const end = text.indexOf(`\n\n${section9}`, start + 1);
+    const defaultStart = DEFAULT_GUIDES.logSummary.indexOf(section8);
+    const defaultEnd = DEFAULT_GUIDES.logSummary.indexOf(`\n\n${section9}`, defaultStart + 1);
+    if (start >= 0 && end >= 0 && defaultStart >= 0 && defaultEnd >= 0) {
+      return text.slice(0, start) + DEFAULT_GUIDES.logSummary.slice(defaultStart, defaultEnd) + text.slice(end);
+    }
+    return `${text.trim()}\n\n[날짜별 로그 분량 고정]\n각 날짜 블록의 본문은 공백 포함 최대 2,000자 이내로 작성한다. 같은 날짜를 여러 블록으로 쪼개 한도를 피하지 않는다. 출력 전에 글자수를 확인하고, 초과하면 묘사·대사 전문·중복 문장을 줄여 2,000자 안으로 다시 작성한다.`.trim();
+  }
+
   function migrateStoredGuideText(slotId, value) {
     let text = String(value || '');
     if (slotId === 'currentState') {
@@ -1590,7 +1623,7 @@ NO → 압축한다.
       }
     }
     if (slotId === 'currentState') text = upgradeCurrentStateGuideV4(upgradeCurrentStateGuideV3(text));
-    if (slotId === 'logSummary') text = upgradeLogSummaryGuideV3(text);
+    if (slotId === 'logSummary') text = upgradeLogSummaryGuideV4(upgradeLogSummaryGuideV3(text));
     return text;
   }
 
@@ -1599,10 +1632,15 @@ NO → 압축한다.
     try {
       let saved = localStorage.getItem(GUIDE_STORAGE_KEYS[slotId]);
       if (saved === null && GUIDE_PREVIOUS_STORAGE_KEYS[slotId]) {
-        const previous = localStorage.getItem(GUIDE_PREVIOUS_STORAGE_KEYS[slotId]);
-        if (previous !== null) {
+        const previousKeys = Array.isArray(GUIDE_PREVIOUS_STORAGE_KEYS[slotId])
+          ? GUIDE_PREVIOUS_STORAGE_KEYS[slotId]
+          : [GUIDE_PREVIOUS_STORAGE_KEYS[slotId]];
+        for (const previousKey of previousKeys) {
+          const previous = localStorage.getItem(previousKey);
+          if (previous === null) continue;
           saved = migrateStoredGuideText(slotId, previous);
           localStorage.setItem(GUIDE_STORAGE_KEYS[slotId], saved);
+          break;
         }
       }
       return saved === null ? DEFAULT_GUIDES[slotId] : migrateStoredGuideText(slotId, saved);
@@ -4771,6 +4809,187 @@ NO → 압축한다.
   // Injection lifecycle
   // ---------------------------------------------------------------------------
 
+  function rerollControlFromEventTarget(target) {
+    const control = target?.closest?.('button,[role="button"],[role="menuitem"],a');
+    if (!control || control.closest?.('#rpcm-overlay,#rpcm-toast-wrap,#rpcm-lib-dialog-backdrop,[data-rpcm-settings-entry="1"]')) return null;
+    const label = [
+      control.getAttribute?.('aria-label'),
+      control.getAttribute?.('title'),
+      control.getAttribute?.('data-testid'),
+      control.getAttribute?.('data-action'),
+      control.textContent,
+    ].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim().toLowerCase();
+    if (!label) return null;
+    return /(?:리롤|다시\s*생성|재생성|reroll|regenerate|retry\s*(?:response|answer))/.test(label) ? control : null;
+  }
+
+  function replayRerollControl(control) {
+    if (!control?.isConnected || typeof control.click !== 'function') return;
+    state.rerollBypassElement = control;
+    try { control.click(); }
+    finally {
+      queueMicrotask(() => {
+        if (state.rerollBypassElement === control) state.rerollBypassElement = null;
+      });
+    }
+  }
+
+  function activeItemsFittedForCarrier(room, pending, originalText) {
+    const active = activePendingItems(pending);
+    const nonLogs = active.filter(i => i.sourceSlotId !== 'logSummary' && i.group !== 'log-auto' && i.slotId !== 'logSummary');
+    const logs = active.filter(i => i.sourceSlotId === 'logSummary' || i.group === 'log-auto' || i.slotId === 'logSummary');
+    const fittedLogs = logs.length
+      ? fitLogItemsToBudget(room, nonLogs, logs, contextBudgetForCarrier(room, String(originalText || '').length))
+      : [];
+    return [...nonLogs, ...fittedLogs];
+  }
+
+  async function prepareRerollBridge(room) {
+    const p = room?.pending;
+    if (!p) return { prepared: false, reason: 'inactive' };
+    if (p.reroll) throw new Error('이전 리롤을 처리 중입니다. 잠시 뒤 다시 눌러 주세요.');
+
+    const recent = await fetchRecentMessages(apiChatIdOf(room), 50);
+    const sourceIndex = recent.findIndex(m => String(messageIdOf(m) || '') === String(p.messageId || ''));
+    if (sourceIndex < 0 || messageRoleOf(recent[sourceIndex]) !== 'assistant') {
+      throw new Error('리롤할 최신 AI 답변을 서버에서 찾지 못했습니다.');
+    }
+    const latestAssistant = recent.find(m => messageRoleOf(m) === 'assistant');
+    if (String(messageIdOf(latestAssistant) || '') !== String(p.messageId || '')) {
+      throw new Error('주입 위치가 최신 답변과 달라 먼저 자동 이동을 기다려야 합니다.');
+    }
+
+    const sourceLive = await carrierOriginalFromServer(room, p);
+    if (!sourceLive.currentText) throw new Error('리롤할 AI 답변 원문을 읽지 못했습니다.');
+    const sourceOriginal = sourceLive.original;
+    const maxChars = Number(room.maxChars) || APP.defaultMaxChars;
+    let bridgeMessage = null;
+    let bridgeOriginal = '';
+    let bridgeItems = [];
+    let contextBlock = '';
+    let injectedText = '';
+
+    // 리롤 대상 답변은 생성 문맥에서 빠지므로 그보다 앞에 있는 가장 가까운 AI 답변을
+    // 임시 carrier로 사용합니다. 길이 제한에 걸리면 한 단계 더 오래된 AI 답변을 찾습니다.
+    for (const candidate of recent.slice(sourceIndex + 1)) {
+      if (messageRoleOf(candidate) !== 'assistant' || !messageIdOf(candidate)) continue;
+      const raw = messageTextOf(candidate);
+      if (!raw) continue;
+      const clean = stripOurContextBlock(raw).text || raw;
+      const items = activeItemsFittedForCarrier(room, p, clean);
+      const block = buildContextBlockFromItems(items);
+      const injected = block ? buildInjectedMessage(clean, block) : '';
+      if (!block || injected.length > maxChars) continue;
+      bridgeMessage = candidate;
+      bridgeOriginal = clean;
+      bridgeItems = items;
+      contextBlock = block;
+      injectedText = injected;
+      break;
+    }
+    if (!bridgeMessage) throw new Error('리롤용 컨텍스트를 옮길 이전 AI 답변을 찾지 못했습니다.');
+
+    const bridgeId = messageIdOf(bridgeMessage);
+    const previousPending = { ...p, items: clonePendingItems(p.items) };
+    let bridgeInjected = false;
+    let sourceRestored = false;
+    try {
+      await patchMessage(apiChatIdOf(room), bridgeId, injectedText);
+      const bridgePending = { ...p, messageId: bridgeId, originalText: bridgeOriginal };
+      const verification = await verifyInjectedCarrier(room, bridgePending, injectedText);
+      if (!verification.verified) throw new Error('리롤용 이전 답변에 숨김 컨텍스트를 붙이지 못했습니다.');
+      bridgeInjected = true;
+
+      await restoreCarrierOnly(room, p);
+      sourceRestored = true;
+
+      const nextPending = {
+        ...p,
+        messageId: bridgeId,
+        originalText: bridgeOriginal,
+        baselineAssistantId: String(p.messageId),
+        armedAt: Date.now(),
+        carrierArmedAt: Date.now(),
+        contextBlock,
+        injectedChars: contextBlock.length,
+        originalChars: bridgeOriginal.length,
+        carrierChars: injectedText.length,
+        serverChars: verification.serverChars,
+        verified: true,
+        verifiedAt: Date.now(),
+        reroll: {
+          sourceMessageId: String(p.messageId),
+          sourceOriginalText: sourceOriginal,
+          bridgeMessageId: String(bridgeId),
+          startedAt: Date.now(),
+        },
+      };
+      // 예산에 맞춰 임시 carrier에 들어간 항목만 유지합니다. 유지 횟수 값은 그대로입니다.
+      nextPending.items = clonePendingItems(bridgeItems);
+      room.pending = nextPending;
+      savePendingBackup(room.chatId, nextPending);
+      await saveRoom(room);
+      if (room.chatId === state.currentChatId) state.currentRoom = room;
+      sanitizeRenderedContextSoon();
+      return { prepared: true, bridgeId, sourceId: p.messageId };
+    } catch (error) {
+      // 리롤 실행 전 준비가 실패하면 기존 carrier 상태로 최대한 되돌립니다.
+      if (bridgeInjected) {
+        try { await patchMessage(apiChatIdOf(room), bridgeId, bridgeOriginal); } catch (_) {}
+      }
+      if (sourceRestored) {
+        try {
+          const previousBlock = previousPending.contextBlock || buildContextBlockFromItems(activePendingItems(previousPending));
+          await patchMessage(apiChatIdOf(room), previousPending.messageId, buildInjectedMessage(sourceOriginal, previousBlock));
+        } catch (_) {}
+      }
+      room.pending = previousPending;
+      savePendingBackup(room.chatId, previousPending);
+      try { await saveRoom(room); } catch (_) {}
+      if (room.chatId === state.currentChatId) state.currentRoom = room;
+      throw error;
+    }
+  }
+
+  function bindRerollBridge() {
+    if (state.rerollClickBound) return;
+    state.rerollClickBound = true;
+    document.addEventListener('click', event => {
+      const control = rerollControlFromEventTarget(event.target);
+      if (!control) return;
+      if (state.rerollBypassElement === control) {
+        state.rerollBypassElement = null;
+        return;
+      }
+      const room = state.currentRoom;
+      if (!room?.pending) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      if (state.rerollPreparing || room.pending.reroll) {
+        notify('이전 리롤을 처리 중입니다. 잠시 뒤 다시 눌러 주세요.', 'warn', 4200);
+        return;
+      }
+
+      state.rerollPreparing = true;
+      (async () => {
+        let prepared = false;
+        try {
+          const result = await prepareRerollBridge(room);
+          prepared = !!result.prepared;
+        } catch (e) {
+          console.warn('[RP매니저] reroll bridge preparation failed:', e);
+          notify(`리롤용 컨텍스트 준비 실패 · 기존 방식으로 재생성합니다: ${e.message}`, 'warn', 6500);
+        } finally {
+          state.rerollPreparing = false;
+          replayRerollControl(control);
+          if (prepared) scheduleRecovery(800);
+        }
+      })();
+    }, true);
+  }
+
   async function verifyInjectedCarrier(room, pending, expectedText, attempts = 4) {
     let lastText = '';
     for (let i = 0; i < attempts; i++) {
@@ -5345,9 +5564,11 @@ NO → 압축한다.
     return result;
   }
 
-  async function reanchorAfterResponse(room, latestAssistant) {
+  async function reanchorAfterResponse(room, latestAssistant, options = {}) {
     const p = room.pending;
     if (!p) return;
+    const countTurn = options.countTurn !== false;
+    const rerollMove = options.reason === 'reroll';
     const newId = messageIdOf(latestAssistant);
     if (!newId || newId === p.messageId) return;
     await sleep(APP.reanchorDelayMs);
@@ -5355,11 +5576,14 @@ NO → 압축한다.
     // 이전 carrier 원문 복원
     await restoreCarrierOnly(room, p);
 
-    // AI 응답 1회마다 기존 활성 항목을 독립적으로 1턴 차감합니다.
+    // 일반 새 응답만 유지 횟수를 차감합니다. 리롤은 같은 USER 턴의 대체 답변이므로
+    // 컨텍스트 위치만 옮기고 유지 횟수는 그대로 둡니다.
     const items = Array.isArray(p.items) ? p.items : [];
-    for (const item of items) {
-      const total = Number(item.totalTurns || 0);
-      if (total !== 0 && Number(item.usedTurns || 0) < total) item.usedTurns = Number(item.usedTurns || 0) + 1;
+    if (countTurn) {
+      for (const item of items) {
+        const total = Number(item.totalTurns || 0);
+        if (total !== 0 && Number(item.usedTurns || 0) < total) item.usedTurns = Number(item.usedTurns || 0) + 1;
+      }
     }
 
     // v0.8.9에서 이어진 pending은 최근로그가 저장소 뒤쪽 순서로 고정되어 있을 수 있습니다.
@@ -5368,7 +5592,9 @@ NO → 압축한다.
 
     // 방금 완료된 USER→AI 흐름에서 새 등장 캐릭터/관련 과거로그를 찾아 다음 응답용 컨텍스트에 추가합니다.
     const recentForAuto = await fetchRecentMessages(apiChatIdOf(room), APP.autoScanMessageLimit);
-    const autoResult = await refreshAutomaticMemories(room, recentForAuto);
+    const autoResult = countTurn
+      ? await refreshAutomaticMemories(room, recentForAuto)
+      : { detected: [], added: 0, reset: 0, logAdded: 0, freshCount: 0 };
     if (room.pending) room.pending.items = p.items;
     refreshAutoRecentLogsToPending(room);
     const persistenceRepair = ensureDirectReleasePendingItems(room, p);
@@ -5410,6 +5636,7 @@ NO → 압축한다.
     const nextPending = { ...p, messageId: newId, originalText: newOriginal, baselineAssistantId: newId,
       armedAt: Date.now(), carrierArmedAt: Date.now(), originalChars: newOriginal.length, carrierChars: nextInjected.length,
       verified: false, verifiedAt: null, serverChars: 0, logRecallRevision: APP.logRecallRevision, contextBlock, injectedChars: contextBlock.length, items: p.items };
+    if (rerollMove) delete nextPending.reroll;
 
     await patchMessage(apiChatIdOf(room), newId, nextInjected);
     const verification = await verifyInjectedCarrier(room, nextPending, nextInjected);
@@ -5435,7 +5662,7 @@ NO → 압축한다.
       const autoBits = [];
       if (autoResult?.detected?.length) autoBits.push(`캐릭터 ${autoResult.detected.map(x => x.slot.title).join(', ')}`);
       if (autoResult?.logAdded) autoBits.push(`관련로그 ${autoResult.logAdded}개`);
-      notify(`컨텍스트 자동 이동 완료 ✓ · ${active.length}개 항목 유지 중${autoBits.length ? ` · 자동호출 ${autoBits.join(' / ')}` : ''}`, 'success', autoBits.length ? 4800 : 3200);
+      notify(`${rerollMove ? '리롤 컨텍스트 유지 완료' : '컨텍스트 자동 이동 완료'} ✓ · ${active.length}개 항목 유지 중${autoBits.length ? ` · 자동호출 ${autoBits.join(' / ')}` : ''}`, 'success', autoBits.length ? 4800 : 3200);
       renderModalIfOpen();
     }
   }
@@ -5448,6 +5675,46 @@ NO → 압축한다.
     const latestAssistant = recent.find(m => messageRoleOf(m) === 'assistant');
     const latestAssistantId = messageIdOf(latestAssistant);
     if (!latestAssistantId) return;
+
+    if (p.reroll) {
+      const reroll = p.reroll;
+      const timedOut = Date.now() - Number(reroll.startedAt || 0) >= APP.rerollRecoveryMs;
+      // 재생성 도중에는 대상 답변이 잠시 사라져 임시 carrier가 최신 AI로 보일 수 있습니다.
+      // 이때는 완료된 답변으로 오인해 같은 메시지에 다시 주입하지 않습니다.
+      if (String(latestAssistantId) === String(p.messageId)) {
+        if (timedOut) {
+          delete p.reroll;
+          p.baselineAssistantId = p.messageId;
+          savePendingBackup(room.chatId, p);
+          await saveRoom(room);
+          if (room.chatId === state.currentChatId) state.currentRoom = room;
+          notify('리롤 완료 답변을 확인하지 못해 이전 AI 답변에서 컨텍스트 유지를 계속합니다.', 'warn', 5600);
+        }
+        return;
+      }
+
+      const latestRaw = messageTextOf(latestAssistant);
+      const latestOriginal = stripOurContextBlock(latestRaw).text || latestRaw;
+      const sourceUnchanged = String(latestAssistantId) === String(reroll.sourceMessageId)
+        && normalizeLineBreaks(latestOriginal) === normalizeLineBreaks(String(reroll.sourceOriginalText || ''));
+      if (sourceUnchanged && !timedOut) return;
+
+      // 스트리밍 중간 내용을 완료 답변으로 잡지 않도록 같은 서버 원문이 잠시 유지되는지 한 번 확인합니다.
+      const signature = `${String(latestAssistantId)}:${latestOriginal.length}:${simpleHash(latestOriginal)}`;
+      if (!timedOut && (reroll.observedSignature !== signature || Date.now() - Number(reroll.observedAt || 0) < 1000)) {
+        if (reroll.observedSignature !== signature) {
+          reroll.observedSignature = signature;
+          reroll.observedAt = Date.now();
+          savePendingBackup(room.chatId, p);
+          await saveRoom(room);
+        }
+        scheduleRecovery(1200);
+        return;
+      }
+
+      await reanchorAfterResponse(room, latestAssistant, { countTurn: false, reason: 'reroll' });
+      return;
+    }
 
     if (latestAssistantId === p.baselineAssistantId) {
       // v0.8.9에서 이어진 활성 주입은 새 버전에서 한 번만 로그 후보를 다시 계산합니다.
@@ -5529,7 +5796,7 @@ NO → 압축한다.
   }
 
   async function recoveryTick() {
-    if (state.recovering || !state.db) return;
+    if (state.recovering || state.rerollPreparing || !state.db) return;
     state.recovering = true;
     try {
       // 화면에 없는 모든 방을 getAll()로 복제하지 않습니다. 현재 보고 있는 방만
@@ -7823,6 +8090,7 @@ NO → 압축한다.
       bindViewportMetrics();
       bindPerformanceVisibility();
       bindMobileSettingsMenuEntry();
+      bindRerollBridge();
       state.db = await openDb();
       createFab();
       startRenderedContextObserver();
