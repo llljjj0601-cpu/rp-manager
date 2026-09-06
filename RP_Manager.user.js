@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🪽위시 RP Manager
 // @namespace    local.rp.context.manager
-// @version      0.10.3
+// @version      0.10.4
 // @description  장기 RP용 현재상태·날짜로그·캐릭터 설정·OOC를 관리하고 필요한 컨텍스트를 자동 주입합니다.
 // @author       User
 // @license      All Rights Reserved
@@ -33,13 +33,13 @@
   // 버전별 키를 쓰면 구버전과 신버전이 동시에 설치됐을 때 둘 다 실행될 수 있습니다.
   // 모든 버전이 공유하는 고정 키로 중복 실행을 막습니다.
   if (window.__WISH_RP_MANAGER_LOADED__) return;
-  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.10.3', loadedAt: Date.now() };
+  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.10.4', loadedAt: Date.now() };
   // 같은 페이지에 남아 있는 v0.8.10 복사본이 뒤늦게 시작되는 경우도 차단합니다.
   window.__RP_MANAGER_0810_LOADED__ = true;
 
   const APP = {
     name: '🪽위시 RP Manager',
-    version: '0.10.3',
+    version: '0.10.4',
     dbName: 'RPContextManagerDB',
     dbVersion: 2,
     storeName: 'rooms',
@@ -1750,14 +1750,22 @@ NO → 압축한다.
     const oldById = new Map(old.map(x => [x.id, x]));
     const legacyRetention = normalizeRetentionTurns(room.retentionTurns);
 
-    const normalizeSlot = (slot, fallback) => ({
-      ...fallback,
-      ...(slot || {}),
-      retentionTurns: normalizeRetentionTurns(slot?.retentionTurns ?? legacyRetention),
-      aliases: Array.isArray(slot?.aliases) ? slot.aliases : (fallback.aliases || []),
-      autoExcluded: !!slot?.autoExcluded,
-      autoPinned: !!slot?.autoPinned,
-    });
+    // 활성 주입 검사 중에도 이 함수가 반복 호출됩니다. 매번 새 객체를 만들면
+    // 열려 있는 편집창·날짜 정리창이 이전 객체를 계속 가리켜 수정 결과가 유실됩니다.
+    // 이미 존재하는 슬롯은 같은 객체를 유지한 채 필요한 기본값만 보정합니다.
+    const normalizeSlot = (slot, fallback) => {
+      const target = slot && typeof slot === 'object' ? slot : {};
+      const normalized = {
+        ...fallback,
+        ...target,
+        retentionTurns: normalizeRetentionTurns(target.retentionTurns ?? legacyRetention),
+        aliases: Array.isArray(target.aliases) ? target.aliases : (fallback.aliases || []),
+        autoExcluded: !!target.autoExcluded,
+        autoPinned: !!target.autoPinned,
+      };
+      Object.assign(target, normalized);
+      return target;
+    };
 
     const currentState = normalizeSlot(oldById.get('currentState'), { ...SLOT_TEMPLATE[0], group: 'fixed', title: '현재상태' });
     currentState.group = 'fixed'; currentState.title = '현재상태';
@@ -3207,7 +3215,9 @@ NO → 압축한다.
         replacements.sort((a,b) => b.start - a.start).forEach(r => { next = next.slice(0, r.start) + r.text + next.slice(r.end); });
         const newBlocks = parseDatedLogBlocks(next);
         if (newBlocks.length !== blocks.length) { notify('날짜 수정 후 블록 수가 달라져 적용을 중단했습니다.', 'error', 6200); return; }
-        log.content = next;
+        const liveLog = (room.slots || []).find(s => s.id === 'logSummary');
+        if (!liveLog) { notify('현재 로그요약 항목을 찾지 못해 적용을 중단했습니다.', 'error', 6200); return; }
+        liveLog.content = next;
         remapLogSelectionKeysByIndex(room, blocks, newBlocks);
         finish(true);
       };
@@ -3415,8 +3425,10 @@ NO → 압축한다.
           const chosen = selectedByDate.get(block.dateKey);
           if (chosen?.index === block.index) pieces.push(chosen.text);
         }
-        log.content = pieces.filter(Boolean).join('\n\n').trim();
-        pruneLogSelectionKeys(room, parseDatedLogBlocks(log.content));
+        const liveLog = (room.slots || []).find(s => s.id === 'logSummary');
+        if (!liveLog) { notify('현재 로그요약 항목을 찾지 못해 적용을 중단했습니다.', 'error', 6200); return; }
+        liveLog.content = pieces.filter(Boolean).join('\n\n').trim();
+        pruneLogSelectionKeys(room, parseDatedLogBlocks(liveLog.content));
         finish(true);
       };
       backdrop.onclick = e => { if (e.target === backdrop) finish(false); };
@@ -6990,12 +7002,38 @@ NO → 압축한다.
       readModalIntoRoom();
       const changed = await openDuplicateLogResolverDialog(room);
       if (!changed) return;
+      let localSaved = false;
       try {
+        const logSlot = (room.slots || []).find(s => s.id === 'logSummary');
+        const cleanedContent = String(logSlot?.content || '');
+        const remainingDuplicates = duplicateLogDateGroups(room);
+        if (remainingDuplicates.length) {
+          throw new Error(`정리 후에도 중복 날짜가 남아 있습니다: ${remainingDuplicates.map(g => `${g.label} (${g.blocks.length}개)`).join(', ')}`);
+        }
+
+        // 정리 창은 room 데이터를 직접 바꾸므로, 뒤쪽의 기존 textarea가 낡은 원문을
+        // 다시 저장하지 않게 화면 값도 즉시 같은 내용으로 맞춥니다.
+        const logTextarea = overlay.querySelector('.rpcm-slot[data-slot-id="logSummary"] .rpcm-textarea');
+        if (logTextarea) logTextarea.value = cleanedContent;
+        const queuedSave = state.autoSaveTimers.get(String(room.chatId || ''));
+        if (queuedSave) clearTimeout(queuedSave);
+        state.autoSaveTimers.delete(String(room.chatId || ''));
+
+        // 서버 carrier 갱신이 실패하더라도 정리한 로그 원문은 잃지 않도록 로컬에 먼저 저장합니다.
+        await saveRoom(room);
+        localSaved = true;
+        renderModalIfOpen();
+
         if (room.pending) await rebuildPendingLogItems(room, 'duplicate-log-resolve');
         await saveRoom(room);
         notify('중복 날짜 로그를 선택한 블록 기준으로 정리했습니다.', 'success', 4200);
         renderModalIfOpen();
-      } catch (e) { notify(`중복 로그 정리 반영 실패: ${e.message}`, 'error', 6500); }
+      } catch (e) {
+        notify(localSaved
+          ? `중복 로그 원문은 저장했지만 현재 주입 갱신에 실패했습니다: ${e.message}`
+          : `중복 로그 정리 반영 실패: ${e.message}`, 'error', 7200);
+        renderModalIfOpen();
+      }
     };
 
     const normalizeDatesWarningBtn = overlay.querySelector('#rpcm-normalize-log-dates');
