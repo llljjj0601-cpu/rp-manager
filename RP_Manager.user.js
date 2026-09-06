@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🪽위시 RP Manager
 // @namespace    local.rp.context.manager
-// @version      0.10.6
+// @version      0.10.7
 // @description  장기 RP용 현재상태·날짜로그·캐릭터 설정·OOC를 관리하고 필요한 컨텍스트를 자동 주입합니다.
 // @author       User
 // @license      All Rights Reserved
@@ -33,13 +33,13 @@
   // 버전별 키를 쓰면 구버전과 신버전이 동시에 설치됐을 때 둘 다 실행될 수 있습니다.
   // 모든 버전이 공유하는 고정 키로 중복 실행을 막습니다.
   if (window.__WISH_RP_MANAGER_LOADED__) return;
-  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.10.6', loadedAt: Date.now() };
+  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.10.7', loadedAt: Date.now() };
   // 같은 페이지에 남아 있는 v0.8.10 복사본이 뒤늦게 시작되는 경우도 차단합니다.
   window.__RP_MANAGER_0810_LOADED__ = true;
 
   const APP = {
     name: '🪽위시 RP Manager',
-    version: '0.10.6',
+    version: '0.10.7',
     dbName: 'RPContextManagerDB',
     dbVersion: 2,
     storeName: 'rooms',
@@ -1527,6 +1527,8 @@ NO → 압축한다.
     quickApplyTimer: null,
     quickDesired: new Map(),
     quickApplying: false,
+    carrierCapacityPreview: null,
+    capacityUiRefresh: null,
   };
 
   function upgradeCurrentStateGuideV3(value) {
@@ -2708,6 +2710,46 @@ NO → 압축한다.
 
   function contextBudgetForCarrier(room, originalChars = 0) {
     return Math.max(0, (Number(room.maxChars) || APP.defaultMaxChars) - Number(originalChars || 0) - 2);
+  }
+
+  function carrierOriginalCharsForUi(room) {
+    if (room?.pending) {
+      const chars = Number(room.pending.originalChars);
+      return Number.isFinite(chars) && chars >= 0 ? chars : null;
+    }
+    const preview = state.carrierCapacityPreview;
+    if (!preview || String(preview.roomId || '') !== String(room?.chatId || '') || preview.loading || preview.error) return null;
+    const chars = Number(preview.originalChars);
+    return Number.isFinite(chars) && chars >= 0 ? chars : null;
+  }
+
+  function carrierCapacityForUi(room, contextChars = 0) {
+    const max = Number(room?.maxChars) || APP.defaultMaxChars;
+    const context = Math.max(0, Number(contextChars) || 0);
+    const original = carrierOriginalCharsForUi(room);
+    const known = original !== null;
+    const separator = context > 0 ? 2 : 0;
+    return {
+      max,
+      context,
+      original:known ? original : 0,
+      separator:known ? separator : 0,
+      total:known ? original + separator + context : context,
+      availableContext:known ? Math.max(0, max - original - separator) : max,
+      known,
+      loading:!room?.pending && !!state.carrierCapacityPreview?.loading && String(state.carrierCapacityPreview?.roomId || '') === String(room?.chatId || ''),
+      error:!room?.pending && String(state.carrierCapacityPreview?.roomId || '') === String(room?.chatId || '') ? String(state.carrierCapacityPreview?.error || '') : '',
+    };
+  }
+
+  function carrierCapacityDetailText(room, capacity) {
+    if (capacity.known) {
+      const answerLabel = room?.pending ? '현재 AI 답변' : '최신 AI 답변';
+      return `주입 자료 ${formatCount(capacity.context)}자 + ${answerLabel} ${formatCount(capacity.original)}자 + 연결 ${capacity.separator}자 = 총 ${formatCount(capacity.total)}자`;
+    }
+    if (capacity.loading) return `주입 자료 ${formatCount(capacity.context)}자 · 최신 AI 답변 길이 확인 중…`;
+    if (capacity.error) return `주입 자료 ${formatCount(capacity.context)}자 · 최신 AI 답변 길이를 확인하지 못했습니다.`;
+    return `주입 자료 ${formatCount(capacity.context)}자 · 실제 한도에는 최신 AI 답변 본문도 포함됩니다.`;
   }
 
   function fitLogItemsToBudget(room, baseItems, logItems, contextBudget = null) {
@@ -4067,7 +4109,7 @@ NO → 압축한다.
     return 'format';
   }
 
-  function contextUsageSegments(items, blockChars) {
+  function contextUsageSegments(items, blockChars, originalChars = 0, separatorChars = 0) {
     const grouped = new Map();
     for (const item of (items || [])) {
       const label = itemCategory(item);
@@ -4081,21 +4123,22 @@ NO → 압축한다.
     const order = ['현재상태','고정로그','직접로그','최근로그','관련로그','로그요약','캐릭터','기타'];
     const result = order.filter(key => grouped.has(key)).map(key => grouped.get(key));
     const rawChars = result.reduce((sum, item) => sum + item.chars, 0);
-    const overhead = Math.max(0, Number(blockChars || 0) - rawChars);
+    const overhead = Math.max(0, Number(blockChars || 0) - rawChars + Number(separatorChars || 0));
     if (overhead) result.push({ label:'주입 형식', tone:'format', count:1, chars:overhead });
+    if (Number(originalChars) > 0) result.unshift({ label:'AI 답변 원문', tone:'carrier', count:1, chars:Number(originalChars) });
     return result;
   }
 
-  function renderUsageSummary(items, blockChars, maxChars) {
-    const segments = contextUsageSegments(items, blockChars);
+  function renderUsageSummary(items, blockChars, maxChars, originalChars = 0, separatorChars = 0) {
+    const segments = contextUsageSegments(items, blockChars, originalChars, separatorChars);
     const max = Math.max(1, Number(maxChars) || APP.defaultMaxChars);
-    const used = Math.max(1, Number(blockChars) || 0);
+    const used = Math.max(1, Number(blockChars) + Number(originalChars) + Number(separatorChars) || 0);
     const bars = segments.map(item => {
       const width = Math.max(0.15, Math.min(100, item.chars / max * 100));
       return `<span class="rpcm-usage-segment tone-${item.tone}" style="width:${width}%" title="${esc(item.label)} · ${formatCount(item.chars)}자"></span>`;
     }).join('');
     const chips = segments.map(item => {
-      const ofUsed = blockChars ? item.chars / blockChars * 100 : 0;
+      const ofUsed = used ? item.chars / used * 100 : 0;
       return `<span class="rpcm-breakdown-chip"><i class="rpcm-usage-dot tone-${item.tone}"></i><strong>${esc(item.label)}</strong><span>${formatCount(item.chars)}자 · ${ofUsed < 1 && ofUsed > 0 ? '&lt;1' : Math.round(ofUsed)}%</span></span>`;
     }).join('');
     const emptyWidth = Math.max(0, 100 - Math.min(100, used / max * 100));
@@ -4886,11 +4929,12 @@ NO → 압축한다.
     document.querySelector('#rpcm-preview-backdrop')?.remove();
     const active = (items || []).filter(item => String(item.content || '').trim());
     const stats = statsForItems(active);
+    const capacity = carrierCapacityForUi(room, stats.block);
     const backdrop = document.createElement('div');
     backdrop.id = 'rpcm-preview-backdrop';
     backdrop.innerHTML = `
       <div class="rpcm-preview-dialog" role="dialog" aria-modal="true" aria-label="주입 구성 미리보기">
-        <div class="rpcm-lib-dialog-head"><div><div class="rpcm-lib-dialog-title">${room.pending ? '현재 주입 중인 구성' : '다음 주입 구성'}</div><div class="rpcm-lib-dialog-desc">${formatCount(stats.block)} / 45,000자 · ${active.length}개 카드 · 카드를 누르면 원문을 확인할 수 있습니다.</div></div><button type="button" class="rpcm-lib-close" aria-label="닫기">✕</button></div>
+        <div class="rpcm-lib-dialog-head"><div><div class="rpcm-lib-dialog-title">${room.pending ? '현재 주입 중인 구성' : '다음 주입 구성'}</div><div class="rpcm-lib-dialog-desc">${esc(carrierCapacityDetailText(room, capacity))} / 최대 45,000자 · ${active.length}개 카드<br>카드를 누르면 원문을 확인할 수 있습니다.</div></div><button type="button" class="rpcm-lib-close" aria-label="닫기">✕</button></div>
         <div class="rpcm-preview-list">
           ${active.length ? active.map((item, index) => {
             const category = itemCategory(item);
@@ -5594,6 +5638,7 @@ NO → 압축한다.
     const active = rows.filter(row => row.active);
     const removed = rows.filter(row => !row.active);
     const stats = statsForItems(active.map(row => row.item));
+    const capacity = carrierCapacityForUi(room, stats.block);
     const rowHtml = (row, index) => {
       const item = row.item;
       const category = itemCategory(item);
@@ -5606,7 +5651,7 @@ NO → 압축한다.
     };
     const ordered = [...active, ...removed];
     backdrop.innerHTML = `<div class="rpcm-quick-shade"></div><aside class="rpcm-quick-panel" role="dialog" aria-modal="true" aria-label="현재 주입 관리">
-      <div class="rpcm-quick-head"><div><strong>현재 주입 관리</strong><span>${active.length}개 · ${formatCount(stats.block)} / 45,000자</span></div><button type="button" class="rpcm-quick-close" aria-label="닫기">✕</button></div>
+      <div class="rpcm-quick-head"><div><strong>현재 주입 관리</strong><span>${active.length}개 · 총 ${formatCount(capacity.total)} / 45,000자 · 주입 자료 ${formatCount(stats.block)}자</span></div><button type="button" class="rpcm-quick-close" aria-label="닫기">✕</button></div>
       <div class="rpcm-quick-note">체크를 끄면 현재 주입에서만 빠집니다. 저장된 원문과 다음 주입의 기본 선택은 바뀌지 않습니다.</div>
       <div class="rpcm-quick-list">
         ${active.length ? `<div class="rpcm-quick-group-title">주입 중 ${active.length}</div>${active.map((row, index) => rowHtml(row, index)).join('')}` : '<div class="rpcm-quick-empty">현재 주입 중인 항목이 없습니다.</div>'}
@@ -6483,8 +6528,8 @@ NO → 압축한다.
       .rpcm-title{font-size:17px;font-weight:800}.rpcm-sub{font-size:12px;color:#999;margin-top:2px}.rpcm-spacer{flex:1}.rpcm-iconbtn{border:1px solid #3b3b3b;background:#262626;color:#ddd;border-radius:9px;padding:8px 10px;cursor:pointer}.rpcm-iconbtn:hover{background:#333}
       .rpcm-body{padding:16px 18px 110px;overflow-y:auto;min-height:0}
       .rpcm-summary{background:#1d1d1d;border:1px solid #303030;border-radius:11px;padding:12px 14px;margin-bottom:14px}
-      .rpcm-summary-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px}.rpcm-summary-label{font-size:10px;font-weight:750;color:#777;letter-spacing:.02em}.rpcm-summary-main{display:flex;align-items:baseline;gap:8px;margin-top:3px}.rpcm-summary-main strong{color:#f3f3f3;font-size:18px;line-height:1.2}.rpcm-summary-count{font-size:11px;color:#888}.rpcm-summary-side{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}.rpcm-summary-status{font-size:10px;font-weight:800;padding:3px 7px;border-radius:6px;background:#262626}.rpcm-limit{font-size:10px;color:#777;white-space:nowrap}.rpcm-limit input{display:none}
-      .rpcm-usage-bar{height:9px;background:#2c2c2c;border-radius:999px;overflow:hidden;margin-top:11px;display:flex}.rpcm-usage-segment,.rpcm-usage-empty{display:block;height:100%;transition:width .2s}.rpcm-usage-empty{background:#2c2c2c;flex:1}.tone-state{--rpcm-tone:#9b7de3}.tone-log{--rpcm-tone:#4f9fd8}.tone-character{--rpcm-tone:#df6298}.tone-extra{--rpcm-tone:#d59a4a}.tone-format{--rpcm-tone:#6f7782}.rpcm-usage-segment{background:var(--rpcm-tone)}.rpcm-usage-dot{width:7px;height:7px;border-radius:50%;flex:0 0 auto;background:var(--rpcm-tone)}
+      .rpcm-summary-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px}.rpcm-summary-label{font-size:10px;font-weight:750;color:#777;letter-spacing:.02em}.rpcm-summary-main{display:flex;align-items:baseline;gap:8px;margin-top:3px}.rpcm-summary-main strong{color:#f3f3f3;font-size:18px;line-height:1.2}.rpcm-summary-count{font-size:11px;color:#888}.rpcm-summary-capacity-detail{margin-top:5px;color:#969096;font-size:10px;line-height:1.45}.rpcm-summary-side{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}.rpcm-summary-status{font-size:10px;font-weight:800;padding:3px 7px;border-radius:6px;background:#262626}.rpcm-limit{font-size:10px;color:#777;white-space:nowrap}.rpcm-limit input{display:none}
+      .rpcm-usage-bar{height:9px;background:#2c2c2c;border-radius:999px;overflow:hidden;margin-top:11px;display:flex}.rpcm-usage-segment,.rpcm-usage-empty{display:block;height:100%;transition:width .2s}.rpcm-usage-empty{background:#2c2c2c;flex:1}.tone-state{--rpcm-tone:#9b7de3}.tone-log{--rpcm-tone:#4f9fd8}.tone-character{--rpcm-tone:#df6298}.tone-extra{--rpcm-tone:#d59a4a}.tone-format{--rpcm-tone:#6f7782}.tone-carrier{--rpcm-tone:#38bdf8}.rpcm-usage-segment{background:var(--rpcm-tone)}.rpcm-usage-dot{width:7px;height:7px;border-radius:50%;flex:0 0 auto;background:var(--rpcm-tone)}
       .rpcm-quickbar{position:sticky;top:-16px;z-index:8;display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin:-2px -4px 13px;padding:9px 4px;background:rgba(24,24,24,.95);backdrop-filter:blur(9px);border-bottom:1px solid #292929}.rpcm-jump{border:1px solid #373737;background:#222;color:#aaa;border-radius:999px;padding:6px 9px;font-size:10px;font-weight:700;cursor:pointer}.rpcm-jump:hover{border-color:#70405a;color:#efb5d1;background:#2b1d25}.rpcm-search-box{position:relative;display:flex;align-items:center;gap:5px;flex:1;min-width:240px}.rpcm-search-input{width:100%;height:30px;box-sizing:border-box;border:1px solid #3c3c3c;border-radius:8px;background:#111;color:#eee;padding:0 9px;font-size:11px;outline:none}.rpcm-search-input:focus{border-color:#df6298;box-shadow:0 0 0 2px rgba(223,98,152,.14)}.rpcm-search-nav{width:29px;height:29px;padding:0;border:1px solid #3c3c3c;border-radius:7px;background:#242424;color:#aaa;cursor:pointer}.rpcm-search-count{min-width:52px;text-align:center;color:#888;font-size:10px}.rpcm-search-results{position:absolute;top:35px;left:0;right:0;z-index:40;max-height:min(420px,58vh);overflow:auto;padding:6px;background:#151515;border:1px solid #3a3a3a;border-radius:10px;box-shadow:0 18px 48px rgba(0,0,0,.58)}.rpcm-search-results[hidden]{display:none!important}.rpcm-search-empty{padding:12px;color:#777;font-size:11px;text-align:center}.rpcm-search-result{width:100%;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 10px;align-items:center;text-align:left;border:0;border-bottom:1px solid #292929;background:transparent;color:#ddd;padding:9px 10px;cursor:pointer;border-radius:7px}.rpcm-search-result:last-child{border-bottom:0}.rpcm-search-result:hover,.rpcm-search-result:focus{outline:0;background:#231c21}.rpcm-search-result-head{min-width:0;display:flex;align-items:center;gap:7px}.rpcm-search-result-head strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:#eee}.rpcm-search-result-kind{flex:0 0 auto;padding:2px 5px;border-radius:999px;background:#292329;color:#c89aae;font-size:9px;font-weight:750}.rpcm-search-result-count{grid-column:2;grid-row:1/3;align-self:center;color:#a87991;font-size:9px;font-weight:750;white-space:nowrap}.rpcm-search-result-snippet{grid-column:1;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#858585;font-size:10px}.rpcm-search-result-more{padding:7px 10px;color:#777;font-size:9px;text-align:center;border-top:1px solid #292929}.rpcm-density-select{height:30px;border:1px solid #3c3c3c;border-radius:7px;background:#242424;color:#aaa;padding:0 7px;font-size:10px}
       .rpcm-slot{border:1px solid #333;background:#1f1f1f;border-radius:11px;margin-bottom:9px;overflow:hidden}
       .rpcm-slot summary{list-style:none;display:flex;align-items:center;gap:10px;padding:11px 12px;cursor:pointer;user-select:none}.rpcm-slot summary::-webkit-details-marker{display:none}.rpcm-slot summary:hover{background:#252525}
@@ -7195,6 +7240,41 @@ NO → 압축한다.
     ensureManagerButton();
   }
 
+  async function refreshCarrierCapacityPreview(room, force = false) {
+    if (!room) return;
+    const roomId = String(room.chatId || '');
+    if (room.pending) {
+      state.carrierCapacityPreview = { roomId, originalChars:Number(room.pending.originalChars || 0), loading:false, error:'', checkedAt:Date.now() };
+      state.capacityUiRefresh?.();
+      return;
+    }
+    const previous = state.carrierCapacityPreview;
+    if (!force && previous && previous.roomId === roomId && (previous.loading || (!previous.error && Date.now() - Number(previous.checkedAt || 0) < 10000))) return;
+    state.carrierCapacityPreview = { roomId, originalChars:0, loading:true, error:'', checkedAt:Date.now() };
+    state.capacityUiRefresh?.();
+    try {
+      const recent = await fetchRecentMessages(apiChatIdOf(room), 20);
+      const latestAssistant = recent.find(message => messageRoleOf(message) === 'assistant');
+      if (!latestAssistant) throw new Error('최신 AI 답변 없음');
+      const raw = String(messageTextOf(latestAssistant) || '');
+      if (!raw) throw new Error('최신 AI 답변 원문 없음');
+      const original = stripOurContextBlock(raw).text || raw;
+      if (String(state.currentRoom?.chatId || '') !== roomId) return;
+      state.carrierCapacityPreview = {
+        roomId,
+        messageId:String(messageIdOf(latestAssistant) || ''),
+        originalChars:String(original).length,
+        loading:false,
+        error:'',
+        checkedAt:Date.now(),
+      };
+    } catch (error) {
+      if (String(state.currentRoom?.chatId || '') !== roomId) return;
+      state.carrierCapacityPreview = { roomId, originalChars:0, loading:false, error:String(error?.message || '확인 실패'), checkedAt:Date.now() };
+    }
+    state.capacityUiRefresh?.();
+  }
+
   async function openModal() {
     const chatId = getChatIdFromPath();
     if (!chatId) {
@@ -7212,6 +7292,7 @@ NO → 압축한다.
     updateViewportMetrics();
     updateFab();
     renderModal();
+    refreshCarrierCapacityPreview(state.currentRoom, true).catch(() => {});
   }
 
   function closeModal() {
@@ -7224,11 +7305,15 @@ NO → 압축한다.
     if (typeof importer?._rpcmClose === 'function') importer._rpcmClose(); else importer?.remove();
     state.modal?.remove();
     state.modal = null;
+    state.capacityUiRefresh = null;
     updateFab();
   }
 
   function renderModalIfOpen() {
-    if (state.modal) renderModal();
+    if (state.modal) {
+      renderModal();
+      refreshCarrierCapacityPreview(state.currentRoom).catch(() => {});
+    }
     if (state.quickPanel) renderQuickInjectionPanel();
     updateFab();
   }
@@ -7303,7 +7388,10 @@ NO → 압축한다.
     const previouslyOpenSlots = new Set([...overlay.querySelectorAll('.rpcm-slot[open][data-slot-id]')].map(el => String(el.dataset.slotId || '')));
 
     normalizeRoomSlots(room);
-    const displayItems = room.pending ? activePendingItems(room.pending) : snapshotSelectedItems(room);
+    const maxChars = Number(room.maxChars) || APP.defaultMaxChars;
+    const previewOriginalChars = carrierOriginalCharsForUi(room);
+    const previewContextBudget = previewOriginalChars === null ? contextBudgetForPreview(room) : contextBudgetForCarrier(room, previewOriginalChars);
+    const displayItems = room.pending ? activePendingItems(room.pending) : snapshotSelectedItems(room, null, previewContextBudget);
     const evidenceHydrated = hydrateRelatedLogEvidence(room, displayItems);
     if (evidenceHydrated && room.pending) {
       savePendingBackup(room.chatId, room.pending);
@@ -7316,10 +7404,10 @@ NO → 압축한다.
     const logBlocksForIssues = parseDatedLogBlocks((room.slots || []).find(s => s.id === 'logSummary')?.content || '');
     const hasLogDateIssues = logBlocksForIssues.some(b => b.isUnknown || (!b.isUnknown && !b.isSpecialDate && b.year == null));
     const manualLogStats = manualLogSelectionStats(room);
-    const maxChars = Number(room.maxChars) || APP.defaultMaxChars;
-    const st = statusForChars(stats.block, maxChars);
     const pending = room.pending;
-    const usage = renderUsageSummary(displayItems, stats.block, maxChars);
+    const capacity = carrierCapacityForUi(room, stats.block);
+    const st = statusForChars(capacity.total, maxChars);
+    const usage = renderUsageSummary(displayItems, stats.block, maxChars, capacity.known ? capacity.original : 0, capacity.known ? capacity.separator : 0);
     const uiPrefs = loadUiPrefs();
 
     overlay.innerHTML = `
@@ -7341,7 +7429,7 @@ NO → 압축한다.
             </div>
             <div class="rpcm-summary">
               <div class="rpcm-summary-head">
-                <div><div class="rpcm-summary-label">${pending ? '현재 주입 중인 컨텍스트' : '다음 주입 컨텍스트'}</div><div class="rpcm-summary-main"><strong>${formatCount(stats.block)} / 45,000자</strong><span class="rpcm-summary-count">${stats.count}개 항목</span></div></div>
+                <div><div class="rpcm-summary-label">${capacity.known ? (pending ? '현재 carrier 총길이' : '예상 carrier 총길이') : (pending ? '현재 주입 중인 컨텍스트' : '다음 주입 컨텍스트')}</div><div class="rpcm-summary-main"><strong>${formatCount(capacity.total)} / 45,000자</strong><span class="rpcm-summary-count">${stats.count}개 항목</span></div><div class="rpcm-summary-capacity-detail">${esc(carrierCapacityDetailText(room, capacity))}</div></div>
                 <div class="rpcm-summary-side"><span class="rpcm-summary-status" style="color:${st.color}">${st.label}</span><label class="rpcm-limit"><input id="rpcm-maxchars" type="hidden" value="45000">최대 45,000자 고정</label><button type="button" class="rpcm-mobile-summary-toggle" id="rpcm-mobile-summary-toggle" aria-label="용량 세부정보 펼치기">▾</button></div>
               </div>
               <div class="rpcm-usage-bar" aria-label="섹션별 주입 용량">${usage.bar}</div>
@@ -7382,7 +7470,7 @@ NO → 압축한다.
           <div class="rpcm-footnote">USER 메시지는 절대 수정하지 않습니다. 체크 변경은 주입 중에도 현재 AI carrier에 즉시 반영됩니다. 자동 캐릭터/관련 로그 호출은 완료된 최근 RP를 감지해 다음 응답용 carrier부터 적용합니다.</div>
           <span class="rpcm-save-status saved" id="rpcm-save-status">로컬 저장됨</span>
           <button class="rpcm-btn secondary" id="rpcm-save">저장</button>
-          <button class="rpcm-btn primary" id="rpcm-arm" ${pending || !stats.count || stats.block > maxChars ? 'disabled' : ''}>주입 시작</button>
+          <button class="rpcm-btn primary" id="rpcm-arm" ${pending || !stats.count || stats.block > capacity.availableContext ? 'disabled' : ''}>주입 시작</button>
         </div>
       </div>`;
 
@@ -8317,7 +8405,9 @@ NO → 압축한다.
 
     overlay.querySelector('#rpcm-preview-btn').onclick = () => {
       readModalIntoRoom();
-      const items = room.pending ? activePendingItems(room.pending) : snapshotSelectedItems(room);
+      const originalChars = carrierOriginalCharsForUi(room);
+      const previewBudget = originalChars === null ? contextBudgetForPreview(room) : contextBudgetForCarrier(room, originalChars);
+      const items = room.pending ? activePendingItems(room.pending) : snapshotSelectedItems(room, null, previewBudget);
       openContextPreviewDialog(room, items);
     };
 
@@ -8402,15 +8492,22 @@ NO → 압축한다.
 
     function refreshStatsOnly() {
       readModalIntoRoom();
-      const items = room.pending ? activePendingItems(room.pending) : snapshotSelectedItems(room);
-      const s = statsForItems(items);
       const max = Number(room.maxChars) || APP.defaultMaxChars;
-      const status = statusForChars(s.block, max);
+      const originalChars = carrierOriginalCharsForUi(room);
+      const previewBudget = originalChars === null ? contextBudgetForPreview(room) : contextBudgetForCarrier(room, originalChars);
+      const items = room.pending ? activePendingItems(room.pending) : snapshotSelectedItems(room, null, previewBudget);
+      const s = statsForItems(items);
+      const capacity = carrierCapacityForUi(room, s.block);
+      const status = statusForChars(capacity.total, max);
       const mainStrong = overlay.querySelector('.rpcm-summary-main strong');
-      if (mainStrong) mainStrong.textContent = `${formatCount(s.block)} / 45,000자`;
+      if (mainStrong) mainStrong.textContent = `${formatCount(capacity.total)} / 45,000자`;
+      const summaryLabel = overlay.querySelector('.rpcm-summary-label');
+      if (summaryLabel) summaryLabel.textContent = capacity.known ? (room.pending ? '현재 carrier 총길이' : '예상 carrier 총길이') : (room.pending ? '현재 주입 중인 컨텍스트' : '다음 주입 컨텍스트');
+      const capacityDetail = overlay.querySelector('.rpcm-summary-capacity-detail');
+      if (capacityDetail) capacityDetail.textContent = carrierCapacityDetailText(room, capacity);
       const summaryCount = overlay.querySelector('.rpcm-summary-count');
       if (summaryCount) summaryCount.textContent = `${s.count}개 항목`;
-      const usage = renderUsageSummary(items, s.block, max);
+      const usage = renderUsageSummary(items, s.block, max, capacity.known ? capacity.original : 0, capacity.known ? capacity.separator : 0);
       const breakdownEl = overlay.querySelector('.rpcm-breakdown');
       if (breakdownEl) breakdownEl.innerHTML = usage.chips;
       const usageBar = overlay.querySelector('.rpcm-usage-bar');
@@ -8418,8 +8515,10 @@ NO → 압축한다.
       const statusEl = overlay.querySelector('.rpcm-summary-status');
       if (statusEl) { statusEl.textContent = status.label; statusEl.style.color = status.color; }
       const arm = overlay.querySelector('#rpcm-arm');
-      if (arm && !room.pending) arm.disabled = !s.count || s.block > max;
+      if (arm && !room.pending) arm.disabled = !s.count || s.block > capacity.availableContext;
     }
+
+    state.capacityUiRefresh = refreshStatsOnly;
 
     if (previousScrollTop != null) {
       requestAnimationFrame(() => {
@@ -8440,6 +8539,7 @@ NO → 압축한다.
     }
     const roomKey = getRoomScopeKey(apiChatId);
     if (!force && state.currentChatId === roomKey && state.currentRoom) return;
+    if (state.currentChatId !== roomKey) state.carrierCapacityPreview = null;
     state.currentChatId = roomKey; state.currentApiChatId = apiChatId;
     // 방 메타 API가 느려도 진입 버튼부터 즉시 표시합니다. 실제 모달 데이터는 아래 초기화 완료 후 엽니다.
     ensureManagerButton(); updateFab();
