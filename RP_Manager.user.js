@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🪽위시 RP Manager
 // @namespace    local.rp.context.manager
-// @version      0.10.0
+// @version      0.10.1
 // @description  장기 RP용 현재상태·날짜로그·캐릭터 설정·OOC를 관리하고 필요한 컨텍스트를 자동 주입합니다.
 // @author       User
 // @license      All Rights Reserved
@@ -33,13 +33,13 @@
   // 버전별 키를 쓰면 구버전과 신버전이 동시에 설치됐을 때 둘 다 실행될 수 있습니다.
   // 모든 버전이 공유하는 고정 키로 중복 실행을 막습니다.
   if (window.__WISH_RP_MANAGER_LOADED__) return;
-  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.10.0', loadedAt: Date.now() };
+  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.10.1', loadedAt: Date.now() };
   // 같은 페이지에 남아 있는 v0.8.10 복사본이 뒤늦게 시작되는 경우도 차단합니다.
   window.__RP_MANAGER_0810_LOADED__ = true;
 
   const APP = {
     name: '🪽위시 RP Manager',
-    version: '0.10.0',
+    version: '0.10.1',
     dbName: 'RPContextManagerDB',
     dbVersion: 2,
     storeName: 'rooms',
@@ -940,6 +940,10 @@ AI가 과거 출력에서 실수한 내용, 사용자에게 정정된 내용, �
 연도가 확정되지 않았다면 임의로 만들지 말고 [M월 D일-...]을 유지한다.
 날짜 자체가 정사상 미상인 사건은 [날짜 미상-사건명] 형식으로 유지할 수 있으며 임의 날짜를 창작하지 않는다.
 
+작품에서 BC·BCE·AD·CE·기원전·서기 표기를 정식 날짜로 사용한다면 이를 일반 연도로 억지 변환하지 않는다.
+예: [BC206-사건명]·[BC 206년 3월 2일-사건명]·[기원전 206년-사건명]·[AD714-사건명]
+특수 연호를 사용하는 작품에서는 원문 표기를 일관되게 유지하며, RP Manager는 해당 제목도 하나의 날짜 블록으로 인식한다.
+
 제목은 단순 분위기 표현보다 나중에 다시 검색하기 좋은 고유명사와 사건명을 우선한다.
 
 우선 사용할 키워드:
@@ -1456,11 +1460,12 @@ NO → 압축한다.
 
   const GUIDE_STORAGE_KEYS = Object.freeze({
     currentState: 'RPCM_guide_currentState_v4',
-    logSummary: 'RPCM_guide_logSummary_v2',
+    logSummary: 'RPCM_guide_logSummary_v3',
   });
 
   const GUIDE_PREVIOUS_STORAGE_KEYS = Object.freeze({
     currentState: 'RPCM_guide_currentState_v3',
+    logSummary: 'RPCM_guide_logSummary_v2',
   });
 
   const GUIDE_COPY_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="2"></rect><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"></path></svg>';
@@ -1559,6 +1564,15 @@ NO → 압축한다.
     return text;
   }
 
+  function upgradeLogSummaryGuideV3(value) {
+    let text = String(value || '');
+    if (!text || text.includes('특수 연호를 사용하는 작품에서는 원문 표기를 일관되게 유지')) return text;
+    const anchor = '날짜 자체가 정사상 미상인 사건은 [날짜 미상-사건명] 형식으로 유지할 수 있으며 임의 날짜를 창작하지 않는다.';
+    const addition = `${anchor}\n\n작품에서 BC·BCE·AD·CE·기원전·서기 표기를 정식 날짜로 사용한다면 이를 일반 연도로 억지 변환하지 않는다.\n예: [BC206-사건명]·[BC 206년 3월 2일-사건명]·[기원전 206년-사건명]·[AD714-사건명]\n특수 연호를 사용하는 작품에서는 원문 표기를 일관되게 유지하며, RP Manager는 해당 제목도 하나의 날짜 블록으로 인식한다.`;
+    if (text.includes(anchor)) return text.replace(anchor, addition);
+    return `${text.trim()}\n\n${addition}`.trim();
+  }
+
   function migrateStoredGuideText(slotId, value) {
     let text = String(value || '');
     if (slotId === 'currentState') {
@@ -1576,6 +1590,7 @@ NO → 압축한다.
       }
     }
     if (slotId === 'currentState') text = upgradeCurrentStateGuideV4(upgradeCurrentStateGuideV3(text));
+    if (slotId === 'logSummary') text = upgradeLogSummaryGuideV3(text);
     return text;
   }
 
@@ -1960,17 +1975,61 @@ NO → 압축한다.
     // 언어가 명시된 일반 코드 블록(js/json 등)은 상태창 판정을 하지 않습니다.
     if (tag) return false;
 
-    const sample = normalizeLineBreaks(String(body || '')).slice(0, 3200);
+    const sample = normalizeLineBreaks(String(body || '')).slice(0, 5000);
     if (!sample.trim()) return false;
-    if (/^\s*(?:[#>*-]\s*)?(?:\[\s*)?(?:현재\s*(?:상태|정보)|상태창|캐릭터\s*상태|status(?:\s*window)?|character\s*status|스테이터스)(?:\s*\])?\s*(?:[:：|｜-]|$)/im.test(sample)) return true;
-
-    // 무표기 ``` 상태창은 제목이 잘려 오는 경우가 있어, 전형적인 상태 필드가 3종 이상일 때만 제외합니다.
-    // 단순 대사나 서술 안에 '장소' 같은 단어 하나가 나온 것만으로는 제거되지 않습니다.
+    // 태그 없는 상태창은 제작자마다 이모지·표·박스 문자·구분자를 다르게 씁니다.
+    // 한 개의 정규식에 맞추지 않고 제목/필드/레이아웃 신호를 따로 모아 판정합니다.
+    const headerRe = /(?:현재\s*(?:상태|정보)|상태\s*(?:창|패널|정보)|캐릭터\s*(?:상태|정보)|status(?:\s*(?:window|panel|info))?|character\s*status|스테이터스)/i;
+    const fieldAliases = new Map([
+      ['시간','time'],['시각','time'],['날짜','date'],['일시','date'],['장소','place'],['위치','place'],
+      ['등장인물','people'],['동행','people'],['인물','people'],['캐릭터','people'],['관계','relation'],
+      ['호감도','affection'],['친밀도','affection'],['애정도','affection'],['체력','hp'],['생명력','hp'],['hp','hp'],
+      ['마력','mp'],['mp','mp'],['상태','condition'],['컨디션','condition'],['기분','mood'],['감정','mood'],
+      ['의상','clothes'],['복장','clothes'],['소지품','item'],['아이템','item'],['목표','goal'],['퀘스트','goal'],
+      ['날씨','weather'],['턴','turn'],['차례','turn'],['행동','action'],['자세','action'],
+    ]);
+    const fieldPattern = [...fieldAliases.keys()].sort((a, b) => b.length - a.length).map(escapeRegex).join('|');
     const fieldNames = new Set();
-    const fieldRe = /(?:^|\n)\s*(?:[-*•]\s*)?(?:\[\s*)?(시간|시각|날짜|장소|위치|등장인물|인물|캐릭터|관계|호감도|친밀도|체력|상태|기분|감정|의상|복장|소지품|목표|퀘스트|날씨|턴)(?:\s*\])?\s*[:：|｜]/gi;
-    let match;
-    while ((match = fieldRe.exec(sample))) fieldNames.add(String(match[1] || '').toLowerCase());
-    return fieldNames.size >= 3;
+    const lines = sample.split('\n').map(line => line.trim()).filter(Boolean).slice(0, 80);
+    let structuredLines = 0;
+    let shortLines = 0;
+    let headerSignal = false;
+    let decorationSignal = false;
+
+    for (const originalLine of lines) {
+      if (originalLine.length <= 150) shortLines++;
+      if (headerRe.test(originalLine) && originalLine.length <= 100) headerSignal = true;
+      if (/[┌┐└┘├┤┬┴┼│┃━─╭╮╰╯]|[═]{2,}|[-━─=]{5,}/.test(originalLine)) decorationSignal = true;
+
+      const cleaned = originalLine
+        .replace(/^\s*(?:[>|┃│┋┊┆┇┌┐└┘├┤┬┴┼╭╮╰╯─━═]+\s*)+/, '')
+        .replace(/^\s*(?:[-*+•·▪▫◦]\s*)+/, '')
+        .replace(/^\s*[\p{Extended_Pictographic}\uFE0F\u200D]+\s*/u, '')
+        .replace(/[*_`#]/g, '')
+        .trim();
+      const row = cleaned.match(new RegExp(`^(?:\\[\\s*)?(${fieldPattern})(?:\\s*\\])?\\s*(?:[:：=|｜│┃]|-{1,3}>?)\\s*\\S+`, 'i'));
+      if (row) {
+        const canonical = fieldAliases.get(String(row[1] || '').toLowerCase()) || String(row[1] || '').toLowerCase();
+        fieldNames.add(canonical);
+        structuredLines++;
+        continue;
+      }
+      const cells = cleaned.replace(/^\|/, '').replace(/\|$/, '').split(/\s*\|\s*/).filter(Boolean);
+      if (cells.length >= 2) {
+        const label = cells[0].replace(/[\[\]():：*`]/g, '').trim().toLowerCase();
+        if (fieldAliases.has(label) && !/^[-: ]+$/.test(cells[1])) {
+          fieldNames.add(fieldAliases.get(label));
+          structuredLines++;
+        }
+      }
+    }
+
+    if (headerSignal && (fieldNames.size >= 1 || decorationSignal)) return true;
+    if (fieldNames.size >= 4) return true;
+    const compactPanel = lines.length >= 3 && shortLines / lines.length >= 0.65;
+    if (fieldNames.size >= 3 && structuredLines >= 3 && compactPanel) return true;
+    if (fieldNames.size >= 2 && structuredLines >= 2 && compactPanel && decorationSignal) return true;
+    return false;
   }
 
   function stripRpStatusFences(text) {
@@ -2096,25 +2155,63 @@ NO → 압축한다.
 
   function parseDatedLogBlocks(text) {
     const src = normalizeLineBreaks(text);
-    // 권장: [2025년 3월 15일-사건명] / 호환: [3월 15일-사건명]
-    // 명시적 날짜 미상도 하나의 독립 로그 블록으로 보존합니다.
-    // 지원 예: [날짜 미상-사건명] [날짜미정-사건명] [날짜 불명] [날짜 없음-사건명]
-    const re = /^[ \t]*\[((?:(\d{1,6})년[ \t]*)?(\d{1,2})월[ \t]*(\d{1,2})일|날짜[ \t]*(미상|미정|불명|없음))(?:[ \t]*[-–—|｜][ \t]*([^\]]+))?\][ \t]*$/gm;
+    // 기본 양력형 외에 작품 고유 표기인 BC206·기원전 206년·AD714도 날짜 블록으로 인식합니다.
+    // 제목 전체를 먼저 읽고 날짜 부분만 검증해, 일반 [소제목]은 날짜로 잘못 잡지 않습니다.
+    const re = /^[ \t]*\[([^\]\n]+)\][ \t]*$/gm;
     const hits = [];
     let m;
     while ((m = re.exec(src))) {
-      const isUnknown = !!m[5];
+      const inner = String(m[1] || '').trim();
+      const standard = inner.match(/^((?:(\d{1,6})년[ \t]*)?(\d{1,2})월[ \t]*(\d{1,2})일)(?:[ \t]*[-–—|｜][ \t]*(.+))?$/);
+      const unknown = inner.match(/^(날짜[ \t]*(미상|미정|불명|없음))(?:[ \t]*[-–—|｜][ \t]*(.+))?$/);
+      const eraNamePattern = 'B\\.?[ \\t]*C\\.?(?:[ \\t]*E\\.?)?|A\\.?[ \\t]*D\\.?|C\\.?[ \\t]*E\\.?|기원전|서기';
+      const eraRe = new RegExp(`^((${eraNamePattern})[ \\t]*(\\d{1,6})(?:년)?(?:[ \\t]*(\\d{1,2})월[ \\t]*(\\d{1,2})일)?(?:[ \\t]*[~～](?:[ \\t]*(?:${eraNamePattern}[ \\t]*)?\\d{1,6}(?:년)?(?:[ \\t]*\\d{1,2}월[ \\t]*\\d{1,2}일)?)?)?)(?:[ \\t]*[-–—|｜][ \\t]*(.+))?$`, 'i');
+      const era = inner.match(eraRe);
+      if (!standard && !unknown && !era) continue;
+
+      const isUnknown = !!unknown;
+      const isSpecialDate = !!era;
+      let fullDate = '';
+      let year = null;
+      let month = null;
+      let day = null;
+      let sortYear = null;
+      let unknownLabel = '';
+      let events = '';
+      if (standard) {
+        fullDate = standard[1];
+        year = standard[2] ? Number(standard[2]) : null;
+        month = Number(standard[3]);
+        day = Number(standard[4]);
+        sortYear = year;
+        events = String(standard[5] || '').trim();
+      } else if (unknown) {
+        fullDate = `날짜 ${unknown[2]}`;
+        unknownLabel = fullDate;
+        events = String(unknown[3] || '').trim();
+      } else {
+        fullDate = String(era[1] || '').trim();
+        const eraName = String(era[2] || '').replace(/[.\s]/g, '').toUpperCase();
+        const eraYear = Number(era[3]);
+        const isBeforeCommonEra = eraName === 'BC' || eraName === 'BCE' || eraName === '기원전';
+        sortYear = isBeforeCommonEra ? -eraYear : eraYear;
+        month = era[4] ? Number(era[4]) : null;
+        day = era[5] ? Number(era[5]) : null;
+        events = String(era[6] || '').trim();
+      }
       hits.push({
         index: m.index,
         endTitle: re.lastIndex,
         headingEnd: re.lastIndex,
-        fullDate: isUnknown ? `날짜 ${m[5]}` : m[1],
-        year: !isUnknown && m[2] ? Number(m[2]) : null,
-        month: !isUnknown ? Number(m[3]) : null,
-        day: !isUnknown ? Number(m[4]) : null,
-        unknownLabel: isUnknown ? `날짜 ${m[5]}` : '',
+        fullDate,
+        year,
+        sortYear,
+        month,
+        day,
+        unknownLabel,
         isUnknown,
-        events: String(m[6] || '').trim(),
+        isSpecialDate,
+        events,
         heading: m[0].trim(),
         headingRaw: m[0],
       });
@@ -2126,7 +2223,9 @@ NO → 압축한다.
       const raw = `${h.heading}${body ? `\n${body}` : ''}`;
       const dateKey = h.isUnknown
         ? `unknown-${i}-${simpleHash(h.heading)}`
-        : `${h.year || 'x'}-${String(h.month).padStart(2,'0')}-${String(h.day).padStart(2,'0')}`;
+        : h.isSpecialDate
+          ? `era-${String(h.fullDate || '').toLowerCase().replace(/\s+/g, '')}`
+          : `${h.year || 'x'}-${String(h.month).padStart(2,'0')}-${String(h.day).padStart(2,'0')}`;
       const key = `${dateKey}-${simpleHash(h.heading)}`;
       const yearPrefix = h.year ? `${h.year}.` : '';
       return {
@@ -2136,8 +2235,12 @@ NO → 압축한다.
         raw,
         body,
         index: i,
-        weekOfMonth: h.isUnknown ? null : Math.min(5, Math.floor((h.day - 1) / 7) + 1),
-        titleText: h.isUnknown ? `${h.unknownLabel}${h.events ? ` ${h.events}` : ''}` : `${yearPrefix}${h.month}/${h.day}${h.events ? ` ${h.events}` : ''}`,
+        weekOfMonth: h.isUnknown || !h.day ? null : Math.min(5, Math.floor((h.day - 1) / 7) + 1),
+        titleText: h.isUnknown
+          ? `${h.unknownLabel}${h.events ? ` ${h.events}` : ''}`
+          : h.isSpecialDate
+            ? `${h.fullDate}${h.events ? ` ${h.events}` : ''}`
+            : `${yearPrefix}${h.month}/${h.day}${h.events ? ` ${h.events}` : ''}`,
         sourceStart: h.index,
         sourceEnd: end,
       };
@@ -2226,20 +2329,24 @@ NO → 압축한다.
     const dated = (blocks || []).filter(b => b && !b.isUnknown);
     if (!dated.length) return [];
 
-    const withYear = dated.filter(b => Number.isInteger(b.year));
+    // BC가 기원전이 아니라 작품 고유 시대 코드일 수도 있으므로 숫자의 증감 방향을 임의 해석하지 않습니다.
+    // 특수 연호가 섞인 저장소에서는 사용자가 정리해 둔 블록 순서를 최신 기준으로 사용합니다.
+    if (dated.some(b => b.isSpecialDate)) return dated.slice(-n);
+
+    const withYear = dated.filter(b => Number.isInteger(b.sortYear));
     if (!withYear.length) return dated.slice(-n);
 
     const knownSorted = [...withYear].sort((a, b) =>
-      Number(a.year) - Number(b.year) ||
-      Number(a.month) - Number(b.month) ||
-      Number(a.day) - Number(b.day) ||
+      Number(a.sortYear) - Number(b.sortYear) ||
+      Number(a.month || 0) - Number(b.month || 0) ||
+      Number(a.day || 0) - Number(b.day || 0) ||
       Number(a.index) - Number(b.index)
     );
     const latestKnown = knownSorted[knownSorted.length - 1];
 
     // 연도 없는 로그가 '실제 날짜 기준 최신 로그'보다 저장소 뒤쪽에 새로 붙어 있다면
     // 연도를 임의 추정하지 않고 그 뒤쪽 순서를 보조 안전장치로 사용합니다.
-    const trailingNoYear = dated.filter(b => b.year == null && Number(b.index) > Number(latestKnown.index));
+    const trailingNoYear = dated.filter(b => b.sortYear == null && Number(b.index) > Number(latestKnown.index));
     if (!trailingNoYear.length) return knownSorted.slice(-n);
 
     const unknownTail = trailingNoYear.slice(-n);
@@ -2952,7 +3059,8 @@ NO → 압축한다.
         return;
       }
 
-      const dated = blocks.filter(b => !b.isUnknown);
+      const dated = blocks.filter(b => !b.isUnknown && !b.isSpecialDate);
+      const special = blocks.filter(b => b.isSpecialDate);
       const unknown = blocks.filter(b => b.isUnknown);
       const old = document.getElementById('rpcm-log-dialog-backdrop');
       if (old) old.remove();
@@ -2980,10 +3088,17 @@ NO → 압축한다.
           ${unknown.map(b => `<div class="rpcm-log-row rpcm-date-unknown-row" data-log-index="${b.index}"><div class="rpcm-log-row-head"><strong>${esc(b.titleText)}</strong><input class="rpcm-date-full" type="date" title="비워두면 날짜 미상 유지" style="width:145px"></div><div class="rpcm-log-row-reason">원문: ${esc(b.heading)}</div></div>`).join('')}
         </details>` : '';
 
+      const specialHtml = special.length ? `
+        <details class="rpcm-log-year" open>
+          <summary><strong>작품 고유 연호</strong><span>${special.length}개</span></summary>
+          <div class="rpcm-log-help">BC·BCE·AD·CE·기원전·서기 표기는 날짜 블록으로 정상 인식됩니다. 일반 연도로 바꾸지 않고 원문 그대로 유지합니다.</div>
+          ${special.map(b => `<div class="rpcm-log-row"><div class="rpcm-log-row-head"><strong>${esc(b.titleText)}</strong></div><div class="rpcm-log-row-reason">원문 유지: ${esc(b.heading)}</div></div>`).join('')}
+        </details>` : '';
+
       backdrop.innerHTML = `
         <div class="rpcm-log-dialog" role="dialog" aria-modal="true">
           <div class="rpcm-lib-dialog-head"><div><div class="rpcm-lib-dialog-title">날짜 / 연도 수정</div><div class="rpcm-lib-dialog-desc">연도 누락 보정뿐 아니라 이미 정리한 날짜도 언제든 다시 수정합니다. 로그 본문은 건드리지 않고 [날짜-사건명] 제목만 변경합니다.</div></div><button type="button" class="rpcm-lib-close">✕</button></div>
-          <div class="rpcm-log-list">${datedHtml}${unknownHtml}</div>
+          <div class="rpcm-log-list">${datedHtml}${specialHtml}${unknownHtml}</div>
           <div class="rpcm-lib-dialog-actions"><div class="rpcm-spacer"></div><button type="button" class="rpcm-btn secondary" data-act="cancel">취소</button><button type="button" class="rpcm-btn primary" data-act="confirm">날짜 수정 적용</button></div>
         </div>`;
       document.body.appendChild(backdrop);
@@ -3077,7 +3192,7 @@ NO → 압축한다.
     return new Promise(resolve => {
       const log = (room.slots || []).find(s => s.id === 'logSummary');
       const blocks = parseDatedLogBlocks(log?.content || '');
-      if (!blocks.length) { notify('로그요약에서 날짜 블록을 찾지 못했습니다. [714년 6월 15일-사건명] 또는 [2026년 8월 31일-사건명] 형식을 권장합니다.', 'warn', 6500); resolve(false); return; }
+      if (!blocks.length) { notify('로그요약에서 날짜 블록을 찾지 못했습니다. [2026년 8월 31일-사건명]·[BC206-사건명] 같은 형식을 사용해 주세요.', 'warn', 6500); resolve(false); return; }
       const old = document.getElementById('rpcm-log-dialog-backdrop');
       if (old) old.remove();
       const backdrop = document.createElement('div');
@@ -3090,7 +3205,8 @@ NO → 압축한다.
 
       const grouped = new Map();
       const unknownBlocks = blocks.filter(b => b.isUnknown);
-      for (const b of blocks.filter(b => !b.isUnknown)) {
+      const specialBlocks = blocks.filter(b => b.isSpecialDate);
+      for (const b of blocks.filter(b => !b.isUnknown && !b.isSpecialDate)) {
         const y = b.year == null ? '연도 미상' : `${b.year}년`;
         if (!grouped.has(y)) grouped.set(y, new Map());
         const months = grouped.get(y);
@@ -3116,8 +3232,9 @@ NO → 압축한다.
             }).join('')}</details>`;
         }).join('')}</details>`;
       }).join('');
+      const specialRowsHtml = specialBlocks.length ? `<details class="rpcm-log-year" open><summary><strong>작품 고유 연호</strong><span>${specialBlocks.length}개 블록</span></summary><div class="rpcm-log-help">BC·BCE·AD·CE·기원전·서기 표기도 최신·관련 로그 계산과 직접 선택에 사용할 수 있습니다.</div>${specialBlocks.map(b => { const sc = scored.get(b.key); const reason = sc ? relatedLogReason(sc) : '현재 문맥 일치 없음'; return `<div class="rpcm-log-row" data-log-key="${esc(b.key)}"><div class="rpcm-log-row-head"><strong>${esc(b.titleText)}</strong><span>${formatCount(b.raw.length)}자</span></div><div class="rpcm-log-row-reason">${esc(reason)}${sc ? ` · 점수 ${Number(sc.score).toFixed(1)}` : ''}</div><div class="rpcm-log-row-controls"><label><input type="checkbox" class="rpcm-log-manual" ${manual.has(b.key) ? 'checked' : ''}> 직접 선택</label><label><input type="checkbox" class="rpcm-log-pin" ${pinned.has(b.key) ? 'checked' : ''}> 📌 항상 호출</label><label><input type="checkbox" class="rpcm-log-exclude" ${excluded.has(b.key) ? 'checked' : ''}> 🚫 자동 제외</label><button type="button" class="rpcm-lib-small rpcm-log-toggle">내용 보기</button></div><pre class="rpcm-log-content" hidden>${esc(b.raw)}</pre></div>`; }).join('')}</details>` : '';
       const unknownRowsHtml = unknownBlocks.length ? `<details class="rpcm-log-year" open><summary><strong>날짜 미상</strong><span>${unknownBlocks.length}개 블록</span></summary><div class="rpcm-log-help">날짜 미상 로그는 최신 날짜 계산에서는 제외되지만 관련도 검색·직접 선택·📌 항상 호출에는 사용할 수 있습니다. 실제 날짜를 알게 되면 ‘날짜 정리’에서 지정할 수 있습니다.</div>${unknownBlocks.map(b => { const sc = scored.get(b.key); const reason = sc ? relatedLogReason(sc) : '현재 문맥 일치 없음'; return `<div class="rpcm-log-row" data-log-key="${esc(b.key)}"><div class="rpcm-log-row-head"><strong>${esc(b.titleText)}</strong><span>${formatCount(b.raw.length)}자</span></div><div class="rpcm-log-row-reason">${esc(reason)}${sc ? ` · 점수 ${Number(sc.score).toFixed(1)}` : ''}</div><div class="rpcm-log-row-controls"><label><input type="checkbox" class="rpcm-log-manual" ${manual.has(b.key) ? 'checked' : ''}> 직접 선택</label><label><input type="checkbox" class="rpcm-log-pin" ${pinned.has(b.key) ? 'checked' : ''}> 📌 항상 호출</label><label><input type="checkbox" class="rpcm-log-exclude" ${excluded.has(b.key) ? 'checked' : ''}> 🚫 자동 제외</label><button type="button" class="rpcm-lib-small rpcm-log-toggle">내용 보기</button></div><pre class="rpcm-log-content" hidden>${esc(b.raw)}</pre></div>`; }).join('')}</details>` : '';
-      const rowsHtml = `${datedRowsHtml}${unknownRowsHtml}`;
+      const rowsHtml = `${datedRowsHtml}${specialRowsHtml}${unknownRowsHtml}`;
 
       backdrop.innerHTML = `
         <div class="rpcm-log-dialog" role="dialog" aria-modal="true">
@@ -3965,9 +4082,9 @@ NO → 압축한다.
     const warnings = [];
     const log = (room.slots || []).find(x => x.id === 'logSummary');
     const blocks = parseDatedLogBlocks(log?.content || '');
-    if (String(log?.content || '').trim() && !blocks.length && String(log.content || '').length > APP.legacyWholeLogFallbackMax) warnings.push('로그요약이 길지만 날짜 블록을 감지하지 못해 통짜 주입을 차단함. [714년 6월 15일-사건명]처럼 실제 연도 자릿수를 사용해 주세요.');
+    if (String(log?.content || '').trim() && !blocks.length && String(log.content || '').length > APP.legacyWholeLogFallbackMax) warnings.push('로그요약이 길지만 날짜 블록을 감지하지 못해 통짜 주입을 차단함. [2026년 8월 31일-사건명]·[BC206-사건명] 같은 형식을 사용해 주세요.');
     if (blocks.length) {
-      const noYearCount = blocks.filter(b => !b.isUnknown && b.year == null).length;
+      const noYearCount = blocks.filter(b => !b.isUnknown && !b.isSpecialDate && b.year == null).length;
       const unknownCount = blocks.filter(b => b.isUnknown).length;
       if (noYearCount) warnings.push(`연도 없는 날짜 로그 ${noYearCount}개 있음. ‘날짜 정리’에서 선택한 항목에 2024년/2025년처럼 연도를 일괄 적용할 수 있음.`);
       if (unknownCount) warnings.push(`날짜 미상 로그 ${unknownCount}개 있음. 미상으로 유지해도 되며, 실제 날짜를 아는 항목만 ‘날짜 정리’에서 지정할 수 있음.`);
@@ -4229,7 +4346,7 @@ NO → 압축한다.
         const flagBits = [manual ? '직접' : '', pinned ? '📌' : '', excluded ? '제외' : ''].filter(Boolean).join(' · ');
         return `<details class="rpcm-detached-card rpcm-detached-log-card${manual ? ' is-log-manual' : ''}${pinned ? ' is-log-pinned' : ''}${excluded ? ' is-log-excluded' : ''}" data-card-index="${index}" data-log-index="${index}" data-log-key="${esc(key)}" open><summary><span class="rpcm-detached-index">${String(index + 1).padStart(2,'0')}</span><strong>${esc(block.heading)}</strong><span class="rpcm-detached-log-flags" data-log-flags ${flagBits ? '' : 'hidden'}>${esc(flagBits)}</span><span class="rpcm-detached-card-meta">${formatCount(block.raw.length)}자</span><button type="button" class="rpcm-detached-card-copy">블록 복사</button><span class="rpcm-chevron">▼</span></summary><div class="rpcm-detached-card-body"><div class="rpcm-detached-log-controls"><label class="choice-manual" title="기존 로그 저장소의 ‘직접 선택’과 동일합니다."><input type="checkbox" data-log-choice="manual" ${manual ? 'checked' : ''}><span>직접 선택</span></label><label class="choice-pinned" title="자동 호출 여부와 상관없이 항상 우선 주입 후보에 포함합니다."><input type="checkbox" data-log-choice="pinned" ${pinned ? 'checked' : ''}><span>📌 항상 호출</span></label><label class="choice-excluded" title="최신/관련 자동호출에서 제외합니다. 직접 선택은 계속 가능합니다."><input type="checkbox" data-log-choice="excluded" ${excluded ? 'checked' : ''}><span>🚫 자동 제외</span></label></div><textarea data-role="log-body" spellcheck="false">${esc(block.body)}</textarea></div></details>`;
       }).join('');
-      renderNav(logBlocks.map((block, index) => ({ short:block.isUnknown ? '?' : `${block.month}/${block.day}`, title:block.events || block.fullDate || `날짜 ${index + 1}` })));
+      renderNav(logBlocks.map((block, index) => ({ short:block.isUnknown ? '?' : block.isSpecialDate ? block.fullDate : `${block.month}/${block.day}`, title:block.events || block.fullDate || `날짜 ${index + 1}` })));
       if (formatEl) formatEl.textContent = `날짜 블록 ${logBlocks.length}개 · [날짜-키워드]`;
       refreshDetachedLogSelectionUi();
       return true;
@@ -6512,7 +6629,7 @@ NO → 압축한다.
     const warnings = getDataWarnings(room);
     const duplicateGroups = duplicateLogDateGroups(room);
     const logBlocksForIssues = parseDatedLogBlocks((room.slots || []).find(s => s.id === 'logSummary')?.content || '');
-    const hasLogDateIssues = logBlocksForIssues.some(b => b.isUnknown || (!b.isUnknown && b.year == null));
+    const hasLogDateIssues = logBlocksForIssues.some(b => b.isUnknown || (!b.isUnknown && !b.isSpecialDate && b.year == null));
     const manualLogStats = manualLogSelectionStats(room);
     const maxChars = Number(room.maxChars) || APP.defaultMaxChars;
     const st = statusForChars(stats.block, maxChars);
