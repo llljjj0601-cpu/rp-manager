@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🪽위시 RP Manager
 // @namespace    local.rp.context.manager
-// @version      0.12.47
+// @version      0.12.52
 // @description  장기 RP용 현재상태·날짜로그·연속성 타임라인·캐릭터 설정을 관리하고, 검수형 AI 생성과 필요한 컨텍스트 자동 주입을 지원합니다.
 // @author       User
 // @license      All Rights Reserved
@@ -42,13 +42,13 @@
   // 버전별 키를 쓰면 구버전과 신버전이 동시에 설치됐을 때 둘 다 실행될 수 있습니다.
   // 모든 버전이 공유하는 고정 키로 중복 실행을 막습니다.
   if (window.__WISH_RP_MANAGER_LOADED__) return;
-  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.12.47', loadedAt: Date.now() };
+  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.12.52', loadedAt: Date.now() };
   // 같은 페이지에 남아 있는 v0.8.10 복사본이 뒤늦게 시작되는 경우도 차단합니다.
   window.__RP_MANAGER_0810_LOADED__ = true;
 
   const APP = {
     name: '🪽위시 RP Manager',
-    version: '0.12.47',
+    version: '0.12.52',
     dbName: 'RPContextManagerDB',
     dbVersion: 2,
     storeName: 'rooms',
@@ -3396,7 +3396,7 @@ USER에 관한 각 문장은 다음 중 하나에 해당할 때만 작성한다.
     firebase: { label:'Firebase 설정 코드', model:'gemini-3.8-flash' },
     vertex: { label:'Vertex 서비스 계정 · 고급', model:'gemini-3.8-flash' },
     deepseek: { label:'DeepSeek API 키', model:'deepseek-chat' },
-    openai: { label:'기타 OpenAI 호환', model:'' },
+    openai: { label:'OpenAI / OpenAI 호환', model:'gpt-5.6-luna' },
   });
   const AI_SUMMARY_PROVIDERS = Object.freeze(Object.keys(AI_SUMMARY_PROVIDER_DEFAULTS));
   const AI_SUMMARY_PROVIDER_MODELS = Object.freeze({
@@ -3438,8 +3438,12 @@ USER에 관한 각 문장은 다음 중 하나에 해당할 때만 작성한다.
       { value:'deepseek-reasoner', label:'DeepSeek Reasoner' },
     ],
     openai:[
-      { value:'gpt-4o-mini', label:'GPT-4o mini' },
-      { value:'gpt-4.1-mini', label:'GPT-4.1 mini' },
+      { value:'gpt-6-astra', label:'GPT-6 Astra · 최고성능·고비용' },
+      { value:'gpt-5.6-sol', label:'GPT-5.6 Sol · 고품질' },
+      { value:'gpt-5.6-terra', label:'GPT-5.6 Terra · 균형' },
+      { value:'gpt-5.6-luna', label:'GPT-5.6 Luna · 저비용 추천' },
+      { value:'gpt-4.1-mini', label:'GPT-4.1 mini · 구버전' },
+      { value:'gpt-4o-mini', label:'GPT-4o mini · 구버전' },
     ],
   });
   const AI_VERTEX_OAUTH_URL = 'https://oauth2.googleapis.com/token';
@@ -3914,8 +3918,23 @@ USER에 관한 각 문장은 다음 중 하나에 해당할 때만 작성한다.
   }
 
   function defaultAiPricing(provider, model) {
-    const google = ['gemini','firebase','vertex'].includes(String(provider || '').toLowerCase());
+    const providerId = String(provider || '').toLowerCase();
+    const google = ['gemini','firebase','vertex'].includes(providerId);
     const name = String(model || '').trim().toLowerCase();
+    if (providerId === 'openai') {
+      if (/^gpt-6-astra(?:$|-)/.test(name)) {
+        return { inputPerMillion:10.00, outputPerMillion:50.00, source:'OpenAI 공식 기본 단가' };
+      }
+      if (/^gpt-5\.6-terra(?:$|-)/.test(name)) {
+        return { inputPerMillion:2.00, outputPerMillion:12.00, source:'OpenAI 공식 기본 단가' };
+      }
+      if (/^gpt-5\.6-luna(?:$|-)/.test(name)) {
+        return { inputPerMillion:0.20, outputPerMillion:1.20, source:'OpenAI 공식 기본 단가' };
+      }
+      if (/^(?:gpt-5\.6|gpt-5\.6-sol)(?:$|-)/.test(name)) {
+        return { inputPerMillion:4.00, outputPerMillion:20.00, source:'OpenAI 공식 기본 단가' };
+      }
+    }
     if (google && /^gemini-3\.8-flash(?:$|-)/.test(name)) {
       return { inputPerMillion:0.75, outputPerMillion:3.75, source:'Google 공식 Standard 단가 · 2026-12-31까지' };
     }
@@ -3946,7 +3965,19 @@ USER에 관한 각 문장은 다음 중 하나에 해당할 때만 작성한다.
     return { inputPerMillion:null, outputPerMillion:null, source:'자동 단가 정보 없음' };
   }
 
-  function getAiPricing(_settings, provider, model) {
+  function isOfficialOpenAiBaseUrl(value) {
+    try {
+      const url = new URL(String(value || '').trim());
+      return url.hostname.toLowerCase() === 'api.openai.com';
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function getAiPricing(settings, provider, model) {
+    if (String(provider || '').toLowerCase() === 'openai' && !isOfficialOpenAiBaseUrl(settings?.openaiBaseUrl)) {
+      return { inputPerMillion:null, outputPerMillion:null, source:'OpenAI 호환 API · 단가 직접 확인 필요' };
+    }
     return defaultAiPricing(provider, model);
   }
 
@@ -4550,6 +4581,25 @@ try {
     return /\/chat\/completions$/i.test(url.pathname) ? url.href : `${url.href.replace(/\/+$/g, '')}/chat/completions`;
   }
 
+  function isModernOpenAiChatModel(model) {
+    const name = String(model || '').trim().toLowerCase();
+    return /^gpt-(?:5(?:[.-]|$)|6(?:[.-]|$))/.test(name) || name === 'chat-latest';
+  }
+
+  function aiOpenAiChatPayload(model, systemInstruction, prompt, maxOutputTokens = 8192, options = {}) {
+    const tokenLimit = Math.max(128, Number(maxOutputTokens) || 8192);
+    const modern = isModernOpenAiChatModel(model);
+    return {
+      model,
+      messages:[
+        { role:'system', content:String(systemInstruction || '') },
+        { role:'user', content:String(prompt || '') },
+      ],
+      ...(modern ? { max_completion_tokens:tokenLimit } : { temperature:0.2, max_tokens:tokenLimit }),
+      ...(options.responseJsonSchema ? { response_format:{ type:'json_object' } } : {}),
+    };
+  }
+
   function aiUsageFromGemini(data) {
     const usage = data?.usageMetadata || {};
     return {
@@ -4624,16 +4674,7 @@ try {
       if (secret.trim()) headers.Authorization = `Bearer ${secret.trim()}`;
       const response = await aiHttpRequest(url, {
         headers,
-        body:JSON.stringify({
-          model,
-          messages:[
-            { role:'system', content:String(systemInstruction || '') },
-            { role:'user', content:String(prompt || '') },
-          ],
-          temperature:0.2,
-          max_tokens:Math.max(128, Number(maxOutputTokens) || 8192),
-          ...(options.responseJsonSchema ? { response_format:{ type:'json_object' } } : {}),
-        }),
+        body:JSON.stringify(aiOpenAiChatPayload(model, systemInstruction, prompt, maxOutputTokens, options)),
       });
       const data = parseAiJsonResponse(response, provider === 'deepseek' ? 'DeepSeek' : 'OpenAI 호환 API');
       text = String(data?.choices?.[0]?.message?.content || '');
@@ -5866,13 +5907,39 @@ ${dialogueText}`;
   }
 
   const LOG_STOPWORDS = new Set([
-    '그리고','하지만','그래서','그러나','그런데','지금','현재','오늘','어제','내일','정도','때문','대한','하는','했다','한다','있다','없다','된다','되어','있는','없는','에게','에서','으로','로서','같이','그냥','정말','너무','다시','이미','직접','최신','사실','상태','장면','내용','말함','확정','미확정','자동','금지','유지','사용자','캐릭터','세레나','user','assistant','serena'
+    '그리고','하지만','그래서','그러나','그런데','그러면서','그러자','따라서','또한','혹은','또는',
+    '지금','현재','오늘','어제','내일','그때','이때','이제','여전히','계속','아직','벌써','다시','이미','처음','마지막',
+    '정도','때문','대한','관련','사실','상태','장면','내용','모습','순간','마음','생각','행동','말함','확정','미확정',
+    '자신','자기','서로','그것','이것','저것','여기','거기','누구','무엇','어디','우리','너희','그들','그녀','그는','네가',
+    '하는','했다','한다','하고','하며','하자','하면','해서','하다','해도','했고','된다','되어','돼서','되며','되다',
+    '있는','있던','있다','없다','없는','없던','아니다','않다','않는','않았다','말했다','말하며','말하다','말해',
+    '보며','보자','보았다','보다','믿어','믿으며','믿었다','그냥','정말','너무','매우','조금','바로','함께','혼자','같이',
+    '직접','최신','자동','금지','유지','사용자','캐릭터','세레나','user','assistant','serena'
   ]);
 
+  // 한국어는 공백만으로 나누면 `유민의`, `네이션은`처럼 조사가 붙은 표면형과
+  // `그는`, `자신이` 같은 기능어가 핵심 검색어로 남습니다. 별도 형태소 분석기 없이도
+  // 안전하게 구분되는 조사만 떼고, 어간을 임의 추측해야 하는 동사·형용사는 손대지 않습니다.
+  const LOG_RECALL_PARTICLE_RE = /(?:으로부터|에게서는|한테서는|께서는|에서부터|에게서|한테서|으로서는|으로써는|이라도|이라면|이라고|이라는|이랑은|하고는|에서는|으로는|로부터|까지는|부터는|보다는|처럼은|만으로|만이라도|에게|한테|께서|에서|으로|로서|로써|부터|까지|보다|처럼|만큼|이랑|하고|이라|이며|이고|이나|라도|마저|조차|밖에|대로|은|는|이|가|을|를|의|에|도|만|와|과|랑)$/;
+
+  function normalizeRecallToken(value) {
+    let token = String(value || '').toLowerCase().replace(/^[-_']+|[-_']+$/g, '');
+    if (!token || /^\d+$/.test(token)) return '';
+    // `여전히`처럼 마지막 음절이 우연히 조사와 같은 부사는 먼저 제외합니다.
+    if (LOG_STOPWORDS.has(token)) return '';
+    if (/^[가-힣]+$/.test(token)) {
+      // 한 번에 가장 긴 조사 하나만 제거합니다. 두 글자 이상의 본체를 반드시 남겨
+      // 한 글자 단어나 실제 이름을 과도하게 훼손하지 않습니다.
+      const stripped = token.replace(LOG_RECALL_PARTICLE_RE, '');
+      if (stripped.length >= 2) token = stripped;
+    }
+    if (token.length < 2 || LOG_STOPWORDS.has(token)) return '';
+    return token;
+  }
+
   function tokenizeRecallText(text) {
-    const normalized = String(text || '').toLowerCase();
-    const raw = normalized.match(/[\p{L}\p{N}_'-]{2,}/gu) || [];
-    return [...new Set(raw.filter(t => t.length >= 2 && !LOG_STOPWORDS.has(t) && !/^\d+$/.test(t)))];
+    const raw = String(text || '').toLowerCase().match(/[\p{L}\p{N}_'-]{2,}/gu) || [];
+    return [...new Set(raw.map(normalizeRecallToken).filter(Boolean))];
   }
 
   function simpleHash(value) {
@@ -6819,7 +6886,7 @@ ${dialogueText}`;
   }
 
   function recallDocForBlock(block) {
-    const signature = `${block.key}|${block.raw.length}|${simpleHash(block.raw)}`;
+    const signature = `recall-v2|${block.key}|${block.raw.length}|${simpleHash(block.raw)}`;
     const cached = LOG_RECALL_DOC_CACHE.get(signature);
     if (cached) return cached;
     const merged = `${block.events} ${block.body}`.toLowerCase();
@@ -10660,6 +10727,34 @@ ${dialogueText}`;
     });
   }
 
+  function emptyRoomAiUsageForTransfer() {
+    return { version:1, features:{ summary:emptyRoomAiFeatureUsage(), timeline:emptyRoomAiFeatureUsage(), context:emptyRoomAiFeatureUsage() }, history:[] };
+  }
+
+  function cloneBackupRoomIntoCurrent(sourceRoom, targetRoom) {
+    if (!sourceRoom || !targetRoom?.chatId) throw new Error('복사할 원본 방 또는 현재 방 정보를 찾지 못했습니다.');
+    const next = JSON.parse(JSON.stringify(sourceRoom));
+    const sourceScopeIds = Array.isArray(sourceRoom.characterScopeIds) ? sourceRoom.characterScopeIds : [];
+    const targetScopeIds = Array.isArray(targetRoom.characterScopeIds) ? targetRoom.characterScopeIds : [];
+    next.chatId = String(targetRoom.chatId);
+    next.apiChatId = String(targetRoom.apiChatId || state.currentApiChatId || String(targetRoom.chatId).split('::')[0]);
+    next.label = String(targetRoom.label || sourceRoom.label || '복사된 RP');
+    next.characterScopeId = String(targetRoom.characterScopeId || sourceRoom.characterScopeId || '');
+    next.characterScopeIds = [...new Set([
+      ...targetScopeIds, ...sourceScopeIds, next.characterScopeId,
+    ].filter(Boolean).map(String))];
+    // 다른 방의 활성 carrier와 비용 기록은 대상 방의 실제 상태가 아니므로 복사하지 않습니다.
+    next.pending = null;
+    next.aiApiUsage = emptyRoomAiUsageForTransfer();
+    next.aiContextReviewReport = null;
+    next.autoRecallContextText = '';
+    next.autoScanLastMessageId = '';
+    next.createdAt = String(targetRoom.createdAt || nowIso());
+    next.updatedAt = nowIso();
+    normalizeRoomSlots(next);
+    return next;
+  }
+
   function openBackupImportDialog(data, existingRooms = [], existingLibraries = []) {
     return new Promise(resolve => {
       document.querySelector('#rpcm-import-backdrop')?.remove();
@@ -10674,7 +10769,7 @@ ${dialogueText}`;
       backdrop.id = 'rpcm-import-backdrop';
       backdrop.innerHTML = `
         <div class="rpcm-import-dialog" role="dialog" aria-modal="true" aria-label="백업 선택 복원">
-          <div class="rpcm-lib-dialog-head"><div><div class="rpcm-lib-dialog-title">백업 선택 복원</div><div class="rpcm-lib-dialog-desc">${data.exportedAt ? `${new Date(data.exportedAt).toLocaleString('ko-KR')} 생성 · ` : ''}복원할 방과 설정집만 선택하세요. 현재 주입 중인 방은 안전을 위해 선택할 수 없습니다.</div></div><button type="button" class="rpcm-lib-close" aria-label="닫기">✕</button></div>
+          <div class="rpcm-lib-dialog-head"><div><div class="rpcm-lib-dialog-title">백업 불러오기</div><div class="rpcm-lib-dialog-desc">${data.exportedAt ? `${new Date(data.exportedAt).toLocaleString('ko-KR')} 생성 · ` : ''}원래 방에 복원하거나, 백업의 RP 하나를 지금 열어 둔 방으로 통째로 복사할 수 있습니다.</div></div><button type="button" class="rpcm-lib-close" aria-label="닫기">✕</button></div>
           <div class="rpcm-import-toolbar"><button type="button" class="rpcm-lib-small" data-select-current>현재 방만</button><button type="button" class="rpcm-lib-small" data-select-all>전체 선택</button><button type="button" class="rpcm-lib-small" data-select-none>선택 해제</button><span class="rpcm-lib-selected">0개 선택</span></div>
           <div class="rpcm-import-list">
             <div class="rpcm-import-group-title">RP 채팅방 · ${rooms.length}개</div>
@@ -10683,22 +10778,25 @@ ${dialogueText}`;
               const current = String(room.chatId) === String(state.currentChatId);
               const existing = existingRoomMap.get(String(room.chatId));
               const diff = !existing ? '신규' : backupRoomSignature(existing) === backupRoomSignature(room) ? '동일' : '변경 있음';
-              return `<label class="rpcm-import-row${current ? ' is-current' : ''}${blocked ? ' is-blocked' : ''}"><input type="checkbox" data-room-id="${esc(room.chatId)}" ${blocked ? 'disabled' : ''}><span><strong>${current ? '● ' : ''}${esc(room.label || `RP ${shortId(room.chatId)}`)} <em class="rpcm-import-diff">${diff}</em></strong><small>${esc(backupRoomSummary(room))}${blocked ? ' · 현재 주입 중이라 복원 불가' : ''}</small></span></label>`;
+              return `<label class="rpcm-import-row${current ? ' is-current' : ''}${blocked ? ' is-protected' : ''}"><input type="checkbox" data-room-id="${esc(room.chatId)}" data-restore-blocked="${blocked ? '1' : '0'}"><span><strong>${current ? '● ' : ''}${esc(room.label || `RP ${shortId(room.chatId)}`)} <em class="rpcm-import-diff">${diff}</em></strong><small>${esc(backupRoomSummary(room))}${blocked ? ' · 원래 방 복원 불가 · 현재 방 복사는 가능' : ''}</small></span></label>`;
             }).join('') : '<div class="rpcm-empty">백업에 채팅방 데이터가 없습니다.</div>'}
             <div class="rpcm-import-group-title">캐릭터 설정집 · ${characterLibraries.length}개</div>
             ${characterLibraries.length ? characterLibraries.map(lib => { const existing = existingLibraryMap.get(String(lib.scopeId)); const diff = !existing ? '신규' : backupLibrarySignature(existing) === backupLibrarySignature(lib) ? '동일' : '변경 있음'; return `<label class="rpcm-import-row"><input type="checkbox" data-library-id="${esc(lib.scopeId)}"><span><strong>${esc(libraryDisplayName(lib) || lib.scopeId)} <em class="rpcm-import-diff">${diff}</em></strong><small>${lib.characters.length}명</small></span></label>`; }).join('') : '<div class="rpcm-empty">백업에 캐릭터 설정집이 없습니다.</div>'}
             <div class="rpcm-import-group-title">기타 설정집 · ${extraLibraries.length}개</div>
             ${extraLibraries.length ? extraLibraries.map(lib => { const existing = existingLibraryMap.get(String(lib.scopeId)); const diff = !existing ? '신규' : backupLibrarySignature(existing) === backupLibrarySignature(lib) ? '동일' : '변경 있음'; return `<label class="rpcm-import-row"><input type="checkbox" data-library-id="${esc(lib.scopeId)}"><span><strong>${esc(extraLibraryDisplayName(lib) || lib.scopeId)} <em class="rpcm-import-diff">${diff}</em></strong><small>${lib.extras.length}개 항목</small></span></label>`; }).join('') : '<div class="rpcm-empty">백업에 기타 설정집이 없습니다.</div>'}
           </div>
-          <div class="rpcm-import-note">선택한 채팅방은 같은 ID의 기존 데이터를 덮어씁니다. 주입 진행 상태는 복원하지 않습니다.</div>
-          <div class="rpcm-lib-dialog-actions"><button type="button" class="rpcm-btn secondary rpcm-import-cancel">취소</button><button type="button" class="rpcm-btn primary rpcm-import-apply" disabled>선택 항목 복원</button></div>
+          <div class="rpcm-import-note">‘현재 방에 복사’는 지금 열어 둔 방의 RP Manager 데이터를 덮어씁니다. 활성 주입 상태·AI 맥락 검토 결과·원본 방의 API 비용은 복사하지 않습니다.</div>
+          <div class="rpcm-lib-dialog-actions"><button type="button" class="rpcm-btn secondary rpcm-import-cancel">취소</button><button type="button" class="rpcm-btn secondary rpcm-import-clone" disabled>선택한 RP를 현재 방에 복사</button><button type="button" class="rpcm-btn primary rpcm-import-apply" disabled>원래 방에 복원</button></div>
         </div>`;
       document.body.appendChild(backdrop);
       const boxes = () => [...backdrop.querySelectorAll('input[type="checkbox"]:not(:disabled)')];
       const update = () => {
         const count = boxes().filter(box => box.checked).length;
+        const selectedRoomCount = boxes().filter(box => box.checked && box.dataset.roomId).length;
+        const restoreBlocked = boxes().some(box => box.checked && box.dataset.roomId && box.dataset.restoreBlocked === '1');
         backdrop.querySelector('.rpcm-lib-selected').textContent = `${count}개 선택`;
-        backdrop.querySelector('.rpcm-import-apply').disabled = count === 0;
+        backdrop.querySelector('.rpcm-import-apply').disabled = count === 0 || restoreBlocked;
+        backdrop.querySelector('.rpcm-import-clone').disabled = selectedRoomCount !== 1 || !!state.currentRoom?.pending;
       };
       const close = value => { backdrop.remove(); resolve(value); };
       backdrop._rpcmClose = () => close(null);
@@ -10714,9 +10812,16 @@ ${dialogueText}`;
       backdrop.querySelector('[data-select-none]').onclick = () => { boxes().forEach(box => { box.checked = false; }); update(); };
       boxes().forEach(box => box.onchange = update);
       backdrop.querySelector('.rpcm-import-apply').onclick = () => close({
+        mode:'restore-original',
         roomIds: boxes().filter(box => box.checked && box.dataset.roomId).map(box => box.dataset.roomId),
         libraryIds: boxes().filter(box => box.checked && box.dataset.libraryId).map(box => box.dataset.libraryId),
       });
+      backdrop.querySelector('.rpcm-import-clone').onclick = () => close({
+        mode:'clone-current',
+        roomIds: boxes().filter(box => box.checked && box.dataset.roomId).map(box => box.dataset.roomId),
+        libraryIds: boxes().filter(box => box.checked && box.dataset.libraryId).map(box => box.dataset.libraryId),
+      });
+      if (data?.backupMode === 'room-transfer') boxes().forEach(box => { box.checked = true; });
       update();
       backdrop.querySelector('.rpcm-lib-close')?.focus();
     });
@@ -11579,8 +11684,11 @@ ${dialogueText}`;
 
   const AI_CONTEXT_RESPONSE_SCHEMA = Object.freeze({
     type:'OBJECT',
-    properties:{ keys:{ type:'ARRAY', items:{ type:'STRING' } } },
-    required:['keys'],
+    properties:{
+      situation:{ type:'STRING' },
+      keys:{ type:'ARRAY', items:{ type:'STRING' } },
+    },
+    required:['situation','keys'],
   });
 
   function safeAiContextRawExcerpt(value) {
@@ -11589,7 +11697,7 @@ ${dialogueText}`;
       .replace(/((?:api[_-]?key|private[_-]?key|client[_-]?email|project[_-]?id)\s*["']?\s*[:=]\s*)[^,\n}]+/gi, '$1[인증정보 숨김]');
   }
 
-  function parseAiContextKeysResponse(value) {
+  function parseAiContextResponse(value) {
     const raw = normalizeLineBreaks(String(value || '')).trim();
     if (!raw) throw new Error('응답 형식 오류: 빈 응답입니다.');
     let jsonText = raw;
@@ -11599,13 +11707,18 @@ ${dialogueText}`;
     let parsed;
     try { parsed = JSON.parse(jsonText); }
     catch (_) { throw new Error('응답 형식 오류: 전체 응답이 하나의 JSON 객체가 아닙니다.'); }
-    if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object' || !Array.isArray(parsed.keys)) {
-      throw new Error('응답 형식 오류: {"keys":[...]} schema가 필요합니다.');
+    if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object' || typeof parsed.situation !== 'string' || !Array.isArray(parsed.keys)) {
+      throw new Error('응답 형식 오류: {"situation":"...","keys":[...]} schema가 필요합니다.');
     }
-    if (Object.keys(parsed).some(key => key !== 'keys') || parsed.keys.some(key => typeof key !== 'string')) {
-      throw new Error('응답 형식 오류: keys 문자열 배열 외의 값이 포함되었습니다.');
+    if (Object.keys(parsed).some(key => !['situation','keys'].includes(key)) || parsed.keys.some(key => typeof key !== 'string')) {
+      throw new Error('응답 형식 오류: situation 문자열과 keys 문자열 배열 외의 값이 포함되었습니다.');
     }
-    return parsed.keys.map(key => key.trim()).filter(Boolean);
+    const situation = normalizeLineBreaks(parsed.situation).replace(/\s+/g, ' ').trim();
+    if (!situation) throw new Error('응답 형식 오류: 현재 상황 설명이 비어 있습니다.');
+    return {
+      situation:situation.slice(0, 500),
+      keys:parsed.keys.map(key => key.trim()).filter(Boolean),
+    };
   }
 
   function assertAiContextResponseComplete(result) {
@@ -11624,24 +11737,24 @@ ${dialogueText}`;
       const block = entry.block;
       return `[후보 ${index + 1}]\nKEY=${block.key}\n시간선=${logTimelineLabelOfBlock(block)}\n제목=${block.heading}\n내용=${String(block.body || '').slice(0, 2200)}`;
     }).join('\n\n');
-    const prompt = `현재 RP 맥락과 실제로 이어지는 날짜로그를 골라라. 인물 이름만 겹치는 로그보다 사건·장소·물건·관계 변화·미해결 단서가 이어지는 로그를 우선한다. 후보에 없는 KEY는 만들지 않는다. 최대 ${count}개를 관련도순으로 고른다. 적합한 로그가 없으면 빈 배열을 반환한다.\n\n[현재 RP]\n${String(contextText || '').slice(-12000)}\n\n[키워드 검색 후보]\n${candidateText}\n\nJSON 한 줄만 출력:\n{"keys":["후보의 KEY"]}`;
-    const systemInstruction = '날짜로그 후보를 맥락 기준으로 재정렬하는 선택기다. 설명 없이 지정된 JSON만 출력한다.';
+    const prompt = `먼저 [현재 RP]만 읽고, 지금 진행 중인 상황을 확인된 사실만으로 한국어 1~2문장(최대 220자)으로 정리한다. 누가 누구에게 무엇을 하고 있으며 어떤 사건·대화·쟁점이 진행 중인지 구체적으로 쓴다. 감정·의도·행동을 추측하거나 아직 발생하지 않은 일을 확정하지 않는다. [키워드 검색 후보]의 과거 내용을 현재 상황에 섞지 않는다.\n\n그다음 현재 RP 맥락과 실제로 이어지는 날짜로그를 고른다. 인물 이름만 겹치는 로그보다 사건·장소·물건·관계 변화·미해결 단서가 이어지는 로그를 우선한다. 후보에 없는 KEY는 만들지 않는다. 최대 ${count}개를 관련도순으로 고른다. 적합한 로그가 없으면 keys는 빈 배열로 반환한다.\n\n[현재 RP]\n${String(contextText || '').slice(-12000)}\n\n[키워드 검색 후보]\n${candidateText}\n\nJSON 한 줄만 출력:\n{"situation":"현재 RP에서 확인된 상황","keys":["후보의 KEY"]}`;
+    const systemInstruction = '현재 RP 상황을 사실대로 정리하고 날짜로그 후보를 맥락 기준으로 재정렬하는 선택기다. 설명 없이 지정된 JSON만 출력한다.';
     const callOptions = { feature:'context', room, responseJsonSchema:AI_CONTEXT_RESPONSE_SCHEMA, allowEmptyText:true, thinkingLevel:'low' };
     let result = await callAiSummaryProvider(provider, settings, secret, systemInstruction, prompt, 2048, () => {}, callOptions);
-    let requested;
+    let parsedResponse;
     let formatRetried = false;
     try {
       assertAiContextResponseComplete(result);
-      requested = parseAiContextKeysResponse(result.text);
+      parsedResponse = parseAiContextResponse(result.text);
     } catch (firstError) {
       formatRetried = true;
       const firstRaw = safeAiContextRawExcerpt(result.text);
-      const retryPrompt = `${prompt}\n\n[응답 형식 재요청]\nJSON 외 텍스트 출력 금지. 설명 금지. 코드블록 금지. {"keys":["후보의 KEY"]} schema만 반환한다.`;
+      const retryPrompt = `${prompt}\n\n[응답 형식 재요청]\nJSON 외 텍스트 출력 금지. 설명 금지. 코드블록 금지. {"situation":"현재 RP에서 확인된 상황","keys":["후보의 KEY"]} schema만 반환한다.`;
       let retryResult = null;
       try {
         retryResult = await callAiSummaryProvider(provider, settings, secret, systemInstruction, retryPrompt, 4096, () => {}, callOptions);
         assertAiContextResponseComplete(retryResult);
-        requested = parseAiContextKeysResponse(retryResult.text);
+        parsedResponse = parseAiContextResponse(retryResult.text);
         result = retryResult;
       } catch (retryError) {
         const failure = new Error(`응답 형식 오류: 1차 파싱 실패 후 자동 재요청도 실패했습니다. ${String(retryError?.message || retryError || '')}`.trim());
@@ -11653,7 +11766,7 @@ ${dialogueText}`;
     }
     const byKey = new Map(candidates.map(entry => [String(entry.block.key), entry]));
     const selected = [];
-    for (const key of requested) {
+    for (const key of parsedResponse.keys) {
       const entry = byKey.get(key);
       if (entry && !selected.includes(entry)) selected.push(entry);
       if (selected.length >= count) break;
@@ -11663,6 +11776,7 @@ ${dialogueText}`;
       state:'success', checkedAt:nowIso(), totalLogs, candidateCount:candidates.length, inspectedCount:Math.min(12, candidates.length), selectedCount:selected.length,
       provider, model:String(result.model || settings.models?.[provider] || ''), fallback:false, formatRetried,
       managerVersion:APP.version, finishReason:String(result.finishReason || ''),
+      situation:parsedResponse.situation,
       keywords:[...new Set(selected.flatMap(item => [...(item.matchedPhrases || []), ...(item.matchedCoreTokens || []), ...(item.matchedRareTokens || [])]))].slice(0, 12),
       characters:[...new Set(selected.flatMap(item => item.matchedCharacterTerms || []))].slice(0, 8),
       items:selected.map((item, index) => ({ key:String(item.block.key), title:String(item.block.titleText || item.block.heading || ''), rank:index + 1, candidateRank:candidates.indexOf(item) + 1, score:Number(item.score || 0), reason:relatedLogReason(item) })),
@@ -11680,6 +11794,7 @@ ${dialogueText}`;
       state:'fallback', checkedAt:nowIso(), totalLogs, candidateCount:(candidates || []).length, inspectedCount:Math.min(12, (candidates || []).length), selectedCount:(selected || []).length,
       provider, model:String(settings.models?.[provider] || ''), fallback:true, failureCategory:failure.category, failureDetail:failure.detail,
       managerVersion:APP.version, finishReason:String(error?.finishReason || ''),
+      situation:'',
       failureRaw:safeAiContextRawExcerpt(error?.aiRaw || ''), parseFailure:String(error?.parseFailure || ''),
       items:(selected || []).map((item, index) => ({ key:String(item.block.key), title:String(item.block.titleText || item.block.heading || ''), rank:index + 1, candidateRank:(candidates || []).indexOf(item) + 1, score:Number(item.score || 0), reason:relatedLogReason(item) })),
     };
@@ -11717,7 +11832,7 @@ ${dialogueText}`;
           state:'success', checkedAt:nowIso(), totalLogs:parseDatedLogBlocks(slot.content).length,
           candidateCount:0, inspectedCount:0, selectedCount:0, provider:settings.provider,
           model:String(settings.models?.[settings.provider] || ''), fallback:false, formatRetried:false,
-          managerVersion:APP.version, finishReason:'', keywords:[], characters:[], items:[],
+          managerVersion:APP.version, finishReason:'', situation:'', keywords:[], characters:[], items:[],
         };
         setAiFeatureStatus('context', 'ok', settings.provider, room.aiContextReviewReport.model, '검토할 후보 없음');
       }
@@ -12719,9 +12834,9 @@ ${dialogueText}`;
       .rpcm-ai-new-blocks{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:8px 9px;border:1px solid #405b4c;border-radius:8px;background:#17231d;color:#aee8c7;font-size:10px}.rpcm-ai-new-blocks[hidden]{display:none!important}.rpcm-ai-new-blocks strong{color:#d8f8e4}.rpcm-ai-new-block-chip{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:4px 7px;border:1px solid #39704f;border-radius:999px;background:#1d3025;color:#bcebcf}
       .rpcm-ai-view-tabs{gap:5px}.rpcm-ai-view-tab{padding:5px 8px;font-size:10px}.rpcm-ai-diff{border-radius:8px;overflow:visible}.rpcm-ai-diff-summary{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;gap:8px;padding:8px 10px;font-size:10px}.rpcm-ai-diff-metrics{display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-width:0}.rpcm-ai-diff-metrics strong{color:#ddd}.rpcm-ai-diff-sections{position:relative}.rpcm-ai-diff-sections summary{cursor:pointer;color:#c59aae}.rpcm-ai-diff-sections div{margin-top:5px;color:#888;line-height:1.45}.rpcm-ai-diff-hide{display:flex;align-items:center;gap:4px;white-space:nowrap;color:#aaa}.rpcm-ai-diff-head{font-size:10px}.rpcm-ai-diff-head>div,.rpcm-ai-diff-cell{padding:7px 9px}.rpcm-ai-diff-body{max-height:none;overflow:visible;font-size:10px;line-height:1.45}
       .rpcm-ai-foot{min-height:48px;padding:8px 12px;gap:7px;flex-wrap:nowrap}.rpcm-ai-foot .rpcm-ai-usage{flex:1;min-width:0;margin-right:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:9px}.rpcm-ai-foot .rpcm-ai-btn{flex:0 0 auto}
-      .rpcm-unified-api-backdrop{position:fixed;inset:0;z-index:2147483647;background:rgba(0,0,0,.74);display:flex;align-items:center;justify-content:center;padding:3vh 3vw;box-sizing:border-box;font-family:-apple-system,BlinkMacSystemFont,"Pretendard",sans-serif;color:#eee}.rpcm-unified-api-dialog{width:min(820px,94vw);height:auto;max-height:94vh}.rpcm-api-feature-list{display:grid;gap:0;border:1px solid #343434;border-radius:10px;overflow:hidden}.rpcm-api-feature-row{display:grid;grid-template-columns:minmax(180px,.85fr) minmax(220px,1fr) minmax(130px,.65fr);gap:12px;align-items:center;padding:12px;border-bottom:1px solid #343434}.rpcm-api-feature-row:last-child{border-bottom:0}.rpcm-api-feature-row>div{display:grid;gap:3px}.rpcm-api-feature-row strong{font-size:12px}.rpcm-api-feature-row small{color:#888;font-size:10px;line-height:1.45}.rpcm-api-feature-row select{min-width:0;border:1px solid #424242;border-radius:8px;background:#101010;color:#eee;padding:8px 9px;font-size:12px}.rpcm-api-feature-status{display:grid;gap:2px}.rpcm-api-state{font-size:11px;font-weight:800}.rpcm-api-state.ok{color:#61d795}.rpcm-api-state.error{color:#ff8998}.rpcm-api-state.off,.rpcm-api-state.idle{color:#929292}.rpcm-api-context-toggle{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px;border:1px solid #493643;border-radius:10px;background:#211a1e}.rpcm-api-context-toggle>span{display:grid;gap:4px}.rpcm-api-context-toggle strong{font-size:12px}.rpcm-api-context-toggle small{color:#a98d9b;font-size:10px}.rpcm-api-context-toggle input{width:20px;height:20px;accent-color:#dc4f94}.rpcm-main-api-button{font-size:15px!important;color:#e1a7c3!important}
+      .rpcm-unified-api-backdrop{position:fixed;inset:0;z-index:2147483647;background:rgba(0,0,0,.74);display:flex;align-items:center;justify-content:center;padding:3vh 3vw;box-sizing:border-box;font-family:-apple-system,BlinkMacSystemFont,"Pretendard",sans-serif;color:#eee}.rpcm-unified-api-dialog{width:min(820px,94vw);height:auto;max-height:94vh}.rpcm-api-feature-list{display:grid;gap:0;border:1px solid #343434;border-radius:10px;overflow:hidden}.rpcm-api-feature-row{display:grid;grid-template-columns:minmax(180px,.85fr) minmax(220px,1fr) minmax(130px,.65fr);gap:12px;align-items:center;padding:12px;border-bottom:1px solid #343434}.rpcm-api-feature-row:last-child{border-bottom:0}.rpcm-api-feature-row>div{display:grid;gap:3px}.rpcm-api-feature-row strong{font-size:12px}.rpcm-api-feature-row small{color:#888;font-size:10px;line-height:1.45}.rpcm-api-feature-row select,.rpcm-api-feature-row input{min-width:0;width:100%;box-sizing:border-box;border:1px solid #424242;border-radius:8px;background:#101010;color:#eee;padding:8px 9px;font-size:12px}.rpcm-api-feature-status{display:grid;gap:2px}.rpcm-api-state{font-size:11px;font-weight:800}.rpcm-api-state.ok{color:#61d795}.rpcm-api-state.error{color:#ff8998}.rpcm-api-state.off,.rpcm-api-state.idle{color:#929292}.rpcm-api-context-toggle{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px;border:1px solid #493643;border-radius:10px;background:#211a1e}.rpcm-api-context-toggle>span{display:grid;gap:4px}.rpcm-api-context-toggle strong{font-size:12px}.rpcm-api-context-toggle small{color:#a98d9b;font-size:10px}.rpcm-api-context-toggle input{width:20px;height:20px;accent-color:#dc4f94}.rpcm-main-api-button{font-size:15px!important;color:#e1a7c3!important}
       .rpcm-api-room-usage{gap:10px}.rpcm-api-usage-list{display:grid;border:1px solid #373737;border-radius:10px;overflow:hidden}.rpcm-api-usage-row{display:grid;grid-template-columns:minmax(120px,.65fr) minmax(0,1.6fr) auto;gap:10px;align-items:center;padding:10px 11px;border-bottom:1px solid #303030;background:#191919}.rpcm-api-usage-row:last-child{border-bottom:0}.rpcm-api-usage-row strong{font-size:11px;color:#eee}.rpcm-api-usage-row span{font-size:10px;color:#989898;line-height:1.45}.rpcm-api-usage-row b{font-size:10px;color:#efc9dc;text-align:right}.rpcm-api-usage-total{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 12px;align-items:center;padding:11px 12px;border:1px solid #573c4a;border-radius:10px;background:#211a1e}.rpcm-api-usage-total span{font-size:10px;color:#b5a8ae;line-height:1.55}.rpcm-api-usage-total strong{font-size:13px;color:#f3d7e4}.rpcm-api-usage-total small{grid-column:1/-1;color:#8f7e87;font-size:9px}.rpcm-api-usage-total small:empty{display:none}.rpcm-api-usage-details{border:1px solid #353535;border-radius:9px;background:#181818;overflow:hidden}.rpcm-api-usage-details>summary{display:flex;align-items:center;gap:8px;padding:9px 11px;cursor:pointer;list-style:none;color:#bbb;font-size:10px;font-weight:750}.rpcm-api-usage-details>summary::-webkit-details-marker{display:none}.rpcm-api-usage-details>summary span{margin-left:auto;color:#777}.rpcm-api-usage-details>div{max-height:250px;overflow:auto;border-top:1px solid #303030}.rpcm-api-usage-call{display:grid;grid-template-columns:135px 100px minmax(120px,1fr) minmax(170px,1fr) auto;gap:8px;align-items:center;padding:8px 10px;border-bottom:1px solid #292929;font-size:9px}.rpcm-api-usage-call:last-child{border-bottom:0}.rpcm-api-usage-call span{color:#8d8d8d;overflow-wrap:anywhere}.rpcm-api-usage-call strong{color:#d8c3cd}.rpcm-api-usage-call b{color:#eabfd4;text-align:right}.rpcm-api-usage-empty{padding:18px;text-align:center;color:#777;font-size:10px}
-      @media(max-width:680px),(pointer:coarse) and (max-width:1024px){#rpcm-ai-backdrop{padding:0}.rpcm-ai-dialog{width:100vw;height:100%;max-height:none;border-radius:0}.rpcm-ai-head{padding:9px 11px}.rpcm-ai-head p{display:none}.rpcm-ai-body{padding:9px;gap:8px}.rpcm-ai-grid,.rpcm-ai-range-primary{grid-template-columns:1fr}.rpcm-ai-field input:not([type=checkbox]),.rpcm-ai-field select,.rpcm-ai-field textarea,.rpcm-ai-guide-body textarea,.rpcm-ai-history-toolbar select{font-size:16px}.rpcm-ai-result textarea,.rpcm-ai-history-text{min-height:48vh;font-size:14px!important}#rpcm-ai-generate{justify-self:stretch;width:100%}.rpcm-ai-range-card{padding:10px}.rpcm-ai-range-resume{grid-template-columns:1fr}.rpcm-ai-range-resume .rpcm-ai-help{text-align:left}.rpcm-ai-range-resume .rpcm-ai-resume-mark{justify-self:start}.rpcm-ai-generate-row{display:grid}.rpcm-ai-generate-row .rpcm-ai-status{order:2}.rpcm-ai-connection-actions{align-items:stretch}.rpcm-ai-auth-note{flex-basis:100%;margin-right:0}.rpcm-ai-connection-actions .rpcm-ai-btn{flex:1}.rpcm-ai-foot{padding:7px 9px calc(7px + env(safe-area-inset-bottom,0px));gap:5px;flex-wrap:wrap}.rpcm-ai-foot .rpcm-ai-usage{width:100%;order:-1}.rpcm-ai-foot .rpcm-ai-btn{flex:1 1 auto;padding-inline:7px}.rpcm-ai-diff-summary{grid-template-columns:1fr}.rpcm-ai-diff-hide{justify-self:start}.rpcm-ai-diff-head,.rpcm-ai-diff-row{grid-template-columns:1fr}.rpcm-ai-guide-editor>summary span{display:none}}
+      @media(max-width:680px),(pointer:coarse) and (max-width:1024px){.rpcm-api-feature-row input{font-size:16px}#rpcm-ai-backdrop{padding:0}.rpcm-ai-dialog{width:100vw;height:100%;max-height:none;border-radius:0}.rpcm-ai-head{padding:9px 11px}.rpcm-ai-head p{display:none}.rpcm-ai-body{padding:9px;gap:8px}.rpcm-ai-grid,.rpcm-ai-range-primary{grid-template-columns:1fr}.rpcm-ai-field input:not([type=checkbox]),.rpcm-ai-field select,.rpcm-ai-field textarea,.rpcm-ai-guide-body textarea,.rpcm-ai-history-toolbar select{font-size:16px}.rpcm-ai-result textarea,.rpcm-ai-history-text{min-height:48vh;font-size:14px!important}#rpcm-ai-generate{justify-self:stretch;width:100%}.rpcm-ai-range-card{padding:10px}.rpcm-ai-range-resume{grid-template-columns:1fr}.rpcm-ai-range-resume .rpcm-ai-help{text-align:left}.rpcm-ai-range-resume .rpcm-ai-resume-mark{justify-self:start}.rpcm-ai-generate-row{display:grid}.rpcm-ai-generate-row .rpcm-ai-status{order:2}.rpcm-ai-connection-actions{align-items:stretch}.rpcm-ai-auth-note{flex-basis:100%;margin-right:0}.rpcm-ai-connection-actions .rpcm-ai-btn{flex:1}.rpcm-ai-foot{padding:7px 9px calc(7px + env(safe-area-inset-bottom,0px));gap:5px;flex-wrap:wrap}.rpcm-ai-foot .rpcm-ai-usage{width:100%;order:-1}.rpcm-ai-foot .rpcm-ai-btn{flex:1 1 auto;padding-inline:7px}.rpcm-ai-diff-summary{grid-template-columns:1fr}.rpcm-ai-diff-hide{justify-self:start}.rpcm-ai-diff-head,.rpcm-ai-diff-row{grid-template-columns:1fr}.rpcm-ai-guide-editor>summary span{display:none}}
       @media(max-width:680px){.rpcm-unified-api-backdrop{padding:0;align-items:stretch}.rpcm-unified-api-dialog{width:100vw;height:100%;max-height:none;border-radius:0}.rpcm-api-feature-row{grid-template-columns:1fr;gap:7px}.rpcm-api-feature-row select{font-size:16px}.rpcm-api-usage-row{grid-template-columns:1fr}.rpcm-api-usage-row b{text-align:left}.rpcm-api-usage-call{grid-template-columns:1fr 1fr}.rpcm-api-usage-call span:nth-of-type(3){grid-column:1/-1}.rpcm-api-usage-total{grid-template-columns:1fr}.rpcm-api-usage-total small{grid-column:1}}
     `);
   }
@@ -12743,17 +12858,16 @@ ${dialogueText}`;
       };
       const rememberForm = () => {
         const providerEl = backdrop.querySelector('#rpcm-api-provider');
+        const formProvider = provider;
         const secretEl = backdrop.querySelector('#rpcm-api-secret');
-        if (secretEl) draftSecrets.set(provider, secretEl.value);
-        provider = AI_SUMMARY_PROVIDERS.includes(providerEl?.value) ? providerEl.value : provider;
+        if (secretEl) draftSecrets.set(formProvider, secretEl.value);
         const featureModels = { ...(settings.featureModels || {}) };
         for (const feature of ['summary','timeline','context']) {
-          const model = String(backdrop.querySelector(`[data-api-feature-model="${feature}"]`)?.value || featureModels[feature]?.model || settings.models?.[provider] || '');
-          featureModels[feature] = { provider, model };
+          const model = String(backdrop.querySelector(`[data-api-feature-model="${feature}"]`)?.value || settings.models?.[formProvider] || AI_SUMMARY_PROVIDER_DEFAULTS[formProvider]?.model || '');
+          featureModels[feature] = { provider:formProvider, model };
         }
         settings.featureModels = featureModels;
-        settings.provider = provider;
-        settings.models = { ...settings.models, [provider]:featureModels.summary?.model || settings.models?.[provider] || '' };
+        settings.models = { ...settings.models, [formProvider]:featureModels.summary?.model || settings.models?.[formProvider] || '' };
         const url = backdrop.querySelector('#rpcm-api-openai-url');
         const location = backdrop.querySelector('#rpcm-api-vertex-location');
         const project = backdrop.querySelector('#rpcm-api-vertex-project');
@@ -12762,6 +12876,8 @@ ${dialogueText}`;
         if (project) settings.vertexProjectId = String(project.value || '').trim();
         const contextToggle = backdrop.querySelector('#rpcm-api-context-enabled');
         if (contextToggle) room.aiContextLogRerankEnabled = contextToggle.checked;
+        provider = AI_SUMMARY_PROVIDERS.includes(providerEl?.value) ? providerEl.value : formProvider;
+        settings.provider = provider;
       };
       const persist = async () => {
         rememberForm();
@@ -12772,20 +12888,28 @@ ${dialogueText}`;
       const render = () => {
         const models = AI_SUMMARY_PROVIDER_MODELS[provider] || [];
         const modelOptions = selected => {
-          const list = models.some(item => item.value === selected) ? models : [{ value:selected, label:`${selected} · 저장된 모델` }, ...models].filter(item => item.value);
-          return list.map(item => `<option value="${esc(item.value)}" ${item.value === selected ? 'selected' : ''}>${esc(item.label)}</option>`).join('');
+          const fallback = AI_SUMMARY_PROVIDER_DEFAULTS[provider]?.model || models[0]?.value || '';
+          const safeSelected = models.some(item => item.value === selected) ? selected : fallback;
+          return models.map(item => `<option value="${esc(item.value)}" ${item.value === safeSelected ? 'selected' : ''}>${esc(item.label)}</option>`).join('');
         };
         const featureRow = (feature, description) => {
-          const selected = settings.featureModels?.[feature]?.model || settings.models?.[provider] || AI_SUMMARY_PROVIDER_DEFAULTS[provider]?.model || '';
+          const featureSetting = settings.featureModels?.[feature];
+          const selected = featureSetting?.provider === provider
+            ? String(featureSetting.model || '')
+            : String(settings.models?.[provider] || AI_SUMMARY_PROVIDER_DEFAULTS[provider]?.model || models[0]?.value || '');
           const status = settings.featureStatus?.[feature];
-          return `<div class="rpcm-api-feature-row"><div><strong>${esc(aiFeatureStatusLabel(feature))}</strong><small>${esc(description)}</small></div><select data-api-feature-model="${feature}">${modelOptions(selected)}</select><div class="rpcm-api-feature-status">${statusText(feature === 'context' && !room.aiContextLogRerankEnabled ? { state:'off' } : status)}</div></div>`;
+          const modelControl = `<select data-api-feature-model="${feature}">${modelOptions(selected)}</select>`;
+          return `<div class="rpcm-api-feature-row"><div><strong>${esc(aiFeatureStatusLabel(feature))}</strong><small>${esc(description)}</small></div>${modelControl}<div class="rpcm-api-feature-status">${statusText(feature === 'context' && !room.aiContextLogRerankEnabled ? { state:'off' } : status)}</div></div>`;
         };
+        const openAiModelHelp = provider === 'openai'
+          ? `<p class="rpcm-ai-help">OpenAI 모델은 목록에서 선택합니다. 공식 OpenAI 주소는 https://api.openai.com/v1 입니다.</p>`
+          : '';
         const providerOptions = AI_SUMMARY_PROVIDERS.map(id => `<option value="${id}" ${id === provider ? 'selected' : ''}>${esc(AI_SUMMARY_PROVIDER_DEFAULTS[id].label)}</option>`).join('');
         const secretLabel = provider === 'firebase' ? 'Firebase 설정 코드' : provider === 'vertex' ? 'Vertex 서비스 계정 JSON' : 'API 키';
         const secretInput = provider === 'firebase' || provider === 'vertex'
           ? `<textarea id="rpcm-api-secret" spellcheck="false" placeholder="${esc(secretLabel)}">${esc(draftSecrets.get(provider) || '')}</textarea>`
           : `<input id="rpcm-api-secret" type="password" autocomplete="new-password" value="${esc(draftSecrets.get(provider) || '')}" placeholder="${esc(secretLabel)}">`;
-        backdrop.innerHTML = `<div class="rpcm-ai-dialog rpcm-unified-api-dialog"><div class="rpcm-ai-head"><div><h2>⚙ API 설정</h2><p>AI 요약·연속성 타임라인·AI 맥락 검토를 한곳에서 관리합니다.</p></div><div class="rpcm-ai-spacer"></div><button type="button" class="rpcm-ai-close" data-api-act="close">✕</button></div><div class="rpcm-ai-body"><section class="rpcm-ai-card"><h3>공통 연결</h3><div class="rpcm-ai-grid"><label class="rpcm-ai-field"><span>연결 방식</span><select id="rpcm-api-provider">${providerOptions}</select></label>${provider === 'openai' ? `<label class="rpcm-ai-field"><span>OpenAI 호환 주소</span><input id="rpcm-api-openai-url" value="${esc(settings.openaiBaseUrl || '')}"></label>` : ''}${provider === 'vertex' ? `<label class="rpcm-ai-field"><span>Vertex 위치</span><input id="rpcm-api-vertex-location" value="${esc(settings.vertexLocation || 'global')}"></label><label class="rpcm-ai-field"><span>프로젝트 ID</span><input id="rpcm-api-vertex-project" value="${esc(settings.vertexProjectId || '')}"></label>` : ''}<label class="rpcm-ai-field rpcm-ai-secret" style="grid-column:1/-1"><span>${secretLabel}</span>${secretInput}</label></div><p class="rpcm-ai-help">인증 정보는 이 브라우저에만 저장되며 전체 백업에는 포함되지 않습니다.</p></section><section class="rpcm-ai-card"><h3>기능별 모델과 상태</h3><div class="rpcm-api-feature-list">${featureRow('summary','날짜요약·현재상태 생성')}${featureRow('timeline','전체 타임라인 초안 생성')}${featureRow('context','관련 날짜로그 후보 검토')}</div><label class="rpcm-api-context-toggle"><span><strong>AI 맥락 검토 사용</strong><small>실패하면 기본 키워드 방식으로 자동 대체합니다.</small></span><input id="rpcm-api-context-enabled" type="checkbox" ${room.aiContextLogRerankEnabled ? 'checked' : ''}></label></section>${renderRoomAiUsageHtml(room)}<div class="rpcm-ai-status" id="rpcm-api-settings-status"></div></div><div class="rpcm-ai-foot"><button type="button" class="rpcm-ai-btn" data-api-act="test">기능별 연결 테스트</button><button type="button" class="rpcm-ai-btn" data-api-act="close">취소</button><button type="button" class="rpcm-ai-btn primary" data-api-act="save">설정 저장</button></div></div>`;
+        backdrop.innerHTML = `<div class="rpcm-ai-dialog rpcm-unified-api-dialog"><div class="rpcm-ai-head"><div><h2>⚙ API 설정</h2><p>AI 요약·연속성 타임라인·AI 맥락 검토를 한곳에서 관리합니다.</p></div><div class="rpcm-ai-spacer"></div><button type="button" class="rpcm-ai-close" data-api-act="close">✕</button></div><div class="rpcm-ai-body"><section class="rpcm-ai-card"><h3>공통 연결</h3><div class="rpcm-ai-grid"><label class="rpcm-ai-field"><span>연결 방식</span><select id="rpcm-api-provider">${providerOptions}</select></label>${provider === 'openai' ? `<label class="rpcm-ai-field"><span>OpenAI / 호환 API 주소</span><input id="rpcm-api-openai-url" value="${esc(settings.openaiBaseUrl || '')}" placeholder="https://api.openai.com/v1"></label>` : ''}${provider === 'vertex' ? `<label class="rpcm-ai-field"><span>Vertex 위치</span><input id="rpcm-api-vertex-location" value="${esc(settings.vertexLocation || 'global')}"></label><label class="rpcm-ai-field"><span>프로젝트 ID</span><input id="rpcm-api-vertex-project" value="${esc(settings.vertexProjectId || '')}"></label>` : ''}<label class="rpcm-ai-field rpcm-ai-secret" style="grid-column:1/-1"><span>${secretLabel}</span>${secretInput}</label></div><p class="rpcm-ai-help">인증 정보는 이 브라우저에만 저장되며 전체 백업에는 포함되지 않습니다.</p></section><section class="rpcm-ai-card"><h3>기능별 모델과 상태</h3><div class="rpcm-api-feature-list">${featureRow('summary','날짜요약·현재상태 생성')}${featureRow('timeline','전체 타임라인 초안 생성')}${featureRow('context','관련 날짜로그 후보 검토')}</div>${openAiModelHelp}<label class="rpcm-api-context-toggle"><span><strong>AI 맥락 검토 사용</strong><small>실패하면 기본 키워드 방식으로 자동 대체합니다.</small></span><input id="rpcm-api-context-enabled" type="checkbox" ${room.aiContextLogRerankEnabled ? 'checked' : ''}></label></section>${renderRoomAiUsageHtml(room)}<div class="rpcm-ai-status" id="rpcm-api-settings-status"></div></div><div class="rpcm-ai-foot"><button type="button" class="rpcm-ai-btn" data-api-act="test">기능별 연결 테스트</button><button type="button" class="rpcm-ai-btn" data-api-act="close">취소</button><button type="button" class="rpcm-ai-btn primary" data-api-act="save">설정 저장</button></div></div>`;
         backdrop.querySelector('#rpcm-api-provider').onchange = event => { rememberForm(); provider = event.target.value; settings.provider = provider; render(); };
       };
       const finish = value => { backdrop.remove(); resolve(value); };
@@ -13153,11 +13277,11 @@ ${dialogueText}`;
     const renderProvider = provider => {
       currentProvider = provider;
       const presets = AI_SUMMARY_PROVIDER_MODELS[provider] || [];
-      const selected = settings.models[provider] || AI_SUMMARY_PROVIDER_DEFAULTS[provider].model || presets[0]?.value || '';
-      const options = presets.some(item => item.value === selected)
-        ? presets
-        : [{ value:selected, label:`${selected} · 저장된 모델` }, ...presets].filter(item => item.value);
-      modelEl.innerHTML = options.map(item => `<option value="${esc(item.value)}">${esc(item.label)}</option>`).join('');
+      const requested = settings.models[provider] || AI_SUMMARY_PROVIDER_DEFAULTS[provider].model || presets[0]?.value || '';
+      const selected = presets.some(item => item.value === requested)
+        ? requested
+        : (AI_SUMMARY_PROVIDER_DEFAULTS[provider].model || presets[0]?.value || '');
+      modelEl.innerHTML = presets.map(item => `<option value="${esc(item.value)}">${esc(item.label)}</option>`).join('');
       modelEl.value = selected;
       settings.models[provider] = selected;
       backdrop.querySelectorAll('.rpcm-ai-openai').forEach(el => { el.hidden = provider !== 'openai'; });
@@ -13798,7 +13922,7 @@ ${dialogueText}`;
       @media (prefers-color-scheme:light){#rpcm-fab{background:#fff1f7!important;color:#b84f7e!important;border-color:#df6298!important}#rpcm-fab:hover{background:#ffe4ef!important;color:#9f416e!important}}
       #rpcm-overlay{position:fixed;inset:0;z-index:9998;background:transparent;display:block;padding:0;pointer-events:none;font-family:-apple-system,BlinkMacSystemFont,"Pretendard",sans-serif}
       #rpcm-modal{position:relative;width:100%;max-height:calc(100vh - 140px);background:#181818;color:#eee;border:1px solid #3a3a3a;border-radius:16px;box-shadow:0 25px 80px rgba(0,0,0,.6);display:flex;flex-direction:column;overflow:hidden}
-      .rpcm-main-help-button{border-color:#454545!important;background:#262626!important;color:#ddd!important;font-weight:900}.rpcm-main-help-button:hover{border-color:#626262!important;background:#303030!important;color:#fff!important}.rpcm-main-help-panel{position:absolute;z-index:30;top:64px;right:16px;width:min(560px,calc(100% - 32px));max-height:calc(100% - 88px);box-sizing:border-box;overflow:auto;border:1px solid #3a3a3a;border-radius:14px;background:#1b1b1b;box-shadow:0 22px 60px rgba(0,0,0,.62);padding:18px}.rpcm-main-help-panel[hidden]{display:none!important}.rpcm-main-help-panel header{display:flex;align-items:center;gap:8px;margin-bottom:7px}.rpcm-main-help-panel h3{flex:1;margin:0;color:#eeeeee;font-size:16px}.rpcm-main-help-panel header button{border:0;background:transparent;color:#999;font-size:18px;cursor:pointer}.rpcm-main-help-row{display:grid;grid-template-columns:112px minmax(0,1fr);gap:14px;padding:11px 0;border-bottom:1px solid #303030}.rpcm-main-help-row:last-child{border-bottom:0}.rpcm-main-help-row strong{color:#df75a7;font-size:10px}.rpcm-main-help-row span{color:#b8b8b8;font-size:10px;line-height:1.6}.rpcm-ai-context-report{margin:8px 0 0;border:1px solid #3d3840;border-radius:9px;background:#191719;overflow:hidden}.rpcm-ai-context-report>summary{display:flex;align-items:center;gap:10px;list-style:none;padding:9px 11px;cursor:pointer}.rpcm-ai-context-report>summary::-webkit-details-marker{display:none}.rpcm-ai-context-report>summary span{flex:1;color:#c9bec4;font-size:10px}.rpcm-ai-context-report>summary b{color:#df75a7;font-size:10px}.rpcm-ai-context-report>div{display:grid;gap:6px;padding:9px 11px;border-top:1px solid #342f32}.rpcm-ai-context-report p{margin:0;color:#9d9499;font-size:10px;line-height:1.5}.rpcm-ai-context-report p.error{color:#f0a0aa}.rpcm-auto-inline-toggle{display:inline-flex!important;align-items:center!important;justify-content:center!important;width:28px!important;height:28px!important;min-width:28px!important;padding:0!important;font-size:15px!important;line-height:1!important}
+      .rpcm-main-help-button{border-color:#454545!important;background:#262626!important;color:#ddd!important;font-weight:900}.rpcm-main-help-button:hover{border-color:#626262!important;background:#303030!important;color:#fff!important}.rpcm-main-help-panel{position:absolute;z-index:30;top:64px;right:16px;width:min(560px,calc(100% - 32px));max-height:calc(100% - 88px);box-sizing:border-box;overflow:auto;border:1px solid #3a3a3a;border-radius:14px;background:#1b1b1b;box-shadow:0 22px 60px rgba(0,0,0,.62);padding:18px}.rpcm-main-help-panel[hidden]{display:none!important}.rpcm-main-help-panel header{display:flex;align-items:center;gap:8px;margin-bottom:7px}.rpcm-main-help-panel h3{flex:1;margin:0;color:#eeeeee;font-size:16px}.rpcm-main-help-panel header button{border:0;background:transparent;color:#999;font-size:18px;cursor:pointer}.rpcm-main-help-row{display:grid;grid-template-columns:112px minmax(0,1fr);gap:14px;padding:11px 0;border-bottom:1px solid #303030}.rpcm-main-help-row:last-child{border-bottom:0}.rpcm-main-help-row strong{color:#df75a7;font-size:10px}.rpcm-main-help-row span{color:#b8b8b8;font-size:10px;line-height:1.6}.rpcm-ai-context-report{margin:8px 0 0;border:1px solid #3d3840;border-radius:9px;background:#191719;overflow:hidden}.rpcm-ai-context-report>summary{display:flex;align-items:center;gap:10px;list-style:none;padding:9px 11px;cursor:pointer}.rpcm-ai-context-report>summary::-webkit-details-marker{display:none}.rpcm-ai-context-report>summary span{flex:1;color:#c9bec4;font-size:10px}.rpcm-ai-context-report>summary b{color:#df75a7;font-size:10px}.rpcm-ai-context-report>div{display:grid;gap:6px;padding:9px 11px;border-top:1px solid #342f32}.rpcm-ai-context-report p{margin:0;color:#9d9499;font-size:10px;line-height:1.5}.rpcm-ai-context-report p.error{color:#f0a0aa}.rpcm-ai-context-situation{display:grid;gap:4px;padding:9px 10px!important;border:1px solid #493b43;border-left:3px solid #df75a7!important;border-radius:7px;background:#211c1f}.rpcm-ai-context-situation strong{color:#e8c5d5}.rpcm-ai-context-situation span{color:#d2c7cc;line-height:1.65}.rpcm-import-row.is-protected{background:rgba(245,158,11,.05)}.rpcm-import-row.is-protected small{color:#b59a75}.rpcm-import-dialog .rpcm-lib-dialog-actions{flex-wrap:wrap}.rpcm-auto-inline-toggle{display:inline-flex!important;align-items:center!important;justify-content:center!important;width:28px!important;height:28px!important;min-width:28px!important;padding:0!important;font-size:15px!important;line-height:1!important}
       .rpcm-ai-context-actions{display:flex!important;align-items:center;gap:8px!important;padding:0 0 4px!important;border:0!important}.rpcm-ai-context-actions span{flex:1;min-width:0;color:#81767c;font-size:9px}.rpcm-ai-context-refresh{flex:0 0 auto;border-color:#7a405d!important;background:#2d1d25!important;color:#f2b9d5!important}.rpcm-ai-context-refresh:hover{border-color:#b65784!important;background:#402331!important;color:#ffe3f0!important}.rpcm-ai-context-refresh:disabled{opacity:.55;cursor:wait}
       .rpcm-ai-context-raw{border:1px solid #433941;border-radius:7px;background:#121112;overflow:hidden}.rpcm-ai-context-raw>summary{padding:7px 8px;color:#caa8b8;font-size:9px;cursor:pointer}.rpcm-ai-context-raw pre{max-height:180px;margin:0;padding:8px;border-top:1px solid #372f34;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;color:#a99ca3;font:9px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
       .rpcm-header{display:flex;align-items:center;gap:12px;padding:16px 18px;border-bottom:1px solid #303030;background:#1d1d1d;cursor:grab;user-select:none}.rpcm-header.rpcm-dragging{cursor:grabbing}.rpcm-header button,.rpcm-header input{cursor:pointer}
@@ -14760,7 +14884,16 @@ ${dialogueText}`;
     let aiContextCheckedLabel = '검토 기록 없음';
     try { if (aiContextReport?.checkedAt) aiContextCheckedLabel = new Date(aiContextReport.checkedAt).toLocaleString('ko-KR'); } catch (_) {}
     const aiContextRunMeta = `${aiContextCheckedLabel} · 실행 버전 ${aiContextReport?.managerVersion ? `v${aiContextReport.managerVersion}` : '기록 없음'}${aiContextReport?.finishReason ? ` · 종료 ${aiContextReport.finishReason}` : ''}`;
-    const aiContextReportHtml = `<details class="rpcm-ai-context-report"><summary><span>${esc(aiContextStateText)}</span><b>AI 검토 상세</b></summary><div><div class="rpcm-ai-context-actions"><span>${esc(aiContextRunMeta)}</span><button type="button" class="rpcm-lib-small rpcm-ai-context-refresh" id="rpcm-ai-context-refresh">↻ AI 다시 검토</button></div><p><strong>전체 로그</strong> ${Number(aiContextReport?.totalLogs || logBlocksForIssues.length)}개 · <strong>1차 후보</strong> ${Number(aiContextReport?.candidateCount || 0)}개 · <strong>API 검토</strong> ${Number(aiContextReport?.inspectedCount || 0)}개 · <strong>최종 선정</strong> ${Number(aiContextReport?.selectedCount ?? relatedShown)}개</p>${aiContextReport?.failureCategory ? `<p class="error"><strong>실패 원인</strong> ${esc(aiContextReport.failureCategory)} · ${esc(aiContextReport.failureDetail || '')}</p><p><strong>fallback</strong> 기본 키워드 방식으로 대체됨</p>` : ''}${aiContextReport?.parseFailure ? `<p><strong>파싱 실패 이유</strong> ${esc(aiContextReport.parseFailure)}</p>` : ''}${aiContextReport?.failureRaw ? `<details class="rpcm-ai-context-raw"><summary>실제 AI 원문 일부</summary><pre>${esc(aiContextReport.failureRaw)}</pre></details>` : ''}${(aiContextReport?.keywords || []).length ? `<p><strong>핵심 키워드</strong> ${esc(aiContextReport.keywords.join(' · '))}</p>` : ''}${(aiContextReport?.characters || []).length ? `<p><strong>인물</strong> ${esc(aiContextReport.characters.join(' · '))}</p>` : ''}${(aiContextReport?.items || []).map(item => `<p><strong>${Number(item.rank || 0)}위</strong> ${esc(item.title || '')} · 관련도 ${Number(item.score || 0).toFixed(1)} · 후보 ${Number(item.candidateRank || 0)}위 · ${esc(item.reason || '')}</p>`).join('') || '<p>아직 저장된 AI 검토 결과가 없습니다.</p>'}</div></details>`;
+    const aiContextSituationText = !room.aiContextLogRerankEnabled
+      ? 'AI 맥락 검토가 꺼져 있습니다.'
+      : aiContextReport?.state === 'fallback'
+        ? 'AI 상황 파악 실패 · 기본 키워드 방식 사용'
+        : aiContextReport?.situation
+          ? String(aiContextReport.situation)
+          : aiContextReport?.state === 'success'
+            ? '이전 검토 결과에는 상황 설명이 없습니다. AI 다시 검토를 눌러 갱신하세요.'
+            : '아직 AI가 현재 상황을 검토하지 않았습니다.';
+    const aiContextReportHtml = `<details class="rpcm-ai-context-report"><summary><span>${esc(aiContextStateText)}</span><b>AI 검토 상세</b></summary><div><div class="rpcm-ai-context-actions"><span>${esc(aiContextRunMeta)}</span><button type="button" class="rpcm-lib-small rpcm-ai-context-refresh" id="rpcm-ai-context-refresh">↻ AI 다시 검토</button></div><p class="rpcm-ai-context-situation"><strong>AI가 파악한 현재 상황</strong><span>${esc(aiContextSituationText)}</span></p><p><strong>전체 로그</strong> ${Number(aiContextReport?.totalLogs || logBlocksForIssues.length)}개 · <strong>1차 후보</strong> ${Number(aiContextReport?.candidateCount || 0)}개 · <strong>API 검토</strong> ${Number(aiContextReport?.inspectedCount || 0)}개 · <strong>최종 선정</strong> ${Number(aiContextReport?.selectedCount ?? relatedShown)}개</p>${aiContextReport?.failureCategory ? `<p class="error"><strong>실패 원인</strong> ${esc(aiContextReport.failureCategory)} · ${esc(aiContextReport.failureDetail || '')}</p><p><strong>fallback</strong> 기본 키워드 방식으로 대체됨</p>` : ''}${aiContextReport?.parseFailure ? `<p><strong>파싱 실패 이유</strong> ${esc(aiContextReport.parseFailure)}</p>` : ''}${aiContextReport?.failureRaw ? `<details class="rpcm-ai-context-raw"><summary>실제 AI 원문 일부</summary><pre>${esc(aiContextReport.failureRaw)}</pre></details>` : ''}${(aiContextReport?.keywords || []).length ? `<p><strong>핵심 키워드</strong> ${esc(aiContextReport.keywords.join(' · '))}</p>` : ''}${(aiContextReport?.characters || []).length ? `<p><strong>인물</strong> ${esc(aiContextReport.characters.join(' · '))}</p>` : ''}${(aiContextReport?.items || []).map(item => `<p><strong>${Number(item.rank || 0)}위</strong> ${esc(item.title || '')} · 관련도 ${Number(item.score || 0).toFixed(1)} · 후보 ${Number(item.candidateRank || 0)}위 · ${esc(item.reason || '')}</p>`).join('') || '<p>아직 저장된 AI 검토 결과가 없습니다.</p>'}</div></details>`;
     const storyReviewDue = storyUnreviewedCount >= storyReviewThreshold;
     scheduleStoryReviewCountRefresh(room);
     const logTimelineLabels = normalizeRoomLogTimelines(room);
@@ -14782,7 +14915,7 @@ ${dialogueText}`;
             <button class="rpcm-iconbtn rpcm-main-api-button" id="rpcm-main-api-open" aria-label="API 설정">⚙</button>
             <button class="rpcm-iconbtn" id="rpcm-close">✕</button>
           </div>
-          <aside class="rpcm-main-help-panel" id="rpcm-main-help-panel" hidden><header><h3>RP Manager 사용 방법</h3><button type="button" id="rpcm-main-help-close" aria-label="도움말 닫기">✕</button></header><div class="rpcm-main-help-row"><strong>기억 관리</strong><span>현재상태는 계속 유지하고, 날짜로그는 최신·관련·직접·고정 항목만 골라 주입합니다.</span></div><div class="rpcm-main-help-row"><strong>로그 관리</strong><span>날짜별 내용을 보고 직접 선택하거나 ★ 즐겨찾기·📌 항상 호출·자동 제외를 정할 수 있습니다.</span></div><div class="rpcm-main-help-row"><strong>AI 맥락 검토</strong><span>키워드 후보를 저장된 API가 현재 RP 흐름으로 한 번 더 고릅니다. API가 실패하면 키워드 방식으로 돌아가며, ‘+ 관련로그 추가’로 사용자가 직접 보강할 수 있습니다.</span></div><div class="rpcm-main-help-row"><strong>연속성 타임라인</strong><span>중요 사건과 관계 변화가 현재까지 이어진 흐름입니다. 타임라인 갱신에서 API 초안 생성·결과 미리보기·최종 저장을 진행합니다.</span></div><div class="rpcm-main-help-row"><strong>캐릭터·기타</strong><span>자주 쓰는 설정을 저장하고 체크해 주입합니다. 캐릭터는 최근 실제 RP에서 이름이 감지되면 자동으로 불러올 수 있습니다.</span></div><div class="rpcm-main-help-row"><strong>주입 시작</strong><span>체크한 항목을 다음 AI 답변용 carrier에 넣습니다. 주입 중에는 위 목록의 로그를 펼쳐 보고 빼거나 관련로그를 교체할 수 있습니다.</span></div><div class="rpcm-main-help-row"><strong>AI 요약</strong><span>저장한 API로 새 RP를 읽어 날짜요약과 현재상태를 만들며, 결과는 확인·수정한 뒤에만 적용됩니다.</span></div><div class="rpcm-main-help-row"><strong>백업</strong><span>도구에서 이 방의 전체 설정과 기억을 JSON으로 내보내거나 다시 불러올 수 있습니다.</span></div></aside>
+          <aside class="rpcm-main-help-panel" id="rpcm-main-help-panel" hidden><header><h3>RP Manager 사용 방법</h3><button type="button" id="rpcm-main-help-close" aria-label="도움말 닫기">✕</button></header><div class="rpcm-main-help-row"><strong>기억 관리</strong><span>현재상태는 계속 유지하고, 날짜로그는 최신·관련·직접·고정 항목만 골라 주입합니다.</span></div><div class="rpcm-main-help-row"><strong>로그 관리</strong><span>날짜별 내용을 보고 직접 선택하거나 ★ 즐겨찾기·📌 항상 호출·자동 제외를 정할 수 있습니다.</span></div><div class="rpcm-main-help-row"><strong>AI 맥락 검토</strong><span>키워드 후보를 저장된 API가 현재 RP 흐름으로 한 번 더 고릅니다. API가 실패하면 키워드 방식으로 돌아가며, ‘+ 관련로그 추가’로 사용자가 직접 보강할 수 있습니다.</span></div><div class="rpcm-main-help-row"><strong>연속성 타임라인</strong><span>중요 사건과 관계 변화가 현재까지 이어진 흐름입니다. 타임라인 갱신에서 API 초안 생성·결과 미리보기·최종 저장을 진행합니다.</span></div><div class="rpcm-main-help-row"><strong>캐릭터·기타</strong><span>자주 쓰는 설정을 저장하고 체크해 주입합니다. 캐릭터는 최근 실제 RP에서 이름이 감지되면 자동으로 불러올 수 있습니다.</span></div><div class="rpcm-main-help-row"><strong>주입 시작</strong><span>체크한 항목을 다음 AI 답변용 carrier에 넣습니다. 주입 중에는 위 목록의 로그를 펼쳐 보고 빼거나 관련로그를 교체할 수 있습니다.</span></div><div class="rpcm-main-help-row"><strong>AI 요약</strong><span>저장한 API로 새 RP를 읽어 날짜요약과 현재상태를 만들며, 결과는 확인·수정한 뒤에만 적용됩니다.</span></div><div class="rpcm-main-help-row"><strong>백업</strong><span>현재 방 복사용 JSON을 원본 방에서 저장한 뒤 분기방에서 불러오면, RP Manager 전체 데이터를 현재 방으로 복사할 수 있습니다.</span></div></aside>
           <div class="rpcm-mobile-editbar"><button type="button" id="rpcm-mobile-edit-done">완료</button><strong id="rpcm-mobile-edit-title">내용 편집</strong><span id="rpcm-mobile-edit-count">0자</span></div>
           <div class="rpcm-body">
             ${pending ? `<div class="rpcm-pending"><div>🟠 <strong>${pending.verified ? '서버 주입 확인됨 ✓' : '서버 주입 확인 필요'}</strong><br>${esc(pendingProgressText(pending))}<br>현재 carrier AI ${esc(shortId(pending.messageId))} · 숨김 컨텍스트 ${formatCount(pending.injectedChars)}자 · 서버 raw ${formatCount(pending.serverChars || pending.carrierChars)}자${pending.verified ? '' : '<br><b>재검증에 실패하면 ‘지금 해제’ 후 다시 주입해 주세요.</b>'}</div><div class="rpcm-spacer"></div><button class="rpcm-btn secondary" id="rpcm-show-raw">주입 내용 확인</button><button class="rpcm-btn secondary" id="rpcm-reverify">서버 재검증</button><button class="rpcm-btn warn" id="rpcm-restore-now">지금 해제</button></div>` : ''}
@@ -14829,6 +14962,7 @@ ${dialogueText}`;
 
             <div class="rpcm-tools" id="rpcm-section-tools">
               <button class="rpcm-mini" id="rpcm-preview-btn">주입 구성 미리보기</button>
+              <button class="rpcm-mini" id="rpcm-room-transfer-backup">현재 방 복사용 JSON</button>
               <button class="rpcm-mini" id="rpcm-backup">전체 백업 JSON</button>
               <button class="rpcm-mini" id="rpcm-import">백업 불러오기</button>
               <button class="rpcm-mini" id="rpcm-reset">현재 RP 데이터 초기화</button>
@@ -15935,6 +16069,25 @@ ${dialogueText}`;
       } catch (e) { notify(`API 요약 화면 열기 실패: ${e.message}`, 'error', 6000); }
     };
 
+    overlay.querySelector('#rpcm-room-transfer-backup').onclick = async () => {
+      readModalIntoRoom();
+      await saveRoom(room);
+      const transferRoom = JSON.parse(JSON.stringify(room));
+      transferRoom.pending = null;
+      const characterLibraries = await getAllCharacterLibraries();
+      const payload = {
+        _rpContextManagerBackup:true,
+        backupMode:'room-transfer',
+        version:APP.version,
+        exportedAt:nowIso(),
+        sourceRoomId:String(room.chatId),
+        rooms:[transferRoom],
+        characterLibraries,
+      };
+      downloadText(JSON.stringify(payload, null, 2), `RP_매니저_현재방_복사용_${new Date().toISOString().slice(0,10)}.json`);
+      notify('현재 방 복사용 JSON 저장 완료', 'success');
+    };
+
     overlay.querySelector('#rpcm-backup').onclick = async () => {
       readModalIntoRoom();
       await saveRoom(room);
@@ -15958,6 +16111,27 @@ ${dialogueText}`;
         if (!choice) return;
         const selectedRoomIds = new Set(choice.roomIds.map(String));
         const selectedLibraryIds = new Set(choice.libraryIds.map(String));
+        if (choice.mode === 'clone-current') {
+          if (room.pending) throw new Error('현재 방의 주입을 먼저 해제해 주세요.');
+          if (selectedRoomIds.size !== 1) throw new Error('현재 방으로 복사할 RP를 하나만 선택해 주세요.');
+          const sourceRoom = data.rooms.find(item => item?.chatId && selectedRoomIds.has(String(item.chatId)));
+          if (!sourceRoom) throw new Error('선택한 RP 데이터를 백업에서 찾지 못했습니다.');
+          const sourceLabel = String(sourceRoom.label || `RP ${shortId(sourceRoom.chatId)}`);
+          if (!confirm(`‘${sourceLabel}’의 RP Manager 전체 데이터를 현재 방에 복사할까요?\n현재 방의 기존 RP Manager 데이터는 덮어씁니다.`)) return;
+          if (Array.isArray(data.characterLibraries)) {
+            for (const lib of data.characterLibraries) {
+              if (!lib?.scopeId || !selectedLibraryIds.has(String(lib.scopeId))) continue;
+              await saveCharacterLibrary(lib);
+            }
+          }
+          const clonedRoom = cloneBackupRoomIntoCurrent(sourceRoom, room);
+          try { localStorage.removeItem(pendingBackupKey(clonedRoom.chatId)); } catch (_) {}
+          await saveRoom(clonedRoom);
+          state.currentRoom = clonedRoom;
+          notify(`현재 방으로 RP Manager 전체 복사 완료 · ${backupRoomSummary(clonedRoom)}`, 'success', 5500);
+          renderModalIfOpen();
+          return;
+        }
         for (const r of data.rooms) {
           if (!r?.chatId || !selectedRoomIds.has(String(r.chatId))) continue;
           r.pending = null;
