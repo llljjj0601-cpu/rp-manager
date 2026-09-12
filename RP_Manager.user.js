@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🪽위시 RP Manager
 // @namespace    local.rp.context.manager
-// @version      0.12.54
+// @version      0.12.55
 // @description  장기 RP용 현재상태·날짜로그·연속성 타임라인·캐릭터 설정을 관리하고, 검수형 AI 생성과 필요한 컨텍스트 자동 주입을 지원합니다.
 // @author       User
 // @license      All Rights Reserved
@@ -42,13 +42,13 @@
   // 버전별 키를 쓰면 구버전과 신버전이 동시에 설치됐을 때 둘 다 실행될 수 있습니다.
   // 모든 버전이 공유하는 고정 키로 중복 실행을 막습니다.
   if (window.__WISH_RP_MANAGER_LOADED__) return;
-  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.12.54', loadedAt: Date.now() };
+  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.12.55', loadedAt: Date.now() };
   // 같은 페이지에 남아 있는 v0.8.10 복사본이 뒤늦게 시작되는 경우도 차단합니다.
   window.__RP_MANAGER_0810_LOADED__ = true;
 
   const APP = {
     name: '🪽위시 RP Manager',
-    version: '0.12.54',
+    version: '0.12.55',
     dbName: 'RPContextManagerDB',
     dbVersion: 2,
     storeName: 'rooms',
@@ -9183,7 +9183,10 @@ ${dialogueText}`;
           shared.featureModels = { ...(shared.featureModels || {}), timeline:{ provider:apiSettings.provider, model:String(apiSettings.models?.[apiSettings.provider] || '') } };
           saveAiSummarySettings(shared);
           apiSettings = aiFeatureSettings(loadAiSummarySettings(), 'timeline');
-          for (const [id, value] of draftSecrets) writeAiSecret(id, value);
+          // 인증정보는 메인 API 설정만 소유합니다.
+          // 타임라인 창에는 더 이상 인증 입력칸이 없으므로, 여기서 처음 열 때
+          // 캐시한 draftSecrets를 다시 저장하면 최신 인증정보를 빈 값/옛 값으로
+          // 덮어쓸 수 있습니다. 설정값만 저장하고 인증정보는 건드리지 않습니다.
         }
         return apiSettings;
       };
@@ -9282,7 +9285,7 @@ ${dialogueText}`;
         if (action === 'test-api') {
           try {
             const next = captureApiForm(true); apiBusy = true; apiStatus = '연결 테스트 중…'; render();
-            const result = await callAiSummaryProvider(next.provider, next, draftSecrets.get(next.provider) || '', '짧게 응답하세요.', '연결 테스트입니다. 정확히 OK만 출력하세요.', 64, message => { apiStatus = message; render(); }, { feature:'timeline', room });
+            const result = await callAiSummaryProvider(next.provider, next, readAiSecret(next.provider), '짧게 응답하세요.', '연결 테스트입니다. 정확히 OK만 출력하세요.', 64, message => { apiStatus = message; render(); }, { feature:'timeline', room });
             apiStatus = `연결 성공 · ${result.model} · 입력 ${formatCount(result.usage?.inputTokens || 0)} / 출력 ${formatCount(result.usage?.outputTokens || 0)} tokens`;
           } catch (error) { apiStatus = `연결 실패 · ${friendlyAiErrorMessage(error)}`; }
           apiBusy = false; render(); return;
@@ -9298,7 +9301,7 @@ ${dialogueText}`;
             const next = captureApiForm(true);
             const selectedLogs = selectedUnreviewedLogs();
             apiBusy = true; apiStatus = '타임라인 생성 준비 중…'; render();
-            apiDraft = await generateStoryTimelineApiDraft(room, next, draftSecrets.get(next.provider) || '', updateMode, reviewSnapshot, selectedLogs, message => { apiStatus = message; render(); });
+            apiDraft = await generateStoryTimelineApiDraft(room, next, readAiSecret(next.provider), updateMode, reviewSnapshot, selectedLogs, message => { apiStatus = message; render(); });
             setAiFeatureStatus('timeline', 'ok', next.provider, apiDraft.model, '최근 생성 정상');
             room.storyTimelineApiDraft = apiDraft;
             room.storyTimelineApiHistory = [apiDraft, ...(room.storyTimelineApiHistory || []).filter(item => String(item.id) !== String(apiDraft.id))].slice(0, 10);
@@ -12889,7 +12892,11 @@ ${dialogueText}`;
       const persist = async () => {
         rememberForm();
         settings = saveAiSummarySettings(settings);
-        for (const [id, value] of draftSecrets) writeAiSecret(id, value);
+        // 빈 draft 값 때문에 이미 저장된 인증정보가 삭제되지 않도록 보호합니다.
+        // 인증정보 삭제는 별도 UI가 생기기 전까지 자동으로 수행하지 않습니다.
+        for (const [id, value] of draftSecrets) {
+          if (String(value || '').trim()) writeAiSecret(id, value);
+        }
         await saveRoom(room);
       };
       const render = () => {
@@ -13411,7 +13418,10 @@ ${dialogueText}`;
       if (persist) {
         settings.featureModels = { ...(loadAiSummarySettings().featureModels || {}), summary:{ provider:settings.provider, model:String(settings.models?.[settings.provider] || '') } };
         saveAiSummarySettings(settings);
-        for (const [id, value] of draftSecrets) writeAiSecret(id, value);
+        // AI 요약 창도 빈 캐시값으로 기존 인증정보를 지우지 않습니다.
+        for (const [id, value] of draftSecrets) {
+          if (String(value || '').trim()) writeAiSecret(id, value);
+        }
       }
       return settings;
     };
