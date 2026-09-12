@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🪽위시 RP Manager
 // @namespace    local.rp.context.manager
-// @version      0.12.52
+// @version      0.12.54
 // @description  장기 RP용 현재상태·날짜로그·연속성 타임라인·캐릭터 설정을 관리하고, 검수형 AI 생성과 필요한 컨텍스트 자동 주입을 지원합니다.
 // @author       User
 // @license      All Rights Reserved
@@ -42,13 +42,13 @@
   // 버전별 키를 쓰면 구버전과 신버전이 동시에 설치됐을 때 둘 다 실행될 수 있습니다.
   // 모든 버전이 공유하는 고정 키로 중복 실행을 막습니다.
   if (window.__WISH_RP_MANAGER_LOADED__) return;
-  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.12.52', loadedAt: Date.now() };
+  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.12.54', loadedAt: Date.now() };
   // 같은 페이지에 남아 있는 v0.8.10 복사본이 뒤늦게 시작되는 경우도 차단합니다.
   window.__RP_MANAGER_0810_LOADED__ = true;
 
   const APP = {
     name: '🪽위시 RP Manager',
-    version: '0.12.52',
+    version: '0.12.54',
     dbName: 'RPContextManagerDB',
     dbVersion: 2,
     storeName: 'rooms',
@@ -7058,8 +7058,8 @@ ${dialogueText}`;
       if (!prev || logItemPriority(item) < logItemPriority(prev)) byKey.set(item.sourceKey || item.slotId, item);
     };
 
-    for (const b of blocks.filter(b => pinnedKeys.has(b.key))) put(makeLogRecallItem(b, slot, 'pinned-log', '고정로그', '사용자 고정'));
-    for (const b of blocks.filter(b => manualKeys.has(b.key))) put(makeLogRecallItem(b, slot, 'manual-log', '직접로그', '사용자 직접 선택'));
+    for (const b of blocks.filter(b => pinnedKeys.has(b.key))) put(makeLogRecallItem(b, slot, 'pinned-log', '항상주입', '사용자 항상 주입'));
+    for (const b of blocks.filter(b => manualKeys.has(b.key))) put(makeLogRecallItem(b, slot, 'manual-log', '직접주입', '사용자 직접 주입'));
 
     if (room.autoLogRecallEnabled) {
       const occupied = new Set([...pinnedKeys, ...manualKeys]);
@@ -7329,7 +7329,7 @@ ${dialogueText}`;
             <summary><input type="checkbox" data-manager-select="${index}" aria-label="${esc(String(item.title || (isExtra ? '기타' : '캐릭터')))} 선택"><span class="rpcm-library-item-number">${String(index + 1).padStart(2, '0')}.</span><strong data-manager-summary-title>${esc(String(item.title || (isExtra ? '기타' : '캐릭터')))}</strong><span>${formatCount(String(item.content || '').length)}자 · ${retentionLabel(item.retentionTurns)}</span><button type="button" class="rpcm-library-item-delete" data-manager-delete="${index}">삭제</button><span class="rpcm-chevron">▶</span></summary>
             <div class="rpcm-library-item-edit">
               <label>항목 이름<input type="text" data-manager-title value="${esc(String(item.title || ''))}" placeholder="${isExtra ? '기타 항목 이름' : '캐릭터 이름'}"></label>
-              ${isExtra ? '' : `<label>자동감지용 별칭 · 주입 안 됨<input type="text" data-manager-aliases value="${esc((item.aliases || []).join(', '))}" placeholder="애칭·약칭·호칭을 쉼표로 구분"></label>`}
+              ${isExtra ? '' : `<label>자동 선택용 별칭 · 주입 안 됨<input type="text" data-manager-aliases value="${esc((item.aliases || []).join(', '))}" placeholder="애칭·약칭·호칭을 쉼표로 구분"></label>`}
               <label class="rpcm-library-retention-label">유지 주기<select data-manager-retention>${retentionOptionsHtml(item.retentionTurns)}</select></label>
               <label>내용<textarea data-manager-content data-rpcm-editor="true" spellcheck="false">${esc(String(item.content || ''))}</textarea></label>
             </div>
@@ -7727,7 +7727,7 @@ ${dialogueText}`;
         const sc = scored.get(b.key);
         const reason = sc ? relatedLogReason(sc) : '현재 문맥 일치 없음';
         const timeline = logTimelineLabelOfBlock(b);
-        return `<div class="rpcm-log-row${favorite.has(b.key) ? ' is-favorite' : ''}" data-log-key="${esc(b.key)}"><div class="rpcm-log-row-head"><strong>${esc(b.titleText)}</strong><span>${formatCount(b.raw.length)}자</span></div><div class="rpcm-log-row-reason">${esc(reason)}${sc ? ` · 점수 ${Number(sc.score).toFixed(1)}` : ''}</div><div class="rpcm-log-row-controls">${hasMultipleTimelines ? `<label class="rpcm-log-timeline-choice">이 블록 시간선 <select class="rpcm-log-timeline-select">${timelineOptionHtml(timeline)}</select></label>` : ''}<label><input type="checkbox" class="rpcm-log-favorite" ${favorite.has(b.key) ? 'checked' : ''}> ★ 즐겨찾기</label><label><input type="checkbox" class="rpcm-log-manual" ${manual.has(b.key) ? 'checked' : ''}> 직접 선택</label><label><input type="checkbox" class="rpcm-log-pin" ${pinned.has(b.key) ? 'checked' : ''}> 📌 항상 호출</label><label><input type="checkbox" class="rpcm-log-exclude" ${excluded.has(b.key) ? 'checked' : ''}> 🚫 자동 제외</label><button type="button" class="rpcm-lib-small rpcm-log-toggle">내용 보기</button></div><pre class="rpcm-log-content" hidden>${esc(b.raw)}</pre></div>`;
+        return `<div class="rpcm-log-row${favorite.has(b.key) ? ' is-favorite' : ''}" data-log-key="${esc(b.key)}"><div class="rpcm-log-row-head"><strong>${esc(b.titleText)}</strong><span>${formatCount(b.raw.length)}자</span></div><div class="rpcm-log-row-reason">${esc(reason)}${sc ? ` · 점수 ${Number(sc.score).toFixed(1)}` : ''}</div><div class="rpcm-log-row-controls">${hasMultipleTimelines ? `<label class="rpcm-log-timeline-choice">이 블록 시간선 <select class="rpcm-log-timeline-select">${timelineOptionHtml(timeline)}</select></label>` : ''}<label><input type="checkbox" class="rpcm-log-favorite" ${favorite.has(b.key) ? 'checked' : ''}> ★ 즐겨찾기</label><label title="자동 선택을 꺼도 이 날짜를 주입 후보에 포함합니다."><input type="checkbox" class="rpcm-log-manual" ${manual.has(b.key) ? 'checked' : ''}> 직접 주입</label><label title="자동 선택 여부와 관계없이 이 날짜를 항상 우선 주입합니다."><input type="checkbox" class="rpcm-log-pin" ${pinned.has(b.key) ? 'checked' : ''}> 📌 항상 주입</label><label title="최근·관련 로그 자동 선택에서 제외합니다. 직접 주입은 가능합니다."><input type="checkbox" class="rpcm-log-exclude" ${excluded.has(b.key) ? 'checked' : ''}> 🚫 자동 선택 제외</label><button type="button" class="rpcm-lib-small rpcm-log-toggle">내용 보기</button></div><pre class="rpcm-log-content" hidden>${esc(b.raw)}</pre></div>`;
       };
       const timelineFolderHtml = (timelineLabel, timelineIndex) => {
         const timelineBlocks = blocks.filter(block => blockBelongsToTimeline(block, timelineLabel)).sort(compareLogBlocksChronologically);
@@ -7748,7 +7748,7 @@ ${dialogueText}`;
           const monthEntries = [...months.entries()];
           return `<details class="rpcm-log-year" ${yi === latestYearIndex ? 'open' : ''}><summary><strong>${esc(yearLabel)}</strong><span>${[...months.values()].reduce((n,a)=>n+a.length,0)}개 날짜</span></summary>${monthEntries.map(([monthLabel, monthBlocks], mi) => {
             const weekGroups = [1,2,3,4,5].map(w => ({ w, arr:monthBlocks.filter(b => b.weekOfMonth === w) })).filter(x => x.arr.length);
-            return `<details class="rpcm-log-month" ${yi === latestYearIndex && mi === monthEntries.length - 1 ? 'open' : ''}><summary><strong>${esc(monthLabel)}</strong><span>${monthBlocks.length}개 · ${formatCount(monthBlocks.reduce((n,b)=>n+b.raw.length,0))}자</span></summary><div class="rpcm-log-groupbar"><label><input type="checkbox" class="rpcm-log-group-select" data-keys="${esc(monthBlocks.map(b=>b.key).join('|'))}"> 월 전체 직접 선택</label>${weekGroups.map(g => `<label><input type="checkbox" class="rpcm-log-group-select" data-keys="${esc(g.arr.map(b=>b.key).join('|'))}"> ${g.w}주 (${g.arr.length})</label>`).join('')}</div>${monthBlocks.map(rowHtml).join('')}</details>`;
+            return `<details class="rpcm-log-month" ${yi === latestYearIndex && mi === monthEntries.length - 1 ? 'open' : ''}><summary><strong>${esc(monthLabel)}</strong><span>${monthBlocks.length}개 · ${formatCount(monthBlocks.reduce((n,b)=>n+b.raw.length,0))}자</span></summary><div class="rpcm-log-groupbar"><label><input type="checkbox" class="rpcm-log-group-select" data-keys="${esc(monthBlocks.map(b=>b.key).join('|'))}"> 월 전체 직접 주입</label>${weekGroups.map(g => `<label><input type="checkbox" class="rpcm-log-group-select" data-keys="${esc(g.arr.map(b=>b.key).join('|'))}"> ${g.w}주 (${g.arr.length})</label>`).join('')}</div>${monthBlocks.map(rowHtml).join('')}</details>`;
           }).join('')}</details>`;
         }).join('');
         const special = specialBlocks.length ? `<details class="rpcm-log-year"><summary><strong>작품 고유 연호</strong><span>${specialBlocks.length}개</span></summary>${specialBlocks.map(rowHtml).join('')}</details>` : '';
@@ -7763,12 +7763,12 @@ ${dialogueText}`;
       backdrop.innerHTML = `
         <div class="rpcm-log-dialog" role="dialog" aria-modal="true">
           <div class="rpcm-lib-dialog-head"><div><div class="rpcm-lib-dialog-title">날짜별 로그 저장소 · ${hasMultipleTimelines ? '시간선/주입 관리' : '주입 관리'}</div><div class="rpcm-lib-dialog-desc">원본 로그 ${blocks.length}개 블록 · ${formatCount(totalChars)}자 · ${hasMultipleTimelines ? '시간선→연도→월' : '연도→월'} 순서로 관리합니다.</div></div><button type="button" class="rpcm-lib-close">✕</button></div>
-          ${hasMultipleTimelines ? `<div class="rpcm-log-timeline-toolbar"><label><span>다음 요약 저장 시간선</span><select id="rpcm-active-log-timeline">${timelineOptionHtml(activeTimeline)}</select></label><button type="button" class="rpcm-lib-small" id="rpcm-add-log-timeline">＋ 새 시간선</button><button type="button" class="rpcm-lib-small" id="rpcm-rename-log-timeline">이름 변경</button><button type="button" class="rpcm-lib-small rpcm-log-timeline-delete" id="rpcm-delete-log-timeline">시간선 삭제</button></div><div class="rpcm-log-help"><b>활성 시간선은 다음 API 날짜요약이 이어서 저장될 시간선</b>만 정합니다. 자동 호출은 현재 회차와 그보다 앞선 모든 시간선의 날짜를 함께 검색합니다. 최근로그는 설정한 총 ${Math.max(1, Math.min(2, Number(room.autoLogRecentBlocks) || APP.defaultRecentLogBlocks))}개 안에서 활성 회차의 마지막 날짜와 직전 회차의 마지막 날짜를 우선하며, 관련 과거 로그도 모든 이전 회차에서 찾습니다.<br><b>기본 시간선</b>은 회귀 전 원래 전개이며 기존 ‘원래 시간선’ 표기도 이 폴더로 자동 합쳐집니다.</div>` : `<div class="rpcm-log-timeline-toolbar is-simple"><select id="rpcm-active-log-timeline" hidden>${timelineOptionHtml(activeTimeline)}</select><span class="rpcm-log-simple-label">날짜 로그</span><span class="rpcm-log-simple-desc">시간선이 필요한 경우에만 추가해 주세요.</span><button type="button" class="rpcm-lib-small" id="rpcm-add-log-timeline">＋ 시간선 추가</button></div>`}
-          <div class="rpcm-log-help"><b>★ 즐겨찾기</b>=나중에 빠르게 찾기 · <b>직접 선택</b>=다음 주입 후보에 강제 포함 · <b>📌 항상 호출</b>=항상 우선 포함 · <b>🚫 자동 제외</b>=최신/관련 자동호출에서만 제외</div>
-          <details class="rpcm-log-picked is-open" id="rpcm-log-picked" open><summary class="rpcm-log-picked-trigger" id="rpcm-log-picked-trigger" aria-expanded="true"><strong>즐겨찾기·고정·직접 호출 로그</strong><span id="rpcm-log-picked-count"></span></summary><div id="rpcm-log-picked-body"></div></details>
+          ${hasMultipleTimelines ? `<div class="rpcm-log-timeline-toolbar"><label><span>다음 요약 저장 시간선</span><select id="rpcm-active-log-timeline">${timelineOptionHtml(activeTimeline)}</select></label><button type="button" class="rpcm-lib-small" id="rpcm-add-log-timeline">＋ 새 시간선</button><button type="button" class="rpcm-lib-small" id="rpcm-rename-log-timeline">이름 변경</button><button type="button" class="rpcm-lib-small rpcm-log-timeline-delete" id="rpcm-delete-log-timeline">시간선 삭제</button></div><div class="rpcm-log-help"><b>활성 시간선은 다음 API 날짜요약이 이어서 저장될 시간선</b>만 정합니다. 최근·관련 로그 자동 선택은 현재 회차와 그보다 앞선 모든 시간선의 날짜를 함께 검색합니다. 최근로그는 설정한 총 ${Math.max(1, Math.min(2, Number(room.autoLogRecentBlocks) || APP.defaultRecentLogBlocks))}개 안에서 활성 회차의 마지막 날짜와 직전 회차의 마지막 날짜를 우선하며, 관련 과거 로그도 모든 이전 회차에서 찾습니다.<br><b>기본 시간선</b>은 회귀 전 원래 전개이며 기존 ‘원래 시간선’ 표기도 이 폴더로 자동 합쳐집니다.</div>` : `<div class="rpcm-log-timeline-toolbar is-simple"><select id="rpcm-active-log-timeline" hidden>${timelineOptionHtml(activeTimeline)}</select><span class="rpcm-log-simple-label">날짜 로그</span><span class="rpcm-log-simple-desc">시간선이 필요한 경우에만 추가해 주세요.</span><button type="button" class="rpcm-lib-small" id="rpcm-add-log-timeline">＋ 시간선 추가</button></div>`}
+          <div class="rpcm-log-help"><b>★ 즐겨찾기</b>=나중에 빠르게 찾기 · <b>직접 주입</b>=다음 주입 후보에 강제 포함 · <b>📌 항상 주입</b>=항상 우선 포함 · <b>🚫 자동 선택 제외</b>=최근·관련 로그 자동 선택에서만 제외</div>
+          <details class="rpcm-log-picked is-open" id="rpcm-log-picked" open><summary class="rpcm-log-picked-trigger" id="rpcm-log-picked-trigger" aria-expanded="true"><strong>즐겨찾기·항상 주입·직접 주입 로그</strong><span id="rpcm-log-picked-count"></span></summary><div id="rpcm-log-picked-body"></div></details>
           <div class="rpcm-log-help" id="rpcm-log-manager-summary"></div>
           <div class="rpcm-log-list">${rowsHtml}</div>
-          <div class="rpcm-lib-dialog-actions"><button type="button" class="rpcm-btn secondary" id="rpcm-log-clear-manual">직접 선택 전체 해제</button><div class="rpcm-spacer"></div><button type="button" class="rpcm-btn secondary" data-act="cancel">취소</button><button type="button" class="rpcm-btn primary" data-act="confirm">적용</button></div>
+          <div class="rpcm-lib-dialog-actions"><button type="button" class="rpcm-btn secondary" id="rpcm-log-clear-manual">직접 주입 전체 해제</button><div class="rpcm-spacer"></div><button type="button" class="rpcm-btn secondary" data-act="cancel">취소</button><button type="button" class="rpcm-btn primary" data-act="confirm">적용</button></div>
         </div>`;
       document.body.appendChild(backdrop);
 
@@ -7820,7 +7820,7 @@ ${dialogueText}`;
           const block = blocks.find(b => String(b.key) === key);
           return n + String(block?.raw || '').length;
         }, 0);
-        if (managerSummary) managerSummary.innerHTML = `<b>현재 직접 선택 ${selectedRows.length}개</b> · ${formatCount(selectedChars)}자 · 자동 호출을 꺼도 직접 선택 날짜는 주입 후보에 유지됩니다.`;
+        if (managerSummary) managerSummary.innerHTML = `<b>현재 직접 주입 ${selectedRows.length}개</b> · ${formatCount(selectedChars)}자 · 최근·관련 로그 자동 선택을 꺼도 직접 주입 날짜는 주입 후보에 유지됩니다.`;
       };
       const refreshPickedManager = () => {
         const picked = blocks.map(block => {
@@ -7830,7 +7830,7 @@ ${dialogueText}`;
         pickedPanel?.classList.toggle('is-empty', picked.length === 0);
         if (pickedCount) pickedCount.textContent = picked.length ? `${picked.length}개` : '0개 · 지정 없음';
         if (!pickedBody) return;
-        pickedBody.innerHTML = picked.length ? picked.map(item => `<div class="rpcm-log-picked-row" data-picked-key="${esc(item.block.key)}"><div><strong>${item.favorite ? '★ ' : ''}${esc(item.block.titleText)}</strong><span>${esc(logTimelineLabelOfBlock(item.block))} · ${formatCount(item.block.raw.length)}자</span></div><div>${item.favorite ? '<button type="button" data-picked-clear="favorite">★ 해제</button>' : ''}${item.manual ? '<button type="button" data-picked-clear="manual">직접 해제</button>' : '<button type="button" data-picked-enable="manual">직접 넣기</button>'}${item.pinned ? '<button type="button" data-picked-clear="pinned">📌 해제</button>' : ''}<button type="button" data-picked-jump>날짜 보기</button></div></div>`).join('') : '<div class="rpcm-log-picked-empty">즐겨찾기나 지정 로그가 없습니다.</div>';
+        pickedBody.innerHTML = picked.length ? picked.map(item => `<div class="rpcm-log-picked-row" data-picked-key="${esc(item.block.key)}"><div><strong>${item.favorite ? '★ ' : ''}${esc(item.block.titleText)}</strong><span>${esc(logTimelineLabelOfBlock(item.block))} · ${formatCount(item.block.raw.length)}자</span></div><div>${item.favorite ? '<button type="button" data-picked-clear="favorite">★ 해제</button>' : ''}${item.manual ? '<button type="button" data-picked-clear="manual">직접 주입 해제</button>' : '<button type="button" data-picked-enable="manual">직접 주입</button>'}${item.pinned ? '<button type="button" data-picked-clear="pinned">📌 해제</button>' : ''}<button type="button" data-picked-jump>날짜 보기</button></div></div>`).join('') : '<div class="rpcm-log-picked-empty">즐겨찾기나 지정 로그가 없습니다.</div>';
         setPickedPanelOpen(pickedPanel?.open ?? true);
         pickedBody.querySelectorAll('[data-picked-clear]').forEach(button => button.onclick = () => {
           const key = String(button.closest('[data-picked-key]')?.dataset.pickedKey || '');
@@ -9222,7 +9222,14 @@ ${dialogueText}`;
           captureApiForm(false);
           const changed = await openUnifiedApiSettingsDialog(room);
           apiSettings = aiFeatureSettings(loadAiSummarySettings(), 'timeline');
-          if (changed) dirty = true;
+          // API 설정창에서 Firebase/Vertex/API 키를 저장하고 돌아오면
+          // 타임라인 창이 처음 열릴 때 복사해 둔 인증정보도 즉시 다시 읽습니다.
+          // 그렇지 않으면 연결 테스트는 정상이어도 실제 타임라인 생성은
+          // 이전/빈 인증정보를 사용해 Firebase 설정 오류가 날 수 있습니다.
+          if (changed) {
+            for (const id of AI_SUMMARY_PROVIDERS) draftSecrets.set(id, readAiSecret(id));
+            dirty = true;
+          }
           render();
           return;
         }
@@ -9528,8 +9535,8 @@ ${dialogueText}`;
   function itemCategory(item) {
     if (item.slotId === 'currentState') return '현재상태';
     if (item.autoType === 'story-timeline') return '타임라인';
-    if (item.autoType === 'pinned-log') return '고정로그';
-    if (item.autoType === 'manual-log') return '직접 선택';
+    if (item.autoType === 'pinned-log') return '항상 주입';
+    if (item.autoType === 'manual-log') return '직접 주입';
     if (item.autoType === 'recent-log') return '최근로그';
     if (item.autoType === 'related-log') return '관련로그';
     if (item.slotId === 'logSummary') return '로그요약';
@@ -9541,7 +9548,7 @@ ${dialogueText}`;
   function categoryTone(label) {
     if (label === '현재상태') return 'state';
     if (label === '타임라인') return 'timeline';
-    if (/로그/.test(String(label || '')) || label === '직접 선택') return 'log';
+    if (/로그/.test(String(label || '')) || label === '직접 주입' || label === '항상 주입') return 'log';
     if (label === '캐릭터') return 'character';
     if (label === '기타') return 'extra';
     return 'format';
@@ -9558,7 +9565,7 @@ ${dialogueText}`;
       current.chars += String(item.content || '').length;
       grouped.set(key, current);
     }
-    const order = ['현재상태','타임라인','고정로그','직접 선택','최근로그','관련로그','로그요약','캐릭터','기타'];
+    const order = ['현재상태','타임라인','항상 주입','직접 주입','최근로그','관련로그','로그요약','캐릭터','기타'];
     const result = order.filter(key => grouped.has(key)).map(key => grouped.get(key));
     const rawChars = result.reduce((sum, item) => sum + item.chars, 0);
     const overhead = Math.max(0, Number(blockChars || 0) - rawChars + Number(separatorChars || 0));
@@ -9593,9 +9600,9 @@ ${dialogueText}`;
     }
     if (item.recallReason) return String(item.recallReason);
     if (item.autoType === 'character' && item.matchedAlias) return `“${item.matchedAlias}” 감지`;
-    if (item.autoType === 'manual-log') return '사용자 직접 선택';
+    if (item.autoType === 'manual-log') return '사용자 직접 주입';
     if (item.autoType === 'recent-log') return '현재·이전 시간선 최신 날짜 유지';
-    if (item.autoType === 'pinned-log') return '사용자 고정';
+    if (item.autoType === 'pinned-log') return '사용자 항상 주입';
     if (item.autoType === 'related-log') return '현재 RP와 관련';
     return '';
   }
@@ -9909,7 +9916,7 @@ ${dialogueText}`;
       const manualCount = cards.filter(card => card.querySelector('[data-log-choice="manual"]')?.checked).length;
       if (logSelectionSummaryEl) {
         logSelectionSummaryEl.hidden = false;
-        logSelectionSummaryEl.textContent = `직접 선택 ${manualCount}개 · ${formatCount(selectedDetachedLogChars())}자`;
+        logSelectionSummaryEl.textContent = `직접 주입 ${manualCount}개 · ${formatCount(selectedDetachedLogChars())}자`;
       }
       applyDetachedFavoriteFilter();
     };
@@ -10088,7 +10095,7 @@ ${dialogueText}`;
         const excluded = selections.excluded.has(key);
         const favorite = selections.favorite.has(key);
         const flagBits = [manual ? '직접' : '', pinned ? '📌' : '', favorite ? '★' : '', excluded ? '제외' : ''].filter(Boolean).join(' · ');
-        return `<details class="rpcm-detached-card rpcm-detached-log-card${manual ? ' is-log-manual' : ''}${pinned ? ' is-log-pinned' : ''}${favorite ? ' is-log-favorite' : ''}${excluded ? ' is-log-excluded' : ''}" data-card-index="${index}" data-log-index="${index}" data-log-key="${esc(key)}" data-log-origin-key="${esc(key)}" open><summary><span class="rpcm-detached-index">${String(index + 1).padStart(2,'0')}</span><strong data-log-title-preview>${esc(block.heading)}</strong><span class="rpcm-detached-log-flags" data-log-flags ${flagBits ? '' : 'hidden'}>${esc(flagBits)}</span><span class="rpcm-detached-card-meta">${formatCount(block.raw.length)}자</span><button type="button" class="rpcm-detached-card-copy">블록 복사</button><button type="button" class="rpcm-detached-card-delete">삭제</button><span class="rpcm-chevron">▼</span></summary><div class="rpcm-detached-card-body"><div class="rpcm-detached-log-insertbar"><button type="button" data-log-insert="before">＋ 위에 날짜 추가</button><button type="button" data-log-insert="after">＋ 아래에 날짜 추가</button></div><label class="rpcm-detached-log-heading"><span>날짜 · 키워드 제목</span><input type="text" data-role="log-heading" value="${esc(block.heading)}" placeholder="[2027년 9월 24일-키워드]" spellcheck="false"></label><div class="rpcm-detached-log-controls">${hasMultipleTimelines ? `<label class="rpcm-detached-log-timeline-choice"><span>이 블록 시간선</span><select data-role="log-timeline">${timelineOptions(logTimelineLabelOfBlock(block))}</select></label><label class="choice-bulk"><input type="checkbox" data-log-bulk-select><span>이동 선택</span></label><button type="button" class="rpcm-detached-log-select-after" title="같은 시간선에서 이 날짜부터 아래 블록까지 선택">이 날짜부터 아래 선택</button>` : ''}<label class="choice-favorite" title="즐겨찾기 목록에서 빠르게 직접 선택할 수 있습니다."><input type="checkbox" data-log-choice="favorite" ${favorite ? 'checked' : ''}><span>★ 즐겨찾기</span></label><label class="choice-manual" title="기존 로그 저장소의 ‘직접 선택’과 동일합니다."><input type="checkbox" data-log-choice="manual" ${manual ? 'checked' : ''}><span>직접 선택</span></label><label class="choice-pinned" title="자동 호출 여부와 상관없이 항상 우선 주입 후보에 포함합니다."><input type="checkbox" data-log-choice="pinned" ${pinned ? 'checked' : ''}><span>📌 항상 호출</span></label><label class="choice-excluded" title="최신/관련 자동호출에서 제외합니다. 직접 선택은 계속 가능합니다."><input type="checkbox" data-log-choice="excluded" ${excluded ? 'checked' : ''}><span>🚫 자동 제외</span></label></div><textarea data-role="log-body" spellcheck="false">${esc(block.body)}</textarea></div></details>`;
+        return `<details class="rpcm-detached-card rpcm-detached-log-card${manual ? ' is-log-manual' : ''}${pinned ? ' is-log-pinned' : ''}${favorite ? ' is-log-favorite' : ''}${excluded ? ' is-log-excluded' : ''}" data-card-index="${index}" data-log-index="${index}" data-log-key="${esc(key)}" data-log-origin-key="${esc(key)}" open><summary><span class="rpcm-detached-index">${String(index + 1).padStart(2,'0')}</span><strong data-log-title-preview>${esc(block.heading)}</strong><span class="rpcm-detached-log-flags" data-log-flags ${flagBits ? '' : 'hidden'}>${esc(flagBits)}</span><span class="rpcm-detached-card-meta">${formatCount(block.raw.length)}자</span><button type="button" class="rpcm-detached-card-copy">블록 복사</button><button type="button" class="rpcm-detached-card-delete">삭제</button><span class="rpcm-chevron">▼</span></summary><div class="rpcm-detached-card-body"><div class="rpcm-detached-log-insertbar"><button type="button" data-log-insert="before">＋ 위에 날짜 추가</button><button type="button" data-log-insert="after">＋ 아래에 날짜 추가</button></div><label class="rpcm-detached-log-heading"><span>날짜 · 키워드 제목</span><input type="text" data-role="log-heading" value="${esc(block.heading)}" placeholder="[2027년 9월 24일-키워드]" spellcheck="false"></label><div class="rpcm-detached-log-controls">${hasMultipleTimelines ? `<label class="rpcm-detached-log-timeline-choice"><span>이 블록 시간선</span><select data-role="log-timeline">${timelineOptions(logTimelineLabelOfBlock(block))}</select></label><label class="choice-bulk"><input type="checkbox" data-log-bulk-select><span>이동 선택</span></label><button type="button" class="rpcm-detached-log-select-after" title="같은 시간선에서 이 날짜부터 아래 블록까지 선택">이 날짜부터 아래 선택</button>` : ''}<label class="choice-favorite" title="즐겨찾기 목록에서 빠르게 찾을 수 있습니다."><input type="checkbox" data-log-choice="favorite" ${favorite ? 'checked' : ''}><span>★ 즐겨찾기</span></label><label class="choice-manual" title="자동 선택을 꺼도 이 날짜를 주입 후보에 포함합니다."><input type="checkbox" data-log-choice="manual" ${manual ? 'checked' : ''}><span>직접 주입</span></label><label class="choice-pinned" title="자동 선택 여부와 상관없이 항상 우선 주입 후보에 포함합니다."><input type="checkbox" data-log-choice="pinned" ${pinned ? 'checked' : ''}><span>📌 항상 주입</span></label><label class="choice-excluded" title="최근·관련 로그 자동 선택에서 제외합니다. 직접 주입은 가능합니다."><input type="checkbox" data-log-choice="excluded" ${excluded ? 'checked' : ''}><span>🚫 자동 선택 제외</span></label></div><textarea data-role="log-body" spellcheck="false">${esc(block.body)}</textarea></div></details>`;
       };
       const activeTimeline = activeLogTimelineLabel(state.currentRoom);
       const groups = timelineLabels.map(label => ({
@@ -11804,7 +11811,7 @@ ${dialogueText}`;
 
   async function refreshAiContextReviewNow(room) {
     if (!room?.aiContextLogRerankEnabled) throw new Error('AI 맥락 검토가 꺼져 있습니다. API 설정에서 먼저 켜 주세요.');
-    if (!room.autoLogRecallEnabled) throw new Error('날짜 로그 자동 호출이 꺼져 있습니다. 먼저 켜 주세요.');
+    if (!room.autoLogRecallEnabled) throw new Error('최근·관련 로그 자동 선택이 꺼져 있습니다. 먼저 켜 주세요.');
     const slot = (room.slots || []).find(item => item.id === 'logSummary');
     if (!slot?.enabled || !String(slot.content || '').trim()) throw new Error('검토할 날짜로그가 없습니다.');
 
@@ -12024,7 +12031,7 @@ ${dialogueText}`;
     excluded.delete(String(block.key));
 
     if (pending) {
-      const next = makeLogRecallItem(block, slot, 'manual-log', '직접 선택', '사용자 직접 선택');
+      const next = makeLogRecallItem(block, slot, 'manual-log', '직접주입', '사용자 직접 주입');
       const remaining = activePendingItems(pending).filter(item => {
         const id = pendingItemIdentity(item);
         return id !== replaceIdentity && id !== pendingItemIdentity(next);
@@ -12216,7 +12223,7 @@ ${dialogueText}`;
     // API가 실패하면 이미 계산된 로컬 키워드 결과를 그대로 사용합니다.
     items = await rerankInitialRelatedLogItems(room, items, recallText, initialContextBudget);
     const contextBlock = buildContextBlockFromItems(items);
-    if (!contextBlock) throw new Error('주입할 항목이 없습니다. 현재상태/캐릭터/기타 또는 날짜 로그의 직접 선택·자동 호출 설정을 확인해 주세요.');
+    if (!contextBlock) throw new Error('주입할 항목이 없습니다. 현재상태/캐릭터/기타 또는 날짜 로그의 직접 주입·최근·관련 자동 선택 설정을 확인해 주세요.');
     const injectedText = buildInjectedMessage(cleanOriginal, contextBlock);
     const maxChars = Number(room.maxChars) || APP.defaultMaxChars;
     if (injectedText.length > maxChars) throw new Error(`carrier 총 길이가 ${formatCount(injectedText.length)}자입니다. 설정 한도 ${formatCount(maxChars)}자를 넘습니다.`);
@@ -12530,7 +12537,7 @@ ${dialogueText}`;
           const recent = await fetchRecentMessages(apiChatIdOf(room), APP.autoScanMessageLimit);
           const auto = await refreshAutomaticMemories(room, recent);
           if (auto.detected?.length && room.chatId === state.currentChatId) {
-            notify(`캐릭터 자동 감지 · ${auto.detected.map(x => x.slot.title).join(', ')} 설정 활성화`, 'success', 3800);
+            notify(`RP 등장 캐릭터 자동 선택 · ${auto.detected.map(x => x.slot.title).join(', ')} 현재 주입 활성화`, 'success', 3800);
             renderModalIfOpen();
           }
           return;
@@ -14915,7 +14922,7 @@ ${dialogueText}`;
             <button class="rpcm-iconbtn rpcm-main-api-button" id="rpcm-main-api-open" aria-label="API 설정">⚙</button>
             <button class="rpcm-iconbtn" id="rpcm-close">✕</button>
           </div>
-          <aside class="rpcm-main-help-panel" id="rpcm-main-help-panel" hidden><header><h3>RP Manager 사용 방법</h3><button type="button" id="rpcm-main-help-close" aria-label="도움말 닫기">✕</button></header><div class="rpcm-main-help-row"><strong>기억 관리</strong><span>현재상태는 계속 유지하고, 날짜로그는 최신·관련·직접·고정 항목만 골라 주입합니다.</span></div><div class="rpcm-main-help-row"><strong>로그 관리</strong><span>날짜별 내용을 보고 직접 선택하거나 ★ 즐겨찾기·📌 항상 호출·자동 제외를 정할 수 있습니다.</span></div><div class="rpcm-main-help-row"><strong>AI 맥락 검토</strong><span>키워드 후보를 저장된 API가 현재 RP 흐름으로 한 번 더 고릅니다. API가 실패하면 키워드 방식으로 돌아가며, ‘+ 관련로그 추가’로 사용자가 직접 보강할 수 있습니다.</span></div><div class="rpcm-main-help-row"><strong>연속성 타임라인</strong><span>중요 사건과 관계 변화가 현재까지 이어진 흐름입니다. 타임라인 갱신에서 API 초안 생성·결과 미리보기·최종 저장을 진행합니다.</span></div><div class="rpcm-main-help-row"><strong>캐릭터·기타</strong><span>자주 쓰는 설정을 저장하고 체크해 주입합니다. 캐릭터는 최근 실제 RP에서 이름이 감지되면 자동으로 불러올 수 있습니다.</span></div><div class="rpcm-main-help-row"><strong>주입 시작</strong><span>체크한 항목을 다음 AI 답변용 carrier에 넣습니다. 주입 중에는 위 목록의 로그를 펼쳐 보고 빼거나 관련로그를 교체할 수 있습니다.</span></div><div class="rpcm-main-help-row"><strong>AI 요약</strong><span>저장한 API로 새 RP를 읽어 날짜요약과 현재상태를 만들며, 결과는 확인·수정한 뒤에만 적용됩니다.</span></div><div class="rpcm-main-help-row"><strong>백업</strong><span>현재 방 복사용 JSON을 원본 방에서 저장한 뒤 분기방에서 불러오면, RP Manager 전체 데이터를 현재 방으로 복사할 수 있습니다.</span></div></aside>
+          <aside class="rpcm-main-help-panel" id="rpcm-main-help-panel" hidden><header><h3>RP Manager 사용 방법</h3><button type="button" id="rpcm-main-help-close" aria-label="도움말 닫기">✕</button></header><div class="rpcm-main-help-row"><strong>기억 관리</strong><span>현재상태는 계속 유지하고, 날짜로그는 최신·관련·직접 주입·항상 주입 날짜만 골라 주입합니다.</span></div><div class="rpcm-main-help-row"><strong>로그 관리</strong><span>날짜별 내용을 보고 직접 주입하거나 ★ 즐겨찾기·📌 항상 주입·자동 선택 제외를 정할 수 있습니다.</span></div><div class="rpcm-main-help-row"><strong>AI 맥락 검토</strong><span>키워드 후보를 저장된 API가 현재 RP 흐름으로 한 번 더 고릅니다. API가 실패하면 키워드 방식으로 돌아가며, ‘+ 관련로그 추가’로 사용자가 직접 보강할 수 있습니다.</span></div><div class="rpcm-main-help-row"><strong>연속성 타임라인</strong><span>중요 사건과 관계 변화가 현재까지 이어진 흐름입니다. 타임라인 갱신에서 API 초안 생성·결과 미리보기·최종 저장을 진행합니다.</span></div><div class="rpcm-main-help-row"><strong>캐릭터·기타</strong><span>자주 쓰는 설정을 저장하고 현재 주입 여부를 체크합니다. RP 등장 캐릭터 자동 선택을 켜면 선택한 설정집의 캐릭터가 최근 실제 RP에서 감지될 때 현재 주입이 자동으로 켜집니다.</span></div><div class="rpcm-main-help-row"><strong>주입 시작</strong><span>체크한 항목을 다음 AI 답변용 carrier에 넣습니다. 주입 중에는 위 목록의 로그를 펼쳐 보고 빼거나 관련로그를 교체할 수 있습니다.</span></div><div class="rpcm-main-help-row"><strong>AI 요약</strong><span>저장한 API로 새 RP를 읽어 날짜요약과 현재상태를 만들며, 결과는 확인·수정한 뒤에만 적용됩니다.</span></div><div class="rpcm-main-help-row"><strong>백업</strong><span>현재 방 복사용 JSON을 원본 방에서 저장한 뒤 분기방에서 불러오면, RP Manager 전체 데이터를 현재 방으로 복사할 수 있습니다.</span></div></aside>
           <div class="rpcm-mobile-editbar"><button type="button" id="rpcm-mobile-edit-done">완료</button><strong id="rpcm-mobile-edit-title">내용 편집</strong><span id="rpcm-mobile-edit-count">0자</span></div>
           <div class="rpcm-body">
             ${pending ? `<div class="rpcm-pending"><div>🟠 <strong>${pending.verified ? '서버 주입 확인됨 ✓' : '서버 주입 확인 필요'}</strong><br>${esc(pendingProgressText(pending))}<br>현재 carrier AI ${esc(shortId(pending.messageId))} · 숨김 컨텍스트 ${formatCount(pending.injectedChars)}자 · 서버 raw ${formatCount(pending.serverChars || pending.carrierChars)}자${pending.verified ? '' : '<br><b>재검증에 실패하면 ‘지금 해제’ 후 다시 주입해 주세요.</b>'}</div><div class="rpcm-spacer"></div><button class="rpcm-btn secondary" id="rpcm-show-raw">주입 내용 확인</button><button class="rpcm-btn secondary" id="rpcm-reverify">서버 재검증</button><button class="rpcm-btn warn" id="rpcm-restore-now">지금 해제</button></div>` : ''}
@@ -14934,7 +14941,7 @@ ${dialogueText}`;
               <div class="rpcm-breakdown">${usage.chips}</div>
             </div>
             ${warnings.length ? `<div class="rpcm-warnings"><div>⚠ ${warnings.map(esc).join('<br>')}</div>${duplicateGroups.length ? `<button type="button" class="rpcm-warning-action" id="rpcm-resolve-duplicate-logs">${duplicateBranchHint ? '↩ 시간선 분기 확인' : '중복 날짜 바로 정리'}</button>` : ''}${hasLogDateIssues ? `<button type="button" class="rpcm-warning-action" id="rpcm-normalize-log-dates">날짜 / 연도 바로 수정</button>` : ''}</div>` : ''}
-            ${(autoDisplayItems.length || logBlocksForIssues.length) ? `<div class="rpcm-auto-active"><div class="rpcm-auto-active-title"><span>현재 주입 항목 · 선정 이유</span>${logBlocksForIssues.length ? '<button type="button" class="rpcm-related-add" id="rpcm-related-add">+ 관련로그 추가</button>' : ''}</div>${autoDisplayItems.map(i => { const isLogItem = i.group === 'log-auto' || i.sourceSlotId === 'logSummary' || /-log$/.test(String(i.autoType || '')); const category = itemCategory(i); const evidence = relatedLogEvidence(i); const itemKey = pendingItemIdentity(i); return `<div class="rpcm-auto-active-row" data-pending-key="${esc(itemKey)}" data-source-key="${esc(String(i.sourceKey || '').replace(/^auto-log:/, ''))}" data-auto-type="${esc(i.autoType || '')}"><span class="rpcm-auto-badge tone-${categoryTone(category)}">${esc(category)}</span><div class="rpcm-auto-active-copy"><strong>${esc(i.title)}</strong><span class="rpcm-auto-reason">${esc(itemReason(i) || '자동 호출')}</span>${evidence ? `<span class="rpcm-auto-evidence">선정 근거 · ${esc(evidence)}</span>` : ''}</div><div class="rpcm-auto-active-meta"><span>${formatCount(String(i.content || '').length)}자 · ${esc(remainingLabelForItem(i))}</span>${isLogItem ? `<button type="button" class="rpcm-auto-inline-toggle" title="로그 내용 펼치기" aria-label="로그 내용 펼치기">▾</button>${i.autoType === 'related-log' ? '<button type="button" class="rpcm-auto-reroll" title="내용을 확인하고 다른 로그로 교체">다른 로그</button>' : ''}<button type="button" class="rpcm-auto-remove" title="현재 주입에서 빼기">빼기</button>` : ''}</div>${isLogItem ? `<pre class="rpcm-auto-inline-content" hidden>${esc(String(i.content || '').trim())}</pre>` : ''}</div>`; }).join('')}${aiContextReportHtml}</div>` : ''}
+            ${(autoDisplayItems.length || logBlocksForIssues.length) ? `<div class="rpcm-auto-active"><div class="rpcm-auto-active-title"><span>현재 주입 항목 · 선정 이유</span>${logBlocksForIssues.length ? '<button type="button" class="rpcm-related-add" id="rpcm-related-add">+ 관련로그 추가</button>' : ''}</div>${autoDisplayItems.map(i => { const isLogItem = i.group === 'log-auto' || i.sourceSlotId === 'logSummary' || /-log$/.test(String(i.autoType || '')); const category = itemCategory(i); const evidence = relatedLogEvidence(i); const itemKey = pendingItemIdentity(i); return `<div class="rpcm-auto-active-row" data-pending-key="${esc(itemKey)}" data-source-key="${esc(String(i.sourceKey || '').replace(/^auto-log:/, ''))}" data-auto-type="${esc(i.autoType || '')}"><span class="rpcm-auto-badge tone-${categoryTone(category)}">${esc(category)}</span><div class="rpcm-auto-active-copy"><strong>${esc(i.title)}</strong><span class="rpcm-auto-reason">${esc(itemReason(i) || '자동 선택')}</span>${evidence ? `<span class="rpcm-auto-evidence">선정 근거 · ${esc(evidence)}</span>` : ''}</div><div class="rpcm-auto-active-meta"><span>${formatCount(String(i.content || '').length)}자 · ${esc(remainingLabelForItem(i))}</span>${isLogItem ? `<button type="button" class="rpcm-auto-inline-toggle" title="로그 내용 펼치기" aria-label="로그 내용 펼치기">▾</button>${i.autoType === 'related-log' ? '<button type="button" class="rpcm-auto-reroll" title="내용을 확인하고 다른 로그로 교체">다른 로그</button>' : ''}<button type="button" class="rpcm-auto-remove" title="현재 주입에서 빼기">빼기</button>` : ''}</div>${isLogItem ? `<pre class="rpcm-auto-inline-content" hidden>${esc(String(i.content || '').trim())}</pre>` : ''}</div>`; }).join('')}${aiContextReportHtml}</div>` : ''}
 
             <div class="rpcm-ai-launchbar">
               <div><strong>✨ AI 요약</strong><span>새 RP 로그로 날짜요약과 현재상태를 만들고, 결과를 확인·수정한 뒤 적용합니다.</span></div>
@@ -14942,16 +14949,16 @@ ${dialogueText}`;
             </div>
 
             <div class="rpcm-section" id="rpcm-section-basic">
-              <div class="rpcm-section-head"><div><div class="rpcm-section-title">기억 관리</div><div class="rpcm-section-desc">현재상태는 다음 업데이트 전까지 유효한 지속 상태로 통째 유지합니다. ${hasMultipleLogTimelines ? '로그요약 원문은 시간선별 날짜 블록 저장소로 보관하고, 현재 회차와 이전 모든 회차에서' : '로그요약 원문은 날짜 블록 저장소로 보관하고,'} 직접 선택·최신·관련·고정 날짜 블록을 45,000자 예산 안에서 골라 주입합니다.</div></div></div>
+              <div class="rpcm-section-head"><div><div class="rpcm-section-title">기억 관리</div><div class="rpcm-section-desc">현재상태는 다음 업데이트 전까지 유효한 지속 상태로 통째 유지합니다. ${hasMultipleLogTimelines ? '로그요약 원문은 시간선별 날짜 블록 저장소로 보관하고, 현재 회차와 이전 모든 회차에서' : '로그요약 원문은 날짜 블록 저장소로 보관하고,'} 직접 주입·최근·관련·항상 주입 날짜 블록을 45,000자 예산 안에서 골라 주입합니다.</div></div></div>
               <div id="rpcm-current-state-slot"></div>
               <div class="rpcm-story-launchbar${storyReviewDue ? ' is-review-due' : ''}"><div><strong>🧭 연속성 타임라인${room.storyTimelineReviewSettings?.menuBadge !== false && storyUnreviewedCount ? ` · ${storyUnreviewedCount}턴` : ''}${storyReviewDue ? ' · 검토 권장' : ''}</strong><span>${storyStats.count ? `${storyStats.count}개 카드 · 주입 ${storyStats.injectCount}개 · ${formatCount(storyStats.chars)}자` : '아직 카드 없음'} · 모든 세계선 통합 관리</span></div><button type="button" class="rpcm-mini" id="rpcm-story-manage">타임라인 보기</button></div>
-              <div class="rpcm-auto-panel rpcm-log-auto-panel">${hasMultipleLogTimelines ? `<label class="rpcm-active-timeline-picker"><span class="rpcm-active-timeline-label">🗂️ 다음 저장</span><select id="rpcm-active-log-timeline-main" aria-label="다음 로그 저장 시간선">${logTimelineOptions}</select></label>` : ''}<label><input type="checkbox" id="rpcm-auto-log" ${room.autoLogRecallEnabled ? 'checked' : ''}> ${hasMultipleLogTimelines ? '전체 시간선 자동 호출' : '날짜 로그 자동 호출'}</label><label>최근 <select id="rpcm-auto-log-recent"><option value="1" ${Number(room.autoLogRecentBlocks)===1?'selected':''}>1개</option><option value="2" ${Number(room.autoLogRecentBlocks)!==1?'selected':''}>2개</option></select></label><label>관련 최대 <select id="rpcm-auto-log-related"><option value="1" ${Number(room.autoLogRelatedBlocks)===1?'selected':''}>1개</option><option value="2" ${Number(room.autoLogRelatedBlocks)===2?'selected':''}>2개</option><option value="3" ${Number(room.autoLogRelatedBlocks)===3?'selected':''}>3개</option><option value="4" ${Number(room.autoLogRelatedBlocks)===4?'selected':''}>4개</option></select></label><button type="button" class="rpcm-lib-small" id="rpcm-log-date-fix">🛠 날짜 수정</button><button type="button" class="rpcm-lib-small" id="rpcm-log-manage">🗓️ 로그 관리${manualLogStats.count ? ` (직접 ${manualLogStats.count})` : ''}</button></div>${manualLogStats.count ? `<div class="rpcm-log-help"><b>직접 선택 중</b> ${manualLogStats.count}개 · ${formatCount(manualLogStats.chars)}자 · 즐겨찾기·고정·직접 호출 로그에서 빠르게 넣고 뺄 수 있습니다.</div>` : ''}
+              <div class="rpcm-auto-panel rpcm-log-auto-panel">${hasMultipleLogTimelines ? `<label class="rpcm-active-timeline-picker"><span class="rpcm-active-timeline-label">🗂️ 다음 저장</span><select id="rpcm-active-log-timeline-main" aria-label="다음 로그 저장 시간선">${logTimelineOptions}</select></label>` : ''}<label><input type="checkbox" id="rpcm-auto-log" ${room.autoLogRecallEnabled ? 'checked' : ''}> 최근·관련 로그 자동 선택</label><label>최근 날짜 <select id="rpcm-auto-log-recent"><option value="1" ${Number(room.autoLogRecentBlocks)===1?'selected':''}>1개</option><option value="2" ${Number(room.autoLogRecentBlocks)!==1?'selected':''}>2개</option></select></label><label>관련 날짜 최대 <select id="rpcm-auto-log-related"><option value="1" ${Number(room.autoLogRelatedBlocks)===1?'selected':''}>1개</option><option value="2" ${Number(room.autoLogRelatedBlocks)===2?'selected':''}>2개</option><option value="3" ${Number(room.autoLogRelatedBlocks)===3?'selected':''}>3개</option><option value="4" ${Number(room.autoLogRelatedBlocks)===4?'selected':''}>4개</option></select></label><button type="button" class="rpcm-lib-small" id="rpcm-log-date-fix">🛠 날짜 수정</button><button type="button" class="rpcm-lib-small" id="rpcm-log-manage">🗓️ 로그 관리${manualLogStats.count ? ` (직접 ${manualLogStats.count})` : ''}</button></div><div class="rpcm-log-help"><b>자동 선택 ON</b>=최근 날짜와 현재 RP에 관련된 날짜를 자동으로 골라 주입 · <b>OFF</b>=직접 주입·📌항상 주입 날짜만 유지 · 날짜 블록이 인식되면 로그요약 원문 전체를 통째로 주입하지 않습니다.</div>${manualLogStats.count ? `<div class="rpcm-log-help"><b>직접 주입 중</b> ${manualLogStats.count}개 · ${formatCount(manualLogStats.chars)}자 · 즐겨찾기·항상 주입·직접 주입 로그에서 빠르게 넣고 뺄 수 있습니다.</div>` : ''}
               <div id="rpcm-log-summary-slot"></div>
             </div>
 
             <div class="rpcm-section" id="rpcm-section-character">
-              <div class="rpcm-section-head rpcm-character-head"><div><div class="rpcm-section-title">캐릭터 설정</div><div class="rpcm-section-desc">캐릭터별로 저장·체크하고 인물마다 연속 유지 주기를 따로 설정합니다.<br>자동 감지는 최근 실제 RP 본문에서 정식 이름·성·영문명·등록 별칭을 확인합니다. Manager가 숨겨 주입한 현재상태·날짜로그·캐릭터·기타/OOC와 로어 참고 블록은 감지 대상에서 제외합니다.<br>‘자동감지용 별칭’은 설정팩에 없는 애칭·약칭·호칭을 감지할 때만 사용하며, 별칭 자체는 주입 내용에 포함되지 않습니다. AI도 알아야 하는 별칭은 캐릭터 설정 본문에 적어주세요.</div></div><div class="rpcm-charlib-actions"><button class="rpcm-add-btn" id="rpcm-charlib-save">설정집 저장</button><button class="rpcm-add-btn" id="rpcm-charlib-load">설정집 불러오기</button><button class="rpcm-add-btn" id="rpcm-add-character">＋ 캐릭터 추가</button></div></div>
-              <div class="rpcm-auto-panel"><label><input type="checkbox" id="rpcm-auto-char" ${room.autoCharacterDetection ? 'checked' : ''}> 캐릭터 자동 감지</label><label>자동감지 설정집 <select id="rpcm-auto-char-library"><option value="">선택 안 함</option></select></label><label><input type="checkbox" id="rpcm-auto-char-reset" ${room.autoCharacterResetOnReappear ? 'checked' : ''}> 다시 등장하면 유지턴 리셋</label><div class="rpcm-auto-note">자동 감지·관련 로그 선택은 주입 전에도 <b>다음 주입 준비</b>를 위해 갱신됩니다. 실제 서버 숨김 주입은 <b>주입 시작</b>을 누른 뒤에만 동작합니다.</div></div>
+              <div class="rpcm-section-head rpcm-character-head"><div><div class="rpcm-section-title">캐릭터 설정</div><div class="rpcm-section-desc">캐릭터별로 저장하고 이름 앞 체크로 현재 주입 여부를 정합니다. 인물마다 연속 유지 주기도 따로 설정할 수 있습니다.<br>RP 등장 캐릭터 자동 선택은 감지 대상 설정집의 캐릭터가 최근 실제 RP 본문에 정식 이름·성·영문명·등록 별칭으로 등장하면 이름 앞의 현재 주입 체크를 자동으로 켭니다. Manager가 숨겨 주입한 현재상태·날짜로그·캐릭터·기타/OOC와 로어 참고 블록은 감지 대상에서 제외합니다.<br>‘자동 선택용 별칭’은 설정집에 없는 애칭·약칭·호칭을 감지할 때만 사용하며, 별칭 자체는 주입 내용에 포함되지 않습니다. AI도 알아야 하는 별칭은 캐릭터 설정 본문에 적어주세요.</div></div><div class="rpcm-charlib-actions"><button class="rpcm-add-btn" id="rpcm-charlib-save">설정집 저장</button><button class="rpcm-add-btn" id="rpcm-charlib-load">설정집 불러오기</button><button class="rpcm-add-btn" id="rpcm-add-character">＋ 캐릭터 추가</button></div></div>
+              <div class="rpcm-auto-panel"><label><input type="checkbox" id="rpcm-auto-char" ${room.autoCharacterDetection ? 'checked' : ''}> RP 등장 캐릭터 자동 선택</label><label>감지 대상 설정집 (필수) <select id="rpcm-auto-char-library"><option value="">선택 안 함</option></select></label><label><input type="checkbox" id="rpcm-auto-char-reset" ${room.autoCharacterResetOnReappear ? 'checked' : ''}> 다시 등장하면 유지턴 리셋</label><div class="rpcm-auto-note">선택한 설정집의 캐릭터가 최근 RP에 등장하면 이름 앞의 <b>현재 주입</b> 체크가 자동으로 켜집니다. 캐릭터 자동 선택·관련 로그 자동 선택은 주입 전에도 <b>다음 주입 준비</b>를 위해 갱신되며, 실제 서버 숨김 주입은 <b>주입 시작</b>을 누른 뒤에만 동작합니다.</div></div>
               <div id="rpcm-character-slots"></div>
             </div>
 
@@ -14972,7 +14979,7 @@ ${dialogueText}`;
           </div>
         </div>
         <div class="rpcm-footer">
-          <div class="rpcm-footnote">USER 메시지는 절대 수정하지 않습니다. 체크 변경은 주입 중에도 현재 AI carrier에 즉시 반영됩니다. 자동 캐릭터/관련 로그 호출은 완료된 최근 RP를 감지해 다음 응답용 carrier부터 적용합니다.</div>
+          <div class="rpcm-footnote">USER 메시지는 절대 수정하지 않습니다. 체크 변경은 주입 중에도 현재 AI carrier에 즉시 반영됩니다. 캐릭터·관련 로그 자동 선택은 완료된 최근 RP를 확인해 다음 응답용 carrier부터 적용합니다.</div>
           <span class="rpcm-save-status saved" id="rpcm-save-status">로컬 저장됨</span>
           <button class="rpcm-btn secondary" id="rpcm-save">저장</button>
           <button class="rpcm-btn primary" id="rpcm-arm" ${pending || !stats.count || stats.block > capacity.availableContext ? 'disabled' : ''}>주입 시작</button>
@@ -15022,7 +15029,7 @@ ${dialogueText}`;
           const selectedKey = await openRelatedLogPickerDialog(room, { replaceIdentity:key });
           if (!selectedKey) { btn.disabled = false; return; }
           await applyManualRelatedLog(room, selectedKey, key);
-          notify('확인한 날짜로그로 교체했습니다. ‘직접 선택’으로 유지됩니다.', 'success', 4200);
+          notify('확인한 날짜로그로 교체했습니다. ‘직접 주입’으로 유지됩니다.', 'success', 4200);
           renderModalIfOpen();
         } catch (error) {
           btn.disabled = false;
@@ -15128,7 +15135,7 @@ ${dialogueText}`;
       const pendingItem = pending?.items?.find(i => i.slotId === slot.id && (Number(i.totalTurns || 0) === 0 || Number(i.usedTurns || 0) < Number(i.totalTurns || 0)));
       d.innerHTML = `
         <summary>
-          <input class="rpcm-enable" type="checkbox" ${slot.enabled ? 'checked' : ''}>
+          <input class="rpcm-enable" type="checkbox" ${slot.enabled ? 'checked' : ''} title="${slot.group === 'character' ? '현재 주입 여부 · 자동 선택 대상 지정이 아닙니다.' : '현재 주입 여부'}" aria-label="${esc(slot.title)} 현재 주입 여부">
           <span class="rpcm-slot-name">${slot.id === 'currentState' ? '🧭 ' : slot.id === 'logSummary' ? '🗓️ ' : ''}${esc(slot.title)}</span>
           ${inlineRetention ? `<label class="rpcm-inline-retention" title="호출 후 앞으로 몇 번의 AI 응답에 연속 주입할지 선택 · 주기 반복 아님"><span>연속 유지</span><select class="rpcm-slot-retention" aria-label="${esc(slot.title)} 연속 유지 턴">${retentionOptionsHtml(slot.retentionTurns)}</select></label>` : ''}
           ${BASE_GUIDES[slot.id] ? `<button class="rpcm-guide-toggle" type="button" title="GPT/Gemini에 복사해 쓸 수 있는 업데이트 지침">지침</button>` : ''}
@@ -15138,9 +15145,9 @@ ${dialogueText}`;
           <span class="rpcm-chevron">▶</span>
         </summary>
         <div class="rpcm-edit">
-          ${titleEditable ? `<input class="rpcm-title-input" value="${esc(slot.title)}" placeholder="항목 이름">` : `<div class="rpcm-fixed-note">${slot.id === 'currentState' ? '다음 업데이트 전까지 유효한 관계·정보격차·비밀·미해결 후크·지속 부상/소유물 등 지속 상태를 넣습니다. 통째로 주입합니다.' : '날짜별 사건 요약 전체를 붙여넣습니다. 원문은 저장소로 보관하고, 날짜 블록 단위로 분해해 직접 선택·최신·관련·고정 로그만 골라 주입합니다.'}</div>${BASE_GUIDES[slot.id] ? `<div class="rpcm-guide-panel" hidden><div class="rpcm-guide-head"><span>GPT / Gemini용 업데이트 지침 · ${slot.id === 'logSummary' ? '종류별 수정 내용' : '수정 내용'}은 이 브라우저에 자동 저장됩니다.</span>${slot.id === 'logSummary' ? '<select class="rpcm-guide-variant" aria-label="날짜요약 지침 종류"><option value="general">일반용</option><option value="adult">성인용</option></select>' : ''}<button class="rpcm-guide-icon" type="button" data-guide-copy title="지침 복사" aria-label="지침 복사">${GUIDE_COPY_ICON}</button><button class="rpcm-guide-reset" type="button" data-guide-reset>기본값 복원</button></div><textarea class="rpcm-guide-textarea" data-rpcm-editor="true" spellcheck="false"></textarea></div>` : ''}`}
-          ${slot.group === 'character' ? `<div class="rpcm-auto-terms"><strong>자동 감지어</strong> · ${esc(characterAutomaticTerms(slot).slice(0, 10).join(' · ') || '캐릭터 이름을 입력하면 자동 생성됩니다.')}${characterAutomaticTerms(slot).length > 10 ? ' · …' : ''}</div><div class="rpcm-alias-row"><input class="rpcm-alias-input" value="${esc((slot.aliases || []).join(', '))}" placeholder="자동감지용 별칭 (주입 안 됨): 애칭·약칭·호칭"><label class="rpcm-auto-pin"><input type="checkbox" class="rpcm-auto-pinned" ${slot.autoPinned ? 'checked' : ''}> 📌 자동 고정</label><label class="rpcm-auto-exclude"><input type="checkbox" class="rpcm-auto-excluded" ${slot.autoExcluded ? 'checked' : ''}> 🚫 자동감지 제외</label></div>` : ''}
-          ${slot.id === 'logSummary' ? `<div class="rpcm-slot-options"><span>이 항목 연속 유지</span><select class="rpcm-slot-retention" title="호출 후 선택한 횟수만큼 연속 주입 · 만료 후 자동 종료 · 주기 반복 아님">${retentionOptionsHtml(slot.retentionTurns)}</select><span>AI 응답마다 1턴 차감 · 만료 후 자동 종료 · 주기 반복 아님</span></div>` : ''}
+          ${titleEditable ? `<input class="rpcm-title-input" value="${esc(slot.title)}" placeholder="항목 이름">` : `<div class="rpcm-fixed-note">${slot.id === 'currentState' ? '다음 업데이트 전까지 유효한 관계·정보격차·비밀·미해결 후크·지속 부상/소유물 등 지속 상태를 넣습니다. 통째로 주입합니다.' : '날짜별 사건 요약 전체를 붙여넣습니다. 원문은 저장소로 보관하고, 날짜 블록 단위로 분해해 직접 주입·최근·관련·항상 주입 날짜만 골라 주입합니다. 최근·관련 로그 자동 선택을 꺼도 직접 주입·항상 주입 날짜는 유지됩니다.'}</div>${BASE_GUIDES[slot.id] ? `<div class="rpcm-guide-panel" hidden><div class="rpcm-guide-head"><span>GPT / Gemini용 업데이트 지침 · ${slot.id === 'logSummary' ? '종류별 수정 내용' : '수정 내용'}은 이 브라우저에 자동 저장됩니다.</span>${slot.id === 'logSummary' ? '<select class="rpcm-guide-variant" aria-label="날짜요약 지침 종류"><option value="general">일반용</option><option value="adult">성인용</option></select>' : ''}<button class="rpcm-guide-icon" type="button" data-guide-copy title="지침 복사" aria-label="지침 복사">${GUIDE_COPY_ICON}</button><button class="rpcm-guide-reset" type="button" data-guide-reset>기본값 복원</button></div><textarea class="rpcm-guide-textarea" data-rpcm-editor="true" spellcheck="false"></textarea></div>` : ''}`}
+          ${slot.group === 'character' ? `<div class="rpcm-auto-terms"><strong>자동 선택 감지어</strong> · ${esc(characterAutomaticTerms(slot).slice(0, 10).join(' · ') || '캐릭터 이름을 입력하면 자동 생성됩니다.')}${characterAutomaticTerms(slot).length > 10 ? ' · …' : ''}</div><div class="rpcm-alias-row"><input class="rpcm-alias-input" value="${esc((slot.aliases || []).join(', '))}" placeholder="자동 선택용 별칭 (주입 안 됨): 애칭·약칭·호칭"><label class="rpcm-auto-pin" title="RP 등장 여부와 관계없이 현재 주입을 계속 켜둡니다."><input type="checkbox" class="rpcm-auto-pinned" ${slot.autoPinned ? 'checked' : ''}> 📌 항상 주입 선택</label><label class="rpcm-auto-exclude" title="RP에 등장해도 자동으로 선택하지 않습니다. 직접 체크해 주입할 수 있습니다."><input type="checkbox" class="rpcm-auto-excluded" ${slot.autoExcluded ? 'checked' : ''}> 🚫 자동 선택 제외</label></div>` : ''}
+          ${slot.id === 'logSummary' ? `<div class="rpcm-slot-options"><span>선택된 로그 유지 횟수</span><select class="rpcm-slot-retention" title="선택된 날짜로그를 앞으로 몇 번의 AI 응답에 연속 주입할지 설정 · 만료 후 자동 종료 · 주기 반복 아님">${retentionOptionsHtml(slot.retentionTurns)}</select><span>AI 응답마다 1턴 차감 · 만료 후 자동 종료 · 주기 반복 아님</span></div>` : ''}
           <div class="rpcm-editor-actions"><button type="button" class="rpcm-editor-action" data-editor-copy>내용 복사</button><button type="button" class="rpcm-editor-action" data-editor-select>전체 선택</button><button type="button" class="rpcm-editor-action" data-editor-clean>붙여넣기 정리</button><span class="rpcm-editor-hint">Ctrl+Z로 편집 되돌리기</span>${slot.group !== 'extra' ? `<button type="button" class="rpcm-editor-action rpcm-focus-toggle" data-editor-focus>크게 편집</button>` : ''}</div>
           <textarea class="rpcm-textarea" data-rpcm-editor="true" style="height:${editorHeightPreference(slot)}px" placeholder="여기에 ${esc(slot.title)} 내용을 붙여넣으세요."></textarea>
         </div>`;
@@ -15282,7 +15289,7 @@ ${dialogueText}`;
       const refreshAutoTerms = () => {
         if (!autoTermsEl) return;
         const terms = characterAutomaticTerms(slot);
-        autoTermsEl.innerHTML = `<strong>자동 감지어</strong> · ${esc(terms.slice(0, 10).join(' · ') || '캐릭터 이름을 입력하면 자동 생성됩니다.')}${terms.length > 10 ? ' · …' : ''}`;
+        autoTermsEl.innerHTML = `<strong>자동 선택 감지어</strong> · ${esc(terms.slice(0, 10).join(' · ') || '캐릭터 이름을 입력하면 자동 생성됩니다.')}${terms.length > 10 ? ' · …' : ''}`;
       };
 
       cb.onclick = e => e.stopPropagation();
@@ -15332,7 +15339,7 @@ ${dialogueText}`;
           slot.lastAutoMatch = '사용자 고정';
           cb.checked = true;
           if (room.pending) {
-            if (!confirm(`‘${slot.title}’을 자동 고정하고 현재 주입에도 즉시 추가할까요?`)) { slot.autoPinned = false; pinnedInput.checked = false; return; }
+            if (!confirm(`‘${slot.title}’을 항상 주입 선택하고 현재 주입에도 즉시 추가할까요?`)) { slot.autoPinned = false; pinnedInput.checked = false; return; }
             await setSlotEnabledDuringPending(room, slot, true).catch(e => { slot.autoPinned = false; pinnedInput.checked = false; notify(`고정 반영 실패: ${e.message}`, 'error', 6000); });
           }
         }
@@ -15731,11 +15738,11 @@ ${dialogueText}`;
     if (autoLogCb) autoLogCb.onchange = async () => {
       const previous = !!room.autoLogRecallEnabled;
       const desired = autoLogCb.checked;
-      if (room.pending && !confirm(`현재 컨텍스트가 주입 중입니다.\n로그 자동 선택을 ${desired ? '켜기' : '끄기'}로 즉시 바꿀까요?
-자동 선택을 꺼도 직접 선택/📌고정 날짜는 유지됩니다.`)) { autoLogCb.checked = previous; return; }
+      if (room.pending && !confirm(`현재 컨텍스트가 주입 중입니다.\n최근·관련 로그 자동 선택을 ${desired ? '켜기' : '끄기'}로 즉시 바꿀까요?
+자동 선택을 꺼도 직접 주입/📌항상 주입 날짜는 유지됩니다.`)) { autoLogCb.checked = previous; return; }
       room.autoLogRecallEnabled = desired;
       try { if (room.pending) await rebuildPendingLogItems(room, 'log-auto-toggle'); await saveRoom(room); }
-      catch (e) { room.autoLogRecallEnabled = previous; autoLogCb.checked = previous; notify(`로그 방식 변경 실패: ${e.message}`, 'error', 6500); }
+      catch (e) { room.autoLogRecallEnabled = previous; autoLogCb.checked = previous; notify(`로그 자동 선택 변경 실패: ${e.message}`, 'error', 6500); }
       renderModalIfOpen();
     };
     if (autoLogRecent) autoLogRecent.onchange = async () => {
@@ -15795,10 +15802,27 @@ ${dialogueText}`;
     const autoCharCb = overlay.querySelector('#rpcm-auto-char');
     const autoCharReset = overlay.querySelector('#rpcm-auto-char-reset');
     const autoCharLibrary = overlay.querySelector('#rpcm-auto-char-library');
-    if (autoCharCb) autoCharCb.onchange = async () => { room.autoCharacterDetection = autoCharCb.checked; await saveRoom(room); };
+    if (autoCharCb) autoCharCb.onchange = async () => {
+      const desired = autoCharCb.checked;
+      if (desired) {
+        const libraryId = String(autoCharLibrary?.value || room.autoCharacterLibraryId || '');
+        const library = libraryId ? await getCharacterLibrary(libraryId) : null;
+        if (!library) {
+          autoCharCb.checked = false;
+          room.autoCharacterDetection = false;
+          notify('감지 대상 설정집을 먼저 선택해 주세요.', 'warn', 4500);
+          autoCharLibrary?.focus();
+          await saveRoom(room);
+          return;
+        }
+        room.autoCharacterLibraryId = libraryId;
+      }
+      room.autoCharacterDetection = desired;
+      await saveRoom(room);
+    };
     if (autoCharReset) autoCharReset.onchange = async () => { room.autoCharacterResetOnReappear = autoCharReset.checked; await saveRoom(room); };
     if (autoCharLibrary) {
-      listUsableCharacterLibraries().then(libs => {
+      listUsableCharacterLibraries().then(async libs => {
         if (!state.modal || !document.contains(autoCharLibrary)) return;
         for (const lib of libs) {
           const opt = document.createElement('option');
@@ -15807,8 +15831,24 @@ ${dialogueText}`;
           if (lib.scopeId === room.autoCharacterLibraryId) opt.selected = true;
           autoCharLibrary.appendChild(opt);
         }
+        const configuredLibraryExists = !!room.autoCharacterLibraryId && libs.some(lib => lib.scopeId === room.autoCharacterLibraryId);
+        if (room.autoCharacterDetection && !configuredLibraryExists) {
+          room.autoCharacterDetection = false;
+          room.autoCharacterLibraryId = '';
+          if (autoCharCb) autoCharCb.checked = false;
+          notify('감지 대상 설정집이 없어 RP 등장 캐릭터 자동 선택을 껐습니다.', 'warn', 5000);
+          await saveRoom(room);
+        }
       }).catch(console.warn);
-      autoCharLibrary.onchange = async () => { room.autoCharacterLibraryId = autoCharLibrary.value || ''; await saveRoom(room); };
+      autoCharLibrary.onchange = async () => {
+        room.autoCharacterLibraryId = autoCharLibrary.value || '';
+        if (!room.autoCharacterLibraryId && room.autoCharacterDetection) {
+          room.autoCharacterDetection = false;
+          if (autoCharCb) autoCharCb.checked = false;
+          notify('감지 대상 설정집이 없어 RP 등장 캐릭터 자동 선택을 껐습니다.', 'warn', 5000);
+        }
+        await saveRoom(room);
+      };
     }
 
     const charLibSaveBtn = overlay.querySelector('#rpcm-charlib-save');
