@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🪽위시 RP Manager
 // @namespace    local.rp.context.manager
-// @version      0.12.58
+// @version      0.12.59
 // @description  장기 RP용 현재상태·날짜로그·연속성 타임라인·캐릭터 설정을 관리하고, 검수형 AI 생성과 필요한 컨텍스트 자동 주입을 지원합니다.
 // @author       User
 // @license      All Rights Reserved
@@ -42,13 +42,13 @@
   // 버전별 키를 쓰면 구버전과 신버전이 동시에 설치됐을 때 둘 다 실행될 수 있습니다.
   // 모든 버전이 공유하는 고정 키로 중복 실행을 막습니다.
   if (window.__WISH_RP_MANAGER_LOADED__) return;
-  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.12.58', loadedAt: Date.now() };
+  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.12.59', loadedAt: Date.now() };
   // 같은 페이지에 남아 있는 v0.8.10 복사본이 뒤늦게 시작되는 경우도 차단합니다.
   window.__RP_MANAGER_0810_LOADED__ = true;
 
   const APP = {
     name: '🪽위시 RP Manager',
-    version: '0.12.58',
+    version: '0.12.59',
     dbName: 'RPContextManagerDB',
     dbVersion: 2,
     storeName: 'rooms',
@@ -56,6 +56,9 @@
     defaultMaxChars: 45000,
     safeChars: 42000,
     absoluteUiMax: 45000,
+    // Crack의 메시지 PATCH는 글자 수와 별개로 UTF-8 요청 크기 제한에 걸릴 수 있습니다.
+    // 확인된 105KB 실패 사례보다 충분히 낮게 두고 JSON 래퍼 여유까지 확보합니다.
+    safeCarrierPayloadBytes: 95000,
     activePollMs: 4000,
     idleAutoScanMs: 15000,
     idlePollMs: 30000,
@@ -77,7 +80,7 @@
     legacyMarkerEnd: '</rp_context_manager>',
     modalPosKey: 'RPCM_modal_position_v1',
     uiPrefsKey: 'RPCM_ui_preferences_v1',
-    logRecallRevision: 8, // v0.12.21: 최근로그 총개수 준수·시간선별 폴더 표시 후 자동 로그 재선정
+    logRecallRevision: 9, // v0.12.59: 기존 활성 주입도 UTF-8 요청 안전선으로 로그를 다시 선정
   };
 
   const STORY_TIMELINE_GUIDE_V15 = String.raw`연속성 타임라인 생성·갱신 지침 v1.5 범용
@@ -7709,6 +7712,47 @@ ${dialogueText}`;
     return Math.max(0, (Number(room.maxChars) || APP.defaultMaxChars) - Number(originalChars || 0) - 2);
   }
 
+  function utf8ByteLength(value) {
+    const text = String(value || '');
+    if (typeof TextEncoder === 'function') return new TextEncoder().encode(text).length;
+    let bytes = 0;
+    for (let index = 0; index < text.length; index++) {
+      const code = text.charCodeAt(index);
+      if (code < 0x80) bytes += 1;
+      else if (code < 0x800) bytes += 2;
+      else if (code >= 0xD800 && code <= 0xDBFF && index + 1 < text.length && text.charCodeAt(index + 1) >= 0xDC00 && text.charCodeAt(index + 1) <= 0xDFFF) {
+        bytes += 4;
+        index++;
+      } else bytes += 3;
+    }
+    return bytes;
+  }
+
+  function carrierRequestMetrics(nextText) {
+    const message = String(nextText || '');
+    return {
+      chars: message.length,
+      messageBytes: utf8ByteLength(message),
+      payloadBytes: utf8ByteLength(JSON.stringify({ message })),
+    };
+  }
+
+  function carrierRequestWithinLimits(room, nextText) {
+    const metrics = carrierRequestMetrics(nextText);
+    return metrics.chars <= (Number(room?.maxChars) || APP.defaultMaxChars)
+      && metrics.payloadBytes <= APP.safeCarrierPayloadBytes;
+  }
+
+  function assertCarrierRequestWithinLimits(room, nextText, prefix = 'carrier 총 길이') {
+    const metrics = carrierRequestMetrics(nextText);
+    const maxChars = Number(room?.maxChars) || APP.defaultMaxChars;
+    if (metrics.chars > maxChars) throw new Error(`${prefix}가 ${formatCount(metrics.chars)}자입니다. 설정 한도 ${formatCount(maxChars)}자를 넘습니다.`);
+    if (metrics.payloadBytes > APP.safeCarrierPayloadBytes) {
+      throw new Error(`${prefix}의 UTF-8 요청 크기가 ${formatCount(metrics.payloadBytes)}바이트입니다. 서버 안전선 ${formatCount(APP.safeCarrierPayloadBytes)}바이트를 넘습니다. 날짜로그를 모두 제외해도 초과하므로 현재상태·타임라인·캐릭터·기타 중 일부를 줄이거나 주입 해제해 주세요.`);
+    }
+    return metrics;
+  }
+
   function carrierOriginalCharsForUi(room) {
     if (room?.pending) {
       const chars = Number(room.pending.originalChars);
@@ -7720,12 +7764,23 @@ ${dialogueText}`;
     return Number.isFinite(chars) && chars >= 0 ? chars : null;
   }
 
-  function carrierCapacityForUi(room, contextChars = 0) {
+  function carrierOriginalTextForUi(room) {
+    if (room?.pending) return String(room.pending.originalText || '');
+    const preview = state.carrierCapacityPreview;
+    if (!preview || String(preview.roomId || '') !== String(room?.chatId || '') || preview.loading || preview.error || typeof preview.originalText !== 'string') return null;
+    return preview.originalText;
+  }
+
+  function carrierCapacityForUi(room, contextChars = 0, contextBlock = '') {
     const max = Number(room?.maxChars) || APP.defaultMaxChars;
     const context = Math.max(0, Number(contextChars) || 0);
     const original = carrierOriginalCharsForUi(room);
     const known = original !== null;
     const separator = context > 0 ? 2 : 0;
+    const originalText = carrierOriginalTextForUi(room);
+    const payloadMetrics = originalText !== null && String(contextBlock || '')
+      ? carrierRequestMetrics(buildInjectedMessage(originalText, String(contextBlock || '')))
+      : null;
     return {
       max,
       context,
@@ -7733,6 +7788,10 @@ ${dialogueText}`;
       separator:known ? separator : 0,
       total:known ? original + separator + context : context,
       availableContext:known ? Math.max(0, max - original - separator) : max,
+      payloadBytes:payloadMetrics?.payloadBytes ?? Number(room?.pending?.carrierPayloadBytes || 0),
+      messageBytes:payloadMetrics?.messageBytes ?? Number(room?.pending?.carrierMessageBytes || 0),
+      byteLimit:APP.safeCarrierPayloadBytes,
+      byteKnown:!!payloadMetrics || Number(room?.pending?.carrierPayloadBytes || 0) > 0,
       known,
       loading:!room?.pending && !!state.carrierCapacityPreview?.loading && String(state.carrierCapacityPreview?.roomId || '') === String(room?.chatId || ''),
       error:!room?.pending && String(state.carrierCapacityPreview?.roomId || '') === String(room?.chatId || '') ? String(state.carrierCapacityPreview?.error || '') : '',
@@ -7742,7 +7801,8 @@ ${dialogueText}`;
   function carrierCapacityDetailText(room, capacity) {
     if (capacity.known) {
       const answerLabel = room?.pending ? '현재 AI 답변' : '최신 AI 답변';
-      return `주입 자료 ${formatCount(capacity.context)}자 + ${answerLabel} ${formatCount(capacity.original)}자 + 연결 ${capacity.separator}자 = 총 ${formatCount(capacity.total)}자`;
+      const byteText = capacity.byteKnown ? ` · UTF-8 요청 ${formatCount(capacity.payloadBytes)} / ${formatCount(capacity.byteLimit)}바이트 안전선` : '';
+      return `주입 자료 ${formatCount(capacity.context)}자 + ${answerLabel} ${formatCount(capacity.original)}자 + 연결 ${capacity.separator}자 = 총 ${formatCount(capacity.total)}자${byteText}`;
     }
     if (capacity.loading) return `주입 자료 ${formatCount(capacity.context)}자 · 최신 AI 답변 길이 확인 중…`;
     if (capacity.error) return `주입 자료 ${formatCount(capacity.context)}자 · 최신 AI 답변 길이를 확인하지 못했습니다.`;
@@ -7774,6 +7834,42 @@ ${dialogueText}`;
       omittedTitles: omitted.slice(0, 6).map(x => x.title),
     };
     return chosen;
+  }
+
+  function fitItemsToCarrierLimits(room, originalText, items) {
+    const all = [...(items || [])];
+    const isLog = item => item?.sourceSlotId === 'logSummary' || item?.group === 'log-auto' || item?.slotId === 'logSummary';
+    const baseItems = all.filter(item => !isLog(item));
+    const sortedLogs = all.filter(isLog).sort((a,b) => {
+      const pa = logItemPriority(a), pb = logItemPriority(b);
+      if (pa !== pb) return pa - pb;
+      if (pa === 3) return Number(b.recallScore || 0) - Number(a.recallScore || 0);
+      return Number(a.logIndex || 0) - Number(b.logIndex || 0);
+    });
+    const chosenLogs = [];
+    const omitted = [];
+    for (const item of sortedLogs) {
+      const trialItems = [...baseItems, ...chosenLogs, item];
+      const trialBlock = buildContextBlockFromItems(trialItems);
+      const trialText = buildInjectedMessage(String(originalText || ''), trialBlock);
+      if (carrierRequestWithinLimits(room, trialText)) chosenLogs.push(item);
+      else omitted.push(item);
+    }
+    chosenLogs.sort((a,b) => Number(a.logIndex || 0) - Number(b.logIndex || 0));
+    const fitted = [...baseItems, ...chosenLogs];
+    const fittedBlock = buildContextBlockFromItems(fitted);
+    const metrics = carrierRequestMetrics(buildInjectedMessage(String(originalText || ''), fittedBlock));
+    room._logBudgetInfo = {
+      ...(room._logBudgetInfo || {}),
+      limit:contextBudgetForCarrier(room, String(originalText || '').length),
+      byteLimit:APP.safeCarrierPayloadBytes,
+      payloadBytes:metrics.payloadBytes,
+      candidates:sortedLogs.length,
+      included:chosenLogs.length,
+      omitted:omitted.length,
+      omittedTitles:omitted.slice(0, 6).map(item => item.title),
+    };
+    return fitted;
   }
 
   function logRecallItems(room, contextText = '', baseItems = [], contextBudget = null) {
@@ -9240,8 +9336,7 @@ ${dialogueText}`;
       `https://crack-api.wrtn.ai/crack-gen/v3/chats/${chatId}/messages/${messageId}`,
     ];
     let lastErr = null;
-    const requestChars = String(nextText || '').length;
-    const requestBytes = typeof TextEncoder === 'function' ? new TextEncoder().encode(String(nextText || '')).length : requestChars;
+    const requestMetrics = carrierRequestMetrics(nextText);
     for (const url of candidates) {
       for (let attempt = 0; attempt < 2; attempt++) {
         try {
@@ -9256,7 +9351,7 @@ ${dialogueText}`;
         }
       }
     }
-    throw new Error(`${lastErr?.message || '메시지 PATCH 실패'} · 전송 ${formatCount(requestChars)}자 / UTF-8 ${formatCount(requestBytes)}바이트`);
+    throw new Error(`${lastErr?.message || '메시지 PATCH 실패'} · 전송 ${formatCount(requestMetrics.chars)}자 / 메시지 UTF-8 ${formatCount(requestMetrics.messageBytes)}바이트 / 요청 본문 ${formatCount(requestMetrics.payloadBytes)}바이트`);
   }
 
   async function fetchRoomMeta(chatId) {
@@ -10529,7 +10624,7 @@ ${dialogueText}`;
     }
     const dupChars = [...byName.entries()].filter(([,n]) => n > 1).map(([k,n]) => `${k} (${n}개)`);
     if (dupChars.length) warnings.push(`같은 이름의 캐릭터 설정이 중복됨: ${dupChars.join(', ')}`);
-    if (room._logBudgetInfo?.omitted) warnings.push(`45,000자 예산 때문에 로그 ${room._logBudgetInfo.omitted}개를 이번 주입 후보에서 자동 제외함.${room._logBudgetInfo.omittedTitles?.length ? ` (${room._logBudgetInfo.omittedTitles.join(', ')})` : ''}`);
+    if (room._logBudgetInfo?.omitted) warnings.push(`주입 안전선(45,000자·UTF-8 ${formatCount(APP.safeCarrierPayloadBytes)}바이트) 때문에 로그 ${room._logBudgetInfo.omitted}개를 이번 주입 후보에서 자동 제외함.${room._logBudgetInfo.omittedTitles?.length ? ` (${room._logBudgetInfo.omittedTitles.join(', ')})` : ''}`);
     return warnings;
   }
 
@@ -11450,7 +11545,7 @@ ${dialogueText}`;
     document.querySelector('#rpcm-preview-backdrop')?.remove();
     const active = (items || []).filter(item => String(item.content || '').trim());
     const stats = statsForItems(active);
-    const capacity = carrierCapacityForUi(room, stats.block);
+    const capacity = carrierCapacityForUi(room, stats.block, buildContextBlockFromItems(active));
     const backdrop = document.createElement('div');
     backdrop.id = 'rpcm-preview-backdrop';
     backdrop.innerHTML = `
@@ -11648,13 +11743,7 @@ ${dialogueText}`;
   }
 
   function activeItemsFittedForCarrier(room, pending, originalText) {
-    const active = activePendingItems(pending);
-    const nonLogs = active.filter(i => i.sourceSlotId !== 'logSummary' && i.group !== 'log-auto' && i.slotId !== 'logSummary');
-    const logs = active.filter(i => i.sourceSlotId === 'logSummary' || i.group === 'log-auto' || i.slotId === 'logSummary');
-    const fittedLogs = logs.length
-      ? fitLogItemsToBudget(room, nonLogs, logs, contextBudgetForCarrier(room, String(originalText || '').length))
-      : [];
-    return [...nonLogs, ...fittedLogs];
+    return fitItemsToCarrierLimits(room, originalText, activePendingItems(pending));
   }
 
   async function settleCarrierBeforeReroll(room, maxWaitMs = 9000) {
@@ -11736,7 +11825,7 @@ ${dialogueText}`;
       const items = activeItemsFittedForCarrier(room, p, clean);
       const block = buildContextBlockFromItems(items);
       const injected = block ? buildInjectedMessage(clean, block) : '';
-      if (!block || injected.length > maxChars) continue;
+      if (!block || injected.length > maxChars || !carrierRequestWithinLimits(room, injected)) continue;
       bridgeMessage = candidate;
       bridgeOriginal = clean;
       bridgeItems = items;
@@ -11771,6 +11860,8 @@ ${dialogueText}`;
         injectedChars: contextBlock.length,
         originalChars: bridgeOriginal.length,
         carrierChars: injectedText.length,
+        carrierMessageBytes: carrierRequestMetrics(injectedText).messageBytes,
+        carrierPayloadBytes: carrierRequestMetrics(injectedText).payloadBytes,
         serverChars: verification.serverChars,
         verified: true,
         verifiedAt: Date.now(),
@@ -12063,15 +12154,9 @@ ${dialogueText}`;
     // 간편 주입 관리에서 끈 항목은 자동 최근로그 갱신이나 자동 고정 복구가 다시
     // 추가하더라도 현재 주입 세션이 끝날 때까지 제외 상태를 유지합니다.
     applyQuickItemSuppression(p);
-    let active = activePendingItems(p);
-    const nonLogs = active.filter(i => i.sourceSlotId !== 'logSummary' && i.group !== 'log-auto' && i.slotId !== 'logSummary');
-    const logs = active.filter(i => i.sourceSlotId === 'logSummary' || i.group === 'log-auto' || i.slotId === 'logSummary');
-    if (logs.length) {
-      const fittedLogs = fitLogItemsToBudget(room, nonLogs, logs, contextBudgetForCarrier(room, String(p.originalText || '').length));
-      const keepIds = new Set(fittedLogs.map(i => i.slotId));
-      p.items = (p.items || []).filter(i => !(i.sourceSlotId === 'logSummary' || i.group === 'log-auto' || i.slotId === 'logSummary') || keepIds.has(i.slotId));
-      active = [...nonLogs, ...fittedLogs];
-    }
+    let active = fitItemsToCarrierLimits(room, p.originalText, activePendingItems(p));
+    const activeLogIds = new Set(active.filter(i => i.sourceSlotId === 'logSummary' || i.group === 'log-auto' || i.slotId === 'logSummary').map(i => i.slotId));
+    p.items = (p.items || []).filter(i => !(i.sourceSlotId === 'logSummary' || i.group === 'log-auto' || i.slotId === 'logSummary') || activeLogIds.has(i.slotId));
     if (!active.length) {
       await restoreCarrierOnly(room, p);
       room.pending = null;
@@ -12086,22 +12171,19 @@ ${dialogueText}`;
     }
     const contextBlock = buildContextBlockFromItems(active);
     const injectedText = buildInjectedMessage(p.originalText, contextBlock);
-    const maxChars = Number(room.maxChars) || APP.defaultMaxChars;
-    if (injectedText.length > maxChars) throw new Error(`변경 후 carrier 총 길이가 ${formatCount(injectedText.length)}자로 주입 한도 ${formatCount(maxChars)}자를 넘습니다.`);
+    const requestMetrics = assertCarrierRequestWithinLimits(room, injectedText, '변경 후 carrier 총 길이');
     const previousInjectedText = buildInjectedMessage(p.originalText, p.contextBlock || buildContextBlockFromItems(activePendingItems(p)));
-    const requestChars = injectedText.length;
-    const requestBytes = typeof TextEncoder === 'function' ? new TextEncoder().encode(injectedText).length : requestChars;
     try {
       await patchMessage(apiChatIdOf(room), p.messageId, injectedText);
     } catch (patchError) {
       const rollbackVerified = await rollbackPendingCarrierUpdate(room, p, previousInjectedText);
       throw new Error(`주입 내용 서버 갱신 실패: ${patchError.message}. ${rollbackVerified ? '직전 정상 주입본으로 복원했으며 저장된 로그 원문은 유지됩니다.' : '복원 확인 전이므로 주입 백업을 유지했습니다.'}`);
     }
-    const next = { ...p, contextBlock, injectedChars: contextBlock.length, carrierChars: injectedText.length, verified: false, verifiedAt: null };
+    const next = { ...p, contextBlock, injectedChars: contextBlock.length, carrierChars: injectedText.length, carrierMessageBytes:requestMetrics.messageBytes, carrierPayloadBytes:requestMetrics.payloadBytes, verified: false, verifiedAt: null };
     const verification = await verifyInjectedCarrier(room, next, injectedText);
     if (!verification.verified) {
       const rollbackVerified = await rollbackPendingCarrierUpdate(room, p, previousInjectedText);
-      throw new Error(`변경된 주입문의 서버 확인에 실패했습니다. ${rollbackVerified ? '직전 정상 주입본으로 복원했으며 저장된 로그 원문은 유지됩니다.' : '복원 확인 전이므로 주입 백업을 유지했습니다.'} 전송 ${formatCount(requestChars)}자 · UTF-8 ${formatCount(requestBytes)}바이트`);
+      throw new Error(`변경된 주입문의 서버 확인에 실패했습니다. ${rollbackVerified ? '직전 정상 주입본으로 복원했으며 저장된 로그 원문은 유지됩니다.' : '복원 확인 전이므로 주입 백업을 유지했습니다.'} 전송 ${formatCount(requestMetrics.chars)}자 · 요청 본문 UTF-8 ${formatCount(requestMetrics.payloadBytes)}바이트`);
     }
     next.verified = true; next.verifiedAt = Date.now(); next.serverChars = verification.serverChars;
     stampVerifiedPendingSnapshot(next, active, contextBlock);
@@ -12359,7 +12441,7 @@ ${dialogueText}`;
     const active = rows.filter(row => row.active);
     const removed = rows.filter(row => !row.active);
     const stats = statsForItems(active.map(row => row.item));
-    const capacity = carrierCapacityForUi(room, stats.block);
+    const capacity = carrierCapacityForUi(room, stats.block, buildContextBlockFromItems(active.map(row => row.item)));
     const rowHtml = (row, index) => {
       const item = row.item;
       const category = itemCategory(item);
@@ -12372,7 +12454,7 @@ ${dialogueText}`;
     };
     const ordered = [...active, ...removed];
     backdrop.innerHTML = `<div class="rpcm-quick-shade"></div><aside class="rpcm-quick-panel" role="dialog" aria-modal="true" aria-label="현재 주입 관리">
-      <div class="rpcm-quick-head"><div><strong>현재 주입 관리</strong><span>${active.length}개 · 총 ${formatCount(capacity.total)} / 45,000자 · 주입 자료 ${formatCount(stats.block)}자</span></div><button type="button" class="rpcm-quick-close" aria-label="닫기">✕</button></div>
+      <div class="rpcm-quick-head"><div><strong>현재 주입 관리</strong><span>${active.length}개 · 총 ${formatCount(capacity.total)} / 45,000자${capacity.byteKnown ? ` · UTF-8 요청 ${formatCount(capacity.payloadBytes)} / ${formatCount(capacity.byteLimit)}바이트` : ''} · 주입 자료 ${formatCount(stats.block)}자</span></div><button type="button" class="rpcm-quick-close" aria-label="닫기">✕</button></div>
       <div class="rpcm-quick-note">체크를 끄면 현재 주입에서만 빠집니다. 저장된 원문과 다음 주입의 기본 선택은 바뀌지 않습니다.</div>
       <div class="rpcm-quick-list">
         ${active.length ? `<div class="rpcm-quick-group-title">주입 중 ${active.length}</div>${active.map((row, index) => rowHtml(row, index)).join('')}` : '<div class="rpcm-quick-empty">현재 주입 중인 항목이 없습니다.</div>'}
@@ -13111,11 +13193,11 @@ ${dialogueText}`;
     // 최초 주입에는 아직 pending이 없으므로, 갱신 경로와 별도로 AI 맥락 검토를 적용합니다.
     // API가 실패하면 이미 계산된 로컬 키워드 결과를 그대로 사용합니다.
     items = await rerankInitialRelatedLogItems(room, items, recallText, initialContextBudget);
+    items = fitItemsToCarrierLimits(room, cleanOriginal, items);
     const contextBlock = buildContextBlockFromItems(items);
     if (!contextBlock) throw new Error('주입할 항목이 없습니다. 현재상태/캐릭터/기타 또는 날짜 로그의 직접 주입·최근·관련 자동 선택 설정을 확인해 주세요.');
     const injectedText = buildInjectedMessage(cleanOriginal, contextBlock);
-    const maxChars = Number(room.maxChars) || APP.defaultMaxChars;
-    if (injectedText.length > maxChars) throw new Error(`carrier 총 길이가 ${formatCount(injectedText.length)}자입니다. 설정 한도 ${formatCount(maxChars)}자를 넘습니다.`);
+    const requestMetrics = assertCarrierRequestWithinLimits(room, injectedText);
 
     const pending = {
       messageId: targetId,
@@ -13123,6 +13205,7 @@ ${dialogueText}`;
       baselineAssistantId: targetId,
       sessionStartedAt: Date.now(), armedAt: Date.now(), carrierArmedAt: Date.now(),
       injectedChars: contextBlock.length, originalChars: cleanOriginal.length, carrierChars: injectedText.length,
+      carrierMessageBytes:requestMetrics.messageBytes, carrierPayloadBytes:requestMetrics.payloadBytes,
       carrierRole: 'assistant', mode: 'append-hidden-html-comment-reanchor-per-item',
       verified: false, verifiedAt: null, serverChars: 0,
       logRecallRevision: APP.logRecallRevision,
@@ -13235,25 +13318,22 @@ ${dialogueText}`;
     if (!newRaw) throw new Error('새 AI 응답 원문을 읽지 못해 자동 유지를 중단합니다.');
     const stripped = stripOurContextBlock(newRaw);
     const newOriginal = stripped.found ? stripped.text : newRaw;
-    const nonLogActive = active.filter(i => i.sourceSlotId !== 'logSummary' && i.group !== 'log-auto' && i.slotId !== 'logSummary');
-    const logActive = active.filter(i => i.sourceSlotId === 'logSummary' || i.group === 'log-auto' || i.slotId === 'logSummary');
-    if (logActive.length) {
-      const fittedLogs = fitLogItemsToBudget(room, nonLogActive, logActive, contextBudgetForCarrier(room, newOriginal.length));
-      const keepIds = new Set(fittedLogs.map(i => i.slotId));
-      p.items = (p.items || []).filter(i => !(i.sourceSlotId === 'logSummary' || i.group === 'log-auto' || i.slotId === 'logSummary') || keepIds.has(i.slotId));
-      active = [...nonLogActive, ...fittedLogs];
-    }
+    active = fitItemsToCarrierLimits(room, newOriginal, active);
+    const activeLogIds = new Set(active.filter(i => i.sourceSlotId === 'logSummary' || i.group === 'log-auto' || i.slotId === 'logSummary').map(i => i.slotId));
+    p.items = (p.items || []).filter(i => !(i.sourceSlotId === 'logSummary' || i.group === 'log-auto' || i.slotId === 'logSummary') || activeLogIds.has(i.slotId));
     const contextBlock = buildContextBlockFromItems(active);
     if (!contextBlock) throw new Error('유지할 활성 컨텍스트가 없어 자동 유지를 중단합니다.');
     const nextInjected = buildInjectedMessage(newOriginal, contextBlock);
+    const requestMetrics = carrierRequestMetrics(nextInjected);
     const maxChars = Number(room.maxChars) || APP.defaultMaxChars;
-    if (nextInjected.length > maxChars) {
+    if (nextInjected.length > maxChars || requestMetrics.payloadBytes > APP.safeCarrierPayloadBytes) {
       room.pending = null; clearPendingBackup(room.chatId); await saveRoom(room);
-      throw new Error(`새 AI 응답 + 숨김 컨텍스트가 ${formatCount(nextInjected.length)}자로 주입 한도 ${formatCount(maxChars)}자를 넘어 자동 유지를 종료했습니다.`);
+      throw new Error(`새 AI 응답 + 숨김 컨텍스트가 주입 안전선을 넘어 자동 유지를 종료했습니다. ${formatCount(nextInjected.length)} / ${formatCount(maxChars)}자 · UTF-8 요청 ${formatCount(requestMetrics.payloadBytes)} / ${formatCount(APP.safeCarrierPayloadBytes)}바이트`);
     }
 
     const nextPending = { ...p, messageId: newId, originalText: newOriginal, baselineAssistantId: newId,
       armedAt: Date.now(), carrierArmedAt: Date.now(), originalChars: newOriginal.length, carrierChars: nextInjected.length,
+      carrierMessageBytes:requestMetrics.messageBytes, carrierPayloadBytes:requestMetrics.payloadBytes,
       verified: false, verifiedAt: null, serverChars: 0, logRecallRevision: APP.logRecallRevision, contextBlock, injectedChars: contextBlock.length, items: p.items };
     stampVerifiedPendingSnapshot(nextPending, active, contextBlock);
     if (rerollMove) delete nextPending.reroll;
@@ -13368,16 +13448,19 @@ ${dialogueText}`;
         const carrier = await fetchMessage(apiChatIdOf(room), p.messageId);
         const carrierText = messageTextOf(carrier);
         if (carrierText && !stripOurContextBlock(carrierText).found) {
-          const active = activePendingItems(p);
+          const active = fitItemsToCarrierLimits(room, carrierText, activePendingItems(p));
+          const activeLogIds = new Set(active.filter(i => i.sourceSlotId === 'logSummary' || i.group === 'log-auto' || i.slotId === 'logSummary').map(i => i.slotId));
+          p.items = (p.items || []).filter(i => !(i.sourceSlotId === 'logSummary' || i.group === 'log-auto' || i.slotId === 'logSummary') || activeLogIds.has(i.slotId));
           const contextBlock = buildContextBlockFromItems(active);
           if (contextBlock) {
             // Refiner가 마커 없이 최신 교정문을 저장했을 수 있으므로 현재 서버 본문을 새 원문으로 채택합니다.
             p.originalText = carrierText;
             const injected = buildInjectedMessage(carrierText, contextBlock);
+            const requestMetrics = assertCarrierRequestWithinLimits(room, injected, 'carrier 재주입 총 길이');
             await patchMessage(apiChatIdOf(room), p.messageId, injected);
             const reapplied = await verifyInjectedCarrier(room, p, injected, 3);
             if (!reapplied.verified) throw new Error('carrier 재주입 서버 검증 실패');
-            p.contextBlock = contextBlock; p.carrierChars = injected.length; p.serverChars = reapplied.serverChars;
+            p.contextBlock = contextBlock; p.carrierChars = injected.length; p.carrierMessageBytes = requestMetrics.messageBytes; p.carrierPayloadBytes = requestMetrics.payloadBytes; p.serverChars = reapplied.serverChars;
             p.verified = true; p.verifiedAt = Date.now();
             savePendingBackup(room.chatId, p); await saveRoom(room);
           }
@@ -15653,7 +15736,7 @@ ${dialogueText}`;
     if (!room) return;
     const roomId = String(room.chatId || '');
     if (room.pending) {
-      state.carrierCapacityPreview = { roomId, originalChars:Number(room.pending.originalChars || 0), loading:false, error:'', checkedAt:Date.now() };
+      state.carrierCapacityPreview = { roomId, originalChars:Number(room.pending.originalChars || 0), originalText:String(room.pending.originalText || ''), loading:false, error:'', checkedAt:Date.now() };
       state.capacityUiRefresh?.();
       return;
     }
@@ -15673,6 +15756,7 @@ ${dialogueText}`;
         roomId,
         messageId:String(messageIdOf(latestAssistant) || ''),
         originalChars:String(original).length,
+        originalText:String(original),
         loading:false,
         error:'',
         checkedAt:Date.now(),
@@ -15776,10 +15860,11 @@ ${dialogueText}`;
     };
   }
 
-  function statusForChars(chars, maxChars) {
+  function statusForChars(chars, maxChars, payloadBytes = 0) {
     const ratio = maxChars ? chars / maxChars : 0;
-    if (chars > maxChars) return { cls: 'bad', label: '한도 초과', color: '#ef4444', ratio: 1 };
-    if (chars > APP.safeChars || ratio > .9) return { cls: 'warn', label: '한도 근접', color: '#f59e0b', ratio };
+    const byteRatio = payloadBytes ? payloadBytes / APP.safeCarrierPayloadBytes : 0;
+    if (chars > maxChars || byteRatio > 1) return { cls: 'bad', label: '한도 초과', color: '#ef4444', ratio: 1 };
+    if (chars > APP.safeChars || ratio > .9 || byteRatio > .9) return { cls: 'warn', label: '한도 근접', color: '#f59e0b', ratio:Math.max(ratio, byteRatio) };
     return { cls: '', label: '여유', color: '#22c55e', ratio };
   }
 
@@ -15800,7 +15885,9 @@ ${dialogueText}`;
     const maxChars = Number(room.maxChars) || APP.defaultMaxChars;
     const previewOriginalChars = carrierOriginalCharsForUi(room);
     const previewContextBudget = previewOriginalChars === null ? contextBudgetForPreview(room) : contextBudgetForCarrier(room, previewOriginalChars);
-    const displayItems = room.pending ? activePendingItems(room.pending) : snapshotSelectedItems(room, null, previewContextBudget);
+    let displayItems = room.pending ? activePendingItems(room.pending) : snapshotSelectedItems(room, null, previewContextBudget);
+    const previewOriginalText = carrierOriginalTextForUi(room);
+    if (previewOriginalText !== null) displayItems = fitItemsToCarrierLimits(room, previewOriginalText, displayItems);
     const evidenceHydrated = hydrateRelatedLogEvidence(room, displayItems);
     if (evidenceHydrated && room.pending) {
       savePendingBackup(room.chatId, room.pending);
@@ -15846,8 +15933,8 @@ ${dialogueText}`;
     const hasMultipleLogTimelines = logTimelineLabels.length > 1;
     const logTimelineOptions = logTimelineLabels.map(label => `<option value="${esc(label)}" ${normalizedLogTimelineKey(label) === normalizedLogTimelineKey(activeTimeline) ? 'selected' : ''}>${esc(label)}</option>`).join('');
     const pending = room.pending;
-    const capacity = carrierCapacityForUi(room, stats.block);
-    const st = statusForChars(capacity.total, maxChars);
+    const capacity = carrierCapacityForUi(room, stats.block, buildContextBlockFromItems(displayItems));
+    const st = statusForChars(capacity.total, maxChars, capacity.byteKnown ? capacity.payloadBytes : 0);
     const usage = renderUsageSummary(displayItems, stats.block, maxChars, capacity.known ? capacity.original : 0, capacity.known ? capacity.separator : 0);
     const uiPrefs = loadUiPrefs();
 
@@ -15874,7 +15961,7 @@ ${dialogueText}`;
             <div class="rpcm-summary">
               <div class="rpcm-summary-head">
                 <div><div class="rpcm-summary-label">${capacity.known ? (pending ? '현재 carrier 총길이' : '예상 carrier 총길이') : (pending ? '현재 주입 중인 컨텍스트' : '다음 주입 컨텍스트')}</div><div class="rpcm-summary-main"><strong>${formatCount(capacity.total)} / 45,000자</strong><span class="rpcm-summary-count">${stats.count}개 항목</span></div><div class="rpcm-summary-capacity-detail">${esc(carrierCapacityDetailText(room, capacity))}</div></div>
-                <div class="rpcm-summary-side"><span class="rpcm-summary-status" style="color:${st.color}">${st.label}</span><label class="rpcm-limit"><input id="rpcm-maxchars" type="hidden" value="45000">최대 45,000자 고정</label><button type="button" class="rpcm-mobile-summary-toggle" id="rpcm-mobile-summary-toggle" aria-label="용량 세부정보 펼치기">▾</button></div>
+                <div class="rpcm-summary-side"><span class="rpcm-summary-status" style="color:${st.color}">${st.label}</span><label class="rpcm-limit"><input id="rpcm-maxchars" type="hidden" value="45000">45,000자 · UTF-8 ${formatCount(APP.safeCarrierPayloadBytes)}B 안전선</label><button type="button" class="rpcm-mobile-summary-toggle" id="rpcm-mobile-summary-toggle" aria-label="용량 세부정보 펼치기">▾</button></div>
               </div>
               <div class="rpcm-usage-bar" aria-label="섹션별 주입 용량">${usage.bar}</div>
               <div class="rpcm-breakdown">${usage.chips}</div>
@@ -15888,7 +15975,7 @@ ${dialogueText}`;
             </div>
 
             <div class="rpcm-section" id="rpcm-section-basic">
-              <div class="rpcm-section-head"><div><div class="rpcm-section-title">기억 관리</div><div class="rpcm-section-desc">현재상태는 다음 업데이트 전까지 유효한 지속 상태로 통째 유지합니다. ${hasMultipleLogTimelines ? '로그요약 원문은 시간선별 날짜 블록 저장소로 보관하고, 현재 회차와 이전 모든 회차에서' : '로그요약 원문은 날짜 블록 저장소로 보관하고,'} 직접 주입·최근·관련·항상 주입 날짜 블록을 45,000자 예산 안에서 골라 주입합니다.</div></div></div>
+              <div class="rpcm-section-head"><div><div class="rpcm-section-title">기억 관리</div><div class="rpcm-section-desc">현재상태는 다음 업데이트 전까지 유효한 지속 상태로 통째 유지합니다. ${hasMultipleLogTimelines ? '로그요약 원문은 시간선별 날짜 블록 저장소로 보관하고, 현재 회차와 이전 모든 회차에서' : '로그요약 원문은 날짜 블록 저장소로 보관하고,'} 직접 주입·최근·관련·항상 주입 날짜 블록을 45,000자·UTF-8 ${formatCount(APP.safeCarrierPayloadBytes)}바이트 안전선 안에서 골라 주입합니다.</div></div></div>
               <div id="rpcm-current-state-slot"></div>
               <div class="rpcm-story-launchbar${storyReviewDue ? ' is-review-due' : ''}"><div><strong>🧭 연속성 타임라인${room.storyTimelineReviewSettings?.menuBadge !== false && storyUnreviewedCount ? ` · ${storyUnreviewedCount}턴` : ''}${storyReviewDue ? ' · 검토 권장' : ''}</strong><span>${storyStats.count ? `${storyStats.count}개 카드 · 주입 ${storyStats.injectCount}개 · ${formatCount(storyStats.chars)}자` : '아직 카드 없음'} · 모든 세계선 통합 관리</span></div><button type="button" class="rpcm-mini" id="rpcm-story-manage">타임라인 보기</button></div>
               <div class="rpcm-auto-panel rpcm-log-auto-panel">${hasMultipleLogTimelines ? `<label class="rpcm-active-timeline-picker"><span class="rpcm-active-timeline-label">🗂️ 다음 저장</span><select id="rpcm-active-log-timeline-main" aria-label="다음 로그 저장 시간선">${logTimelineOptions}</select></label>` : ''}<label><input type="checkbox" id="rpcm-auto-log" ${room.autoLogRecallEnabled ? 'checked' : ''}> 최근·관련 로그 자동 선택</label><label>최근 날짜 <select id="rpcm-auto-log-recent"><option value="1" ${Number(room.autoLogRecentBlocks)===1?'selected':''}>1개</option><option value="2" ${Number(room.autoLogRecentBlocks)!==1?'selected':''}>2개</option></select></label><label>관련 날짜 최대 <select id="rpcm-auto-log-related"><option value="1" ${Number(room.autoLogRelatedBlocks)===1?'selected':''}>1개</option><option value="2" ${Number(room.autoLogRelatedBlocks)===2?'selected':''}>2개</option><option value="3" ${Number(room.autoLogRelatedBlocks)===3?'selected':''}>3개</option><option value="4" ${Number(room.autoLogRelatedBlocks)===4?'selected':''}>4개</option></select></label><button type="button" class="rpcm-lib-small" id="rpcm-log-date-fix">🛠 날짜 수정</button><button type="button" class="rpcm-lib-small" id="rpcm-log-manage">🗓️ 로그 관리${manualLogStats.count ? ` (직접 ${manualLogStats.count})` : ''}</button></div><div class="rpcm-log-help"><b>자동 선택 ON</b>=최근 날짜와 현재 RP에 관련된 날짜를 자동으로 골라 주입 · <b>OFF</b>=직접 주입·📌항상 주입 날짜만 유지 · 날짜 블록이 인식되면 로그요약 원문 전체를 통째로 주입하지 않습니다.</div>${manualLogStats.count ? `<div class="rpcm-log-help"><b>직접 주입 중</b> ${manualLogStats.count}개 · ${formatCount(manualLogStats.chars)}자 · 즐겨찾기·항상 주입·직접 주입 로그에서 빠르게 넣고 뺄 수 있습니다.</div>` : ''}
@@ -17188,10 +17275,12 @@ ${dialogueText}`;
       const max = Number(room.maxChars) || APP.defaultMaxChars;
       const originalChars = carrierOriginalCharsForUi(room);
       const previewBudget = originalChars === null ? contextBudgetForPreview(room) : contextBudgetForCarrier(room, originalChars);
-      const items = room.pending ? activePendingItems(room.pending) : snapshotSelectedItems(room, null, previewBudget);
+      let items = room.pending ? activePendingItems(room.pending) : snapshotSelectedItems(room, null, previewBudget);
+      const originalText = carrierOriginalTextForUi(room);
+      if (originalText !== null) items = fitItemsToCarrierLimits(room, originalText, items);
       const s = statsForItems(items);
-      const capacity = carrierCapacityForUi(room, s.block);
-      const status = statusForChars(capacity.total, max);
+      const capacity = carrierCapacityForUi(room, s.block, buildContextBlockFromItems(items));
+      const status = statusForChars(capacity.total, max, capacity.byteKnown ? capacity.payloadBytes : 0);
       const mainStrong = overlay.querySelector('.rpcm-summary-main strong');
       if (mainStrong) mainStrong.textContent = `${formatCount(capacity.total)} / 45,000자`;
       const summaryLabel = overlay.querySelector('.rpcm-summary-label');
