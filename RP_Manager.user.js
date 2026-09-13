@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🪽위시 RP Manager
 // @namespace    local.rp.context.manager
-// @version      0.12.61
+// @version      0.12.62
 // @description  장기 RP용 현재상태·날짜로그·연속성 타임라인·캐릭터 설정을 관리하고, 검수형 AI 생성과 필요한 컨텍스트 자동 주입을 지원합니다.
 // @author       User
 // @license      All Rights Reserved
@@ -42,13 +42,13 @@
   // 버전별 키를 쓰면 구버전과 신버전이 동시에 설치됐을 때 둘 다 실행될 수 있습니다.
   // 모든 버전이 공유하는 고정 키로 중복 실행을 막습니다.
   if (window.__WISH_RP_MANAGER_LOADED__) return;
-  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.12.61', loadedAt: Date.now() };
+  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.12.62', loadedAt: Date.now() };
   // 같은 페이지에 남아 있는 v0.8.10 복사본이 뒤늦게 시작되는 경우도 차단합니다.
   window.__RP_MANAGER_0810_LOADED__ = true;
 
   const APP = {
     name: '🪽위시 RP Manager',
-    version: '0.12.61',
+    version: '0.12.62',
     dbName: 'RPContextManagerDB',
     dbVersion: 2,
     storeName: 'rooms',
@@ -4345,7 +4345,6 @@ USER에 관한 각 문장은 다음 중 하나에 해당할 때만 작성한다.
         data:options.body == null ? undefined : String(options.body),
         responseType:'text',
         timeout:Number(options.timeout) || 120000,
-        anonymous:true,
         nocache:true,
         onload:res => resolve({
           ok:res.status >= 200 && res.status < 300,
@@ -4354,7 +4353,13 @@ USER에 관한 각 문장은 다음 중 하나에 해당할 때만 작성한다.
           finalUrl:String(res.finalUrl || parsedUrl.href),
         }),
         ontimeout:() => reject(new Error('외부 API 요청 시간이 초과되었습니다.')),
-        onerror:() => reject(new Error('외부 API 네트워크 오류가 발생했습니다.')),
+        onerror:res => {
+          const status = Number(res?.status || 0);
+          const statusText = String(res?.statusText || '').trim();
+          const responseText = String(res?.responseText || '').trim().slice(0, 300);
+          const detail = [status ? `상태 ${status}` : '', statusText, responseText].filter(Boolean).join(' · ');
+          reject(new Error(`외부 API 네트워크 오류가 발생했습니다${detail ? `: ${detail}` : '.'}`));
+        },
         onabort:() => reject(new Error('외부 API 요청이 취소되었습니다.')),
       });
     });
@@ -4930,7 +4935,7 @@ try {
         await sleep(waitMs);
       }
     }
-    if (isRetryableAiError(lastError)) {
+    if (isRetryableAiError(lastError) && /(?:\b429\b|\b500\b|\b502\b|\b503\b|\b504\b|resource\s*exhausted|too\s*many\s*requests|temporar(?:y|ily)|overloaded|try\s*again\s*later|일시.*혼잡)/i.test(String(lastError?.message || lastError || ''))) {
       throw new Error(`API 혼잡 또는 사용량 제한으로 요청이 완료되지 않았습니다. 잠시 뒤 다시 시도해 주세요. (${String(lastError?.message || lastError)})`);
     }
     throw lastError;
