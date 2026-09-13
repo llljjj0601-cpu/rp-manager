@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🪽위시 RP Manager
 // @namespace    local.rp.context.manager
-// @version      0.12.55
+// @version      0.12.57
 // @description  장기 RP용 현재상태·날짜로그·연속성 타임라인·캐릭터 설정을 관리하고, 검수형 AI 생성과 필요한 컨텍스트 자동 주입을 지원합니다.
 // @author       User
 // @license      All Rights Reserved
@@ -42,13 +42,13 @@
   // 버전별 키를 쓰면 구버전과 신버전이 동시에 설치됐을 때 둘 다 실행될 수 있습니다.
   // 모든 버전이 공유하는 고정 키로 중복 실행을 막습니다.
   if (window.__WISH_RP_MANAGER_LOADED__) return;
-  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.12.55', loadedAt: Date.now() };
+  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.12.57', loadedAt: Date.now() };
   // 같은 페이지에 남아 있는 v0.8.10 복사본이 뒤늦게 시작되는 경우도 차단합니다.
   window.__RP_MANAGER_0810_LOADED__ = true;
 
   const APP = {
     name: '🪽위시 RP Manager',
-    version: '0.12.55',
+    version: '0.12.57',
     dbName: 'RPContextManagerDB',
     dbVersion: 2,
     storeName: 'rooms',
@@ -80,7 +80,60 @@
     logRecallRevision: 8, // v0.12.21: 최근로그 총개수 준수·시간선별 폴더 표시 후 자동 로그 재선정
   };
 
-  const STORY_TIMELINE_GUIDE_V13 = String.raw`연속성 타임라인 생성·갱신 지침 v1.3 범용
+  const STORY_TIMELINE_GUIDE_V15 = String.raw`연속성 타임라인 생성·갱신 지침 v1.5 범용
+
+━━━━━━━━━━━━━━━━━━━━
+0. 작업 모드
+━━━━━━━━━━━━━━━━━━━━
+기본 모드 = 연속성 타임라인 신규 생성·이어서 갱신.
+사용자가 ${'`'}점검${'`'}, ${'`'}재점검${'`'}, ${'`'}지침 준수 확인${'`'}, ${'`'}오류 확인${'`'}, ${'`'}카드 수 확인${'`'}, ${'`'}카드가 너무 많은지 확인${'`'}, ${'`'}이 카드 수가 맞는지 확인${'`'} 등을 요청하면 점검 모드로 전환한다.
+사용자가 ${'`'}전체 재정리${'`'}, ${'`'}전면 재정리${'`'}, ${'`'}전체 압축${'`'} 등을 요청하면 전체 재정리 모드로 전환한다.
+점검 모드에서 FAIL이 확인되면, 사용자가 보고만 요청하거나 수정을 금지하지 않은 한 수정된 전체 타임라인 완성본을 출력한다.
+
+[점검 모드]
+
+점검 모드는 기존 타임라인을 신뢰하거나 문장만 다듬는 작업이 아니다.
+가능한 경우 기존 타임라인과 그 근거가 되는 전체 RP 원본, 날짜별 로그요약, 현재상태, 사용자 정정, 확정 OOC 및 제공 자료를 다시 대조하여 본 지침 전체를 처음부터 재적용한다.
+
+점검 순서:
+1. 입력된 실제 카드 블록을 다시 세어 현재 카드 수를 확정한다. 사용자가 말한 카드 수나 이전 AI의 집계만 믿지 않는다.
+2. 본 지침 전체의 포함·제외·갱신·병합·분할·압축·정보격차·세계선·USER 보호·형식 기준을 다시 적용한다.
+3. 근거 자료가 제공되었다면 점검 대상 범위를 처음부터 끝까지 다시 확인한다.
+4. 기존 타임라인에 없는 핵심 사건·전환·단서·서사 기준점·연결 사건도 근거 자료에서 독립적으로 다시 찾는다.
+5. 기존 카드를 하나씩 ${'`'}유지 / 수정 / 병합 / 삭제 / 분할${'`'} 후보로 판정하고, 누락된 카드가 있으면 ${'`'}추가${'`'} 후보로 판정한다.
+6. 모든 카드에 5절의 Q1~Q5와 9절·10절·22절의 신규·병합·압축 기준을 다시 적용한다.
+7. 인접 카드뿐 아니라 떨어져 있는 카드 사이에도 같은 사건·같은 상태변화·같은 서사 아크의 중복이 있는지 확인한다.
+8. 각 카드를 제거하거나 인접 카드에 병합했을 때 중요한 원인·관계 변화·정보격차·세계선 구분·후속 연결이 실제로 사라지는지 확인한다.
+9. 카드 수를 줄이기 위해 독립적인 중요 전환을 억지로 합치지 않았는지, 반대로 날짜로그 수준의 장면을 별도 카드로 남기지 않았는지 확인한다.
+10. 카드 간 인과 공백, 잘못된 날짜 범위, 잘못된 REF, 과잉추론, 누락, 왜곡, 형식 오류를 확인한다.
+11. 문제가 있으면 근거 자료와 본 지침에 따라 수정한다.
+12. 수정 후 26절의 최종 연결성 검수를 전체 타임라인에 다시 수행한다.
+
+카드 수 적정성 판정:
+- 카드 수에는 모든 RP에 공통으로 적용하는 절대 상한을 두지 않는다. 26개라는 숫자만으로 PASS 또는 FAIL을 판정하지 않는다.
+- 카드 수가 많아질수록 각 카드가 독립 카드로 남아야 하는 이유를 더 엄격하게 검사한다.
+- 같은 관계·갈등·목표·결과를 향하는 연속 장면은 기간형 카드 하나로 병합하는 것을 우선한다.
+- 한 날짜의 장소 이동·대화·감정 변화·성적 장면·연락·물건 전달을 장면별로 나눈 카드는 과다 세분화 가능성이 높다.
+- 새 로그가 들어올 때마다 거의 자동으로 카드가 하나씩 늘었다면 기존 카드 갱신·기간 연장으로 처리할 수 없었는지 다시 확인한다.
+- 제목만 연속해서 읽었을 때 같은 변화가 표현만 바뀌어 반복되면 중복 또는 병합 후보로 본다.
+- 카드 하나를 삭제해도 앞뒤 상태와 인과관계가 그대로 이해된다면 날짜로그로 내리거나 병합할 가능성을 우선 검토한다.
+- 서로 다른 관계 단계, 결과가 뒤집힌 전환, 별개의 장기 갈등, 독립적인 정보격차, 의미 있는 최초 경험, 미해결 단서, 필수 연결 사건, 실제로 구분해야 하는 세계선은 카드 수를 줄이기 위해 억지로 합치지 않는다.
+- 적정 카드 수는 ${'`'}타임라인만으로 전체 주요 흐름을 이해할 수 있는 범위에서 더 이상 안전하게 병합·삭제할 수 없는 최소 개수${'`'}로 판단한다.
+
+점검 판정:
+- PASS = 확인 가능한 범위에서 수정·병합·삭제·분할·추가가 필요한 문제가 없음.
+- FAIL = 하나 이상의 수정·병합·삭제·분할·추가 또는 형식 수정이 필요함.
+- UNVERIFIED = 기존 타임라인이나 근거 자료가 부족하여 실제 카드 수, 사실 정확성, 누락 여부 또는 전체 적정성을 확인할 수 없음.
+
+중요:
+- 기존 카드에 적혀 있다는 이유만으로 해당 내용을 사실로 확정하지 않는다.
+- 기존 카드가 이미 존재한다는 이유만으로 독립 카드로 남길 가치가 있다고 판단하지 않는다.
+- 기존 타임라인에 없는 사건이 원본에 존재하는지 반드시 다시 확인한다.
+- 원본이 없으면 카드 배열·중복·세분화·형식은 점검할 수 있지만 사실 정확성·창작 여부·원본 사건 누락을 PASS로 단정하지 않는다.
+- 확인할 수 없는 사실을 추측하여 수정하지 않는다.
+- 사용자 잠금 카드는 수정·병합·삭제하지 않는다. 잠금 카드에 문제가 있으면 점검 결과에 별도로 명시한다.
+- FAIL이 확인되면 수정된 카드 조각만 주지 않고 잠금 카드를 포함한 전체 타임라인 완성본을 다시 출력한다.
+- 사용자가 보고만 요청하고 수정을 금지한 경우에는 점검 결과만 출력하고 타임라인을 변경하지 않는다.
 
 ━━━━━━━━━━━━━━━━━━━━
 역할과 목표
@@ -139,6 +192,29 @@
 OOC 연속성 정보
 사용자 직접 정정 / 고정 설정
 일부 자료가 없으면 제공된 범위 안에서 작업한다.
+
+━━━━━━━━━━━━━━━━━━━━
+3-1. AI와 확장프로그램의 역할 분리
+━━━━━━━━━━━━━━━━━━━━
+AI는 다음만 담당한다.
+어떤 사건·전환·단서·서사 기준점·연결 사건을 남길지 판단
+기존 카드를 유지·갱신·병합할지, 새 카드를 만들지 판단
+카드의 날짜·제목·태그·본문 작성
+전체 타임라인의 인과관계와 연속성 검수
+
+확장프로그램은 다음을 담당한다.
+실제 저장용 카드 ID 발급·유지
+임시 카드 참조값과 실제 저장 ID의 대응
+사용자 잠금 상태 유지
+RP 주입 여부 유지
+신규·수정·삭제·변경 없음 Diff 판정
+결과 파싱·검증·저장
+
+AI는 실제 저장 ID를 만들거나 추측하거나 바꾸지 않는다.
+${'`'}TL_...${'`'} 형태의 실제 저장 ID는 AI 입력·출력용 식별자가 아니다.
+기존 카드를 가리킬 때는 이번 실행에서 확장프로그램이 부여한 임시 참조값 ${'`'}C001${'`'}, ${'`'}C002${'`'} 등만 사용한다.
+임시 참조값은 이번 실행 안에서만 유효하며, 실제 저장 ID로 저장하지 않는다.
+확장프로그램이 별도의 구조화 출력 규격을 함께 제공한 경우에는 그 규격을 우선한다. 단, 본 지침의 사건 선정·병합·작성·검수 기준은 그대로 적용한다.
 
 ━━━━━━━━━━━━━━━━━━━━
 4. 정보 우선순위
@@ -788,6 +864,41 @@ PRIVATE
 사용자 잠금 카드는 변경하지 않는다.
 
 ━━━━━━━━━━━━━━━━━━━━
+21-1. 점검 모드의 카드별 판정 기준
+━━━━━━━━━━━━━━━━━━━━
+점검 시 각 기존 카드에 다음 중 하나만 부여한다.
+유지 = 현재 내용·범위·독립 카드 가치가 모두 적절함.
+수정 = 독립 카드는 유지하되 사실·날짜·제목·태그·본문·정보격차를 고쳐야 함.
+병합 = 다른 카드와 같은 서사 아크이며 합쳐도 독립적인 중요 전환이 사라지지 않음.
+삭제 = 날짜로그 수준의 세부장면, 무의미한 반복, 근거 없는 내용, 해결된 단서의 중복 카드 등으로 독립 보존 가치가 없음.
+분할 = 하나의 카드에 서로 다른 장기 전환·세계선·독립 갈등이 과도하게 합쳐져 현재 흐름이나 정보격차가 왜곡됨.
+추가 = 기존 타임라인에 없으며 누락되면 현재까지의 흐름을 잘못 이해하게 되는 핵심 사건·전환·단서·서사 기준점·연결 사건이 근거 자료에서 확인됨.
+
+병합 판정은 단순히 날짜가 가깝다는 이유로 하지 않는다.
+다음 항목이 같거나 하나의 연속된 변화라면 병합 가능성이 높다.
+핵심 인물과 관계
+갈등 또는 변화의 원인
+변화 방향
+도달한 결과 상태
+후속 RP에서 기억해야 할 핵심
+
+다음 중 하나가 분명하면 독립 카드 유지 가능성이 높다.
+관계 정의나 공식성이 새로 바뀜
+기존 결과가 뒤집힘
+새로운 장기 갈등·목표·위험이 시작됨
+새로운 인물이 핵심 원인으로 개입하여 흐름을 바꿈
+중요한 비밀·정보격차가 새로 생기거나 해소됨
+미해결 단서가 실제 사건으로 전환됨
+별도의 지속적 신체 결과가 생김
+후속 설정에 필요한 최초 경험 또는 실제 관계 여부가 독립적인 기준점이 됨
+특수 시간·세계선 구조에서 서로 다른 연속선을 구분해야 함
+앞 아크를 끝내고 다음 아크를 시작시키는 필수 연결 사건임
+
+점검 후 권장 카드 수는 임의 목표치가 아니다.
+모든 유지·수정·병합·삭제·분할·추가를 실제로 적용한 완성본의 카드 수로 계산한다.
+카드 수를 먼저 정한 뒤 거기에 맞춰 사건을 억지로 삭제하거나 합치지 않는다.
+
+━━━━━━━━━━━━━━━━━━━━
 22. 카드 압축 기준
 ━━━━━━━━━━━━━━━━━━━━
 타임라인은 날짜로그보다 훨씬 짧아야 한다.
@@ -809,6 +920,9 @@ PRIVATE
 카드 수가 적다는 이유만으로 좋은 타임라인이 되는 것이 아니다.
 반대로 카드 수가 늘었다고 자동으로 과도한 것도 아니다.
 날짜로그처럼 장면 단위 기록으로 변했는가를 기준으로 과도한 세분화를 판단한다.
+다만 타임라인은 가능한 한 적은 카드로 같은 연속성을 보존해야 한다.
+같은 내용을 유지하면서 병합할 수 있다면 별도 카드 유지보다 병합을 우선한다.
+카드 수가 계속 증가하는 경우에는 신규 카드 생성 전 기존 카드 갱신·기간 연장·병합 가능성을 다시 검사한다.
 
 ━━━━━━━━━━━━━━━━━━━━
 23. 전체 완성본 출력 원칙
@@ -820,55 +934,92 @@ PRIVATE
 을 처음부터 현재까지 전부 출력한다.
 변경되지 않은 기존 카드도 생략하지 않는다.
 사용자는 이 결과 전체를 기존 타임라인 대신 그대로 복사·붙여넣을 수 있어야 한다.
+단, 점검 결과가 PASS 또는 UNVERIFIED이고 사용자가 수정본을 요구하지 않았다면 25-1의 점검 결과만 출력할 수 있다.
+점검 결과가 FAIL이고 수정까지 허용되었다면 점검 결과 뒤에 수정된 전체 타임라인 완성본을 출력한다.
 
 ━━━━━━━━━━━━━━━━━━━━
-24. 카드 ID 규칙
+24. 카드 참조 규칙
 ━━━━━━━━━━━━━━━━━━━━
-기존 카드가 유지되는 경우 기존 ID를 그대로 유지한다.
-기존 카드 내용이나 날짜 범위가 갱신되어도 ID를 변경하지 않는다.
-기존:
-ID=TL_a81f
-갱신:
-ID=TL_a81f
+기존 카드에는 입력에서 함께 제공된 임시 참조값만 사용한다.
+예:
+REF=C001
+REF=C002
+
+기존 카드의 내용·날짜·제목·태그가 갱신되어도 같은 REF를 유지한다.
 새 카드만:
-ID=NEW
+REF=NEW
 로 출력한다.
-복수의 신규 카드가 있어도 각각 별도의 [TIMELINE_CARD] 블록으로 출력한다.
-사용자 잠금 카드:
-USER_LOCKED=true
-인 카드는 그대로 복사하여 유지한다.
+복수의 신규 카드가 있으면 각 카드에 REF=NEW를 사용한다.
+입력에 존재하지 않는 C번호를 새로 만들거나 추측하지 않는다.
+기존 카드인지 확신할 수 없거나 대응되는 기존 REF가 없으면 기존 REF를 임의로 사용하지 말고 새 카드 여부를 내용 기준으로 판단한다.
+${'`'}TL_...${'`'} 형태의 실제 저장 ID, 사용자 잠금값, RP 주입값은 출력하지 않는다.
+사용자 잠금 카드는 내용·날짜·제목·태그를 변경하거나 삭제하지 않는다. 잠금 상태 자체는 확장프로그램이 보존한다.
 
 ━━━━━━━━━━━━━━━━━━━━
-25. 출력 형식
+25. 범용 수동 출력 형식
 ━━━━━━━━━━━━━━━━━━━━
 설명·분석·변경사항 목록을 별도로 출력하지 않는다.
-다음 형식의 전체 타임라인만 출력한다.
+단, 점검 모드에서는 25-1의 점검 결과 형식을 먼저 사용한다.
+확장프로그램이 별도의 구조화 출력 규격을 제공하지 않은 경우 다음 형식의 전체 타임라인만 출력한다.
 [TIMELINE]
-VERSION=1
-[TIMELINE_CARD]
-ID=TL_xxxx
+[CARD]
+REF=C001
 DATE_START=YYYY.MM.DD
 DATE_END=YYYY.MM.DD
 TITLE=카드 제목
 TAGS=키워드1,키워드2,키워드3
-USER_LOCKED=false
-INJECT=true
 CONTENT=
 카드 본문
-[/TIMELINE_CARD]
-[TIMELINE_CARD]
-ID=NEW
+[/CARD]
+[CARD]
+REF=NEW
 DATE_START=YYYY.MM.DD
 DATE_END=YYYY.MM.DD
 TITLE=신규 카드 제목
 TAGS=키워드1,키워드2
-USER_LOCKED=false
-INJECT=true
 CONTENT=
 카드 본문
-[/TIMELINE_CARD]
+[/CARD]
 [/TIMELINE]
 기존 카드와 신규 카드를 모두 포함한다.
+필드 순서를 바꾸거나 필드명을 변형하지 않는다.
+날짜를 확인할 수 없으면 원문에 없는 날짜를 만들지 않는다. 수동 형식에서는 ${'`'}UNKNOWN${'`'}, API 구조화 출력에서는 ${'`'}null${'`'}을 사용한다.
+코드블록은 사용해도 되지만 코드블록 밖에 설명을 덧붙이지 않는다.
+API 호출에서 JSON schema 등 별도의 구조화 출력 규격이 제공되면 위 수동 형식을 출력하지 않고 해당 규격만 따른다.
+
+━━━━━━━━━━━━━━━━━━━━
+25-1. 점검 모드 출력 형식
+━━━━━━━━━━━━━━━━━━━━
+확장프로그램이 점검용 구조화 출력 규격을 함께 제공한 경우에는 그 규격만 따른다.
+별도 규격이 없는 수동 점검에서는 먼저 다음 형식으로 점검 결과를 출력한다.
+[TIMELINE_AUDIT]
+RESULT=PASS | FAIL | UNVERIFIED
+SOURCE_SCOPE=FULL | PARTIAL | TIMELINE_ONLY
+CURRENT_COUNT=현재 확인된 카드 수 또는 UNKNOWN
+RECOMMENDED_COUNT=수정 적용 후 카드 수 또는 UNKNOWN
+KEEP=해당 REF 목록 또는 NONE
+UPDATE=해당 REF 목록 또는 NONE
+MERGE=병합할 REF 조합 또는 NONE
+REMOVE=해당 REF 목록 또는 NONE
+SPLIT=해당 REF 목록 또는 NONE
+ADD=추가할 카드 수 또는 NONE
+LOCKED_ISSUES=잠금 카드 문제 또는 NONE
+SUMMARY=판정 근거를 짧고 구체적으로 작성
+[/TIMELINE_AUDIT]
+
+규칙:
+- CURRENT_COUNT는 실제 입력 카드 블록을 다시 세어 작성한다.
+- RECOMMENDED_COUNT는 점검에서 제안한 수정·병합·삭제·분할·추가를 모두 반영한 카드 수다.
+- REF 목록은 입력에 존재한 임시 참조값만 사용한다.
+- MERGE는 ${'`'}C003+C004${'`'}, 복수 조합은 ${'`'}C003+C004,C010+C011+C012${'`'}처럼 작성한다.
+- 근거 자료 전체가 있으면 SOURCE_SCOPE=FULL, 일부만 있으면 PARTIAL, 타임라인만 있으면 TIMELINE_ONLY를 사용한다.
+- SOURCE_SCOPE=TIMELINE_ONLY이면 사실 정확성·원본 누락 여부를 확인할 수 없으므로, 구조상 FAIL이 확인되지 않는 한 RESULT=UNVERIFIED를 사용한다. 구조상 수정할 문제가 확인되면 RESULT=FAIL로 판정하되 SUMMARY에 사실 검증 범위가 제한됐다고 명시한다.
+- 타임라인 자체가 없어 실제 카드 수조차 확인할 수 없으면 RESULT=UNVERIFIED, CURRENT_COUNT=UNKNOWN으로 작성한다.
+- RESULT=PASS이면 점검 결과만 출력한다. 사용자가 전체본 재출력을 요청한 경우에만 변경 없는 전체 타임라인을 이어서 출력한다.
+- RESULT=FAIL이고 수정이 허용되었다면 점검 결과 바로 뒤에 25장의 형식으로 수정된 전체 타임라인을 출력한다.
+- RESULT=FAIL이지만 사용자가 보고만 요청했거나 수정을 금지했다면 점검 결과만 출력한다.
+- RESULT=UNVERIFIED이면 확인할 수 없는 내용을 추측하여 수정하지 않는다. 확인 가능한 구조 문제만 별도로 명시한다.
+- 점검 결과 밖에 인사·작업보고·장문의 해설을 덧붙이지 않는다.
 
 ━━━━━━━━━━━━━━━━━━━━
 26. 최종 연결성 검수
@@ -904,9 +1055,14 @@ A 카드의 종료 상태와 B 카드의 시작 상태 사이에서 이유 없�
 - 특정 인물만 가진 연속선 기억을 다른 인물의 지식으로 잘못 처리하지 않았는가?
 사소한 연락·이동을 무차별적으로 카드화하지 않았는가?
 반대로 다음 단계의 전제가 되는 핵심 연결 사건을 사소하다는 이유로 삭제하지 않았는가?
-기존 카드 ID가 불필요하게 변경되지 않았는가?
+기존 카드 REF가 입력과 다르게 변경되거나 새로 만들어지지 않았는가?
 잠긴 카드가 그대로 유지됐는가?
 전체 타임라인을 빠짐없이 출력했는가?
+점검 모드라면 실제 카드 수를 다시 세었는가?
+점검 모드라면 모든 카드를 유지·수정·병합·삭제·분할 중 하나로 검토했는가?
+점검 모드라면 같은 아크의 장면 단위 카드와 떨어져 있는 중복 카드까지 확인했는가?
+점검 모드라면 권장 카드 수를 먼저 정해 놓고 사건을 억지로 맞추지 않았는가?
+점검 모드라면 FAIL 수정 후 전체 타임라인을 다시 검수했는가?
 
 ━━━━━━━━━━━━━━━━━━━━
 27. 최종 원칙
@@ -3713,6 +3869,30 @@ USER에 관한 각 문장은 다음 중 하나에 해당할 때만 작성한다.
     return [getGuideText(slotId, selected), DEFAULT_AI_GUIDE_ADDONS[slotId]].map(value => String(value || '').trim()).filter(Boolean).join('\n\n');
   }
 
+  function sameGuideText(left, right) {
+    return String(left || '').trim() === String(right || '').trim();
+  }
+
+  function isGuideTextModified(slotId, variant = '', value) {
+    const current = value === undefined ? getGuideText(slotId, variant) : value;
+    return !sameGuideText(current, baseGuideText(slotId, variant));
+  }
+
+  function defaultAiSystemInstruction(slotId, variant = '') {
+    return [baseGuideText(slotId, variant), DEFAULT_AI_GUIDE_ADDONS[slotId]]
+      .map(value => String(value || '').trim()).filter(Boolean).join('\n\n');
+  }
+
+  function isAiSystemInstructionModified(slotId, variant = '', value) {
+    const current = value === undefined ? getAiSystemInstruction(slotId, variant) : value;
+    return !sameGuideText(current, defaultAiSystemInstruction(slotId, variant));
+  }
+
+  function isStoryTimelineGuideModified(room, value) {
+    const current = value === undefined ? String(room?.storyTimelineGuide || STORY_TIMELINE_GUIDE_V15) : value;
+    return !sameGuideText(current, STORY_TIMELINE_GUIDE_V15);
+  }
+
   function loadUiPrefs() {
     const fallback = { density: 'comfortable', editorHeights: {} };
     try {
@@ -6177,13 +6357,20 @@ ${dialogueText}`;
     room.storyLogReviews = next;
     room.storyLogReviewRevisionV1 = true;
     const existingStoryGuide = String(room.storyTimelineGuide || '');
-    // 빈 값 또는 과거 내장본과 정확히 같은 값만 새 범용 v1.3 전문으로 교체합니다.
+    // 빈 값 또는 배포된 과거 내장본과 정확히 같은 값만 새 범용 v1.5 전문으로 교체합니다.
     // 사용자가 수정한 지침은 버전 제목이 같아도 절대 덮어쓰지 않습니다.
-    const builtInStoryGuideHashes = new Set(['1qc4n6u', 'mlc1go']);
-    if (!room.storyTimelineGuideGeneralRevisionV13 && (!existingStoryGuide.trim() || builtInStoryGuideHashes.has(simpleHash(existingStoryGuide.trim())))) {
-      room.storyTimelineGuide = STORY_TIMELINE_GUIDE_V13;
-    } else room.storyTimelineGuide = existingStoryGuide || STORY_TIMELINE_GUIDE_V13;
-    room.storyTimelineGuideGeneralRevisionV13 = true;
+    const builtInStoryGuideHashes = new Set(['kqpc9i', '1qc4n6u', 'mlc1go']);
+    const exactLegacyBuiltIn = !existingStoryGuide.trim() || builtInStoryGuideHashes.has(simpleHash(existingStoryGuide.trim()));
+    if (!room.storyTimelineGuideRevisionV15 && exactLegacyBuiltIn) {
+      room.storyTimelineGuide = STORY_TIMELINE_GUIDE_V15;
+      room.storyTimelineGuideSource = 'builtin-v1.5';
+    } else {
+      room.storyTimelineGuide = existingStoryGuide || STORY_TIMELINE_GUIDE_V15;
+      if (!existingStoryGuide.trim()) room.storyTimelineGuideSource = 'builtin-v1.5';
+      else if (existingStoryGuide.trim() === STORY_TIMELINE_GUIDE_V15.trim()) room.storyTimelineGuideSource = 'builtin-v1.5';
+      else room.storyTimelineGuideSource = 'custom';
+    }
+    room.storyTimelineGuideRevisionV15 = true;
     if (!room.storyTimelinePendingReview || typeof room.storyTimelinePendingReview !== 'object') room.storyTimelinePendingReview = null;
     room.storyTimelineLastReviewedMessageId = String(room.storyTimelineLastReviewedMessageId || '');
     room.storyTimelineLastReviewedAt = String(room.storyTimelineLastReviewedAt || '');
@@ -6201,6 +6388,8 @@ ${dialogueText}`;
     if (!room.storyTimelineBackup || typeof room.storyTimelineBackup !== 'object' || !Array.isArray(room.storyTimelineBackup.cards)) room.storyTimelineBackup = null;
     if (!room.storyTimelineApiDraft || typeof room.storyTimelineApiDraft !== 'object') room.storyTimelineApiDraft = null;
     room.storyTimelineApiHistory = (Array.isArray(room.storyTimelineApiHistory) ? room.storyTimelineApiHistory : []).filter(item => item && typeof item === 'object').slice(0, 10);
+    room.storyTimelineAuditHistory = (Array.isArray(room.storyTimelineAuditHistory) ? room.storyTimelineAuditHistory : []).filter(item => item && typeof item === 'object').slice(0, 50);
+    if (!room.storyTimelineManualRun || typeof room.storyTimelineManualRun !== 'object') room.storyTimelineManualRun = null;
     room.storyTimelineCarryoverTurnKeys = (Array.isArray(room.storyTimelineCarryoverTurnKeys) ? room.storyTimelineCarryoverTurnKeys : []).map(String).slice(-40);
     return blocks.map(block => {
       const meta = next.find(item => item.blockKey === String(block.key));
@@ -6222,6 +6411,213 @@ ${dialogueText}`;
     return storyTimelineCardsFor(room).map(card => ({ ...card, tags:[...(card.tags || [])] }));
   }
 
+  function storyTimelineCardsForLabel(room, timelineLabel = activeLogTimelineLabel(room)) {
+    const key = normalizedLogTimelineKey(timelineLabel === DEFAULT_LOG_TIMELINE ? '' : timelineLabel);
+    return orderedStoryTimelineCards(normalizeStoryTimelineCards(room).filter(card =>
+      normalizedLogTimelineKey((card.timelineLabel || DEFAULT_LOG_TIMELINE) === DEFAULT_LOG_TIMELINE ? '' : card.timelineLabel) === key
+    ));
+  }
+
+  function snapshotStoryTimelineCardsForLabel(room, timelineLabel = activeLogTimelineLabel(room)) {
+    return storyTimelineCardsForLabel(room, timelineLabel).map(card => ({ ...card, tags:[...(card.tags || [])] }));
+  }
+
+  function storyTimelineComparable(card) {
+    return JSON.stringify({
+      timelineLabel:String(card?.timelineLabel || ''), dateStart:String(card?.dateStart || ''), dateEnd:String(card?.dateEnd || ''),
+      title:String(card?.title || ''), content:String(card?.content || ''), tags:[...(card?.tags || [])],
+      userLocked:!!card?.userLocked, inject:card?.inject !== false,
+    });
+  }
+
+  function storyTimelineMasterSignature(cards) {
+    return JSON.stringify((cards || []).map(card => [String(card.cardId || ''), storyTimelineComparable(card)]));
+  }
+
+  function storyTimelineRunRef(number) {
+    return `C${String(number).padStart(3, '0')}`;
+  }
+
+  function createStoryTimelineRun(room, timelineLabel = activeLogTimelineLabel(room), kind = 'update', sourceScope = 'FULL') {
+    const masterSnapshot = snapshotStoryTimelineCardsForLabel(room, timelineLabel);
+    return {
+      runId:`TLRUN_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`,
+      kind:String(kind || 'update'), sourceScope:String(sourceScope || 'FULL'), timelineLabel:String(timelineLabel || DEFAULT_LOG_TIMELINE),
+      createdAt:nowIso(), masterSnapshot, masterSignature:storyTimelineMasterSignature(masterSnapshot),
+      refEntries:masterSnapshot.map((card, index) => ({ ref:storyTimelineRunRef(index + 1), cardId:String(card.cardId) })),
+      nextRefNumber:masterSnapshot.length + 1,
+    };
+  }
+
+  function storyTimelineRunRefMaps(run) {
+    const entries = Array.isArray(run?.refEntries) ? run.refEntries : [];
+    return {
+      refToId:new Map(entries.map(item => [String(item.ref), String(item.cardId)])),
+      idToRef:new Map(entries.map(item => [String(item.cardId), String(item.ref)])),
+    };
+  }
+
+  function ensureStoryTimelineRunRefs(run, cards) {
+    const maps = storyTimelineRunRefMaps(run);
+    let next = Math.max(1, Number(run.nextRefNumber) || 1);
+    for (const card of (cards || [])) {
+      const cardId = String(card.cardId || '');
+      if (!cardId || maps.idToRef.has(cardId)) continue;
+      let ref = storyTimelineRunRef(next++);
+      while (maps.refToId.has(ref)) ref = storyTimelineRunRef(next++);
+      run.refEntries.push({ ref, cardId });
+      maps.refToId.set(ref, cardId);
+      maps.idToRef.set(cardId, ref);
+    }
+    run.nextRefNumber = next;
+    return maps;
+  }
+
+  function assertStoryTimelineRunCurrent(room, run) {
+    if (!run || !Array.isArray(run.masterSnapshot)) throw new Error('실행 전 타임라인 snapshot을 찾지 못했습니다. 작업을 다시 시작해 주세요.');
+    const current = snapshotStoryTimelineCardsForLabel(room, run.timelineLabel);
+    if (storyTimelineMasterSignature(current) !== String(run.masterSignature || '')) {
+      throw new Error('실행 후 마스터 타임라인이 변경되었습니다. 현재 마스터를 기준으로 다시 실행해 주세요.');
+    }
+    return true;
+  }
+
+  function serializeStoryTimelineRefMaster(cards, run, includeLockedInput = true, outputNewAsNew = false) {
+    const maps = ensureStoryTimelineRunRefs(run, cards);
+    const originalIds = new Set((run.masterSnapshot || []).map(card => String(card.cardId)));
+    const body = (cards || []).map(card => {
+      const ref = outputNewAsNew && !originalIds.has(String(card.cardId || '')) ? 'NEW' : maps.idToRef.get(String(card.cardId || ''));
+      const locked = includeLockedInput ? `\nLOCKED_INPUT=${card.userLocked ? 'true' : 'false'}` : '';
+      return `[CARD]\nREF=${ref}\nDATE_START=${card.dateStart ? String(card.dateStart).replace(/-/g, '.') : 'UNKNOWN'}\nDATE_END=${card.dateEnd ? String(card.dateEnd).replace(/-/g, '.') : 'UNKNOWN'}\nTITLE=${card.title || ''}\nTAGS=${(card.tags || []).join(',')}${locked}\nCONTENT=\n${card.content || ''}\n[/CARD]`;
+    }).join('\n\n');
+    return `[TIMELINE]\n${body}\n[/TIMELINE]`;
+  }
+
+  function storyTimelineCardJsonSchema(validRefs) {
+    return {
+      type:'OBJECT', properties:{
+        ref:{ type:'STRING', enum:[...validRefs, 'NEW'] },
+        dateStart:{ type:'STRING', nullable:true }, dateEnd:{ type:'STRING', nullable:true },
+        title:{ type:'STRING' }, tags:{ type:'ARRAY', items:{ type:'STRING' } }, content:{ type:'STRING' },
+      }, required:['ref','dateStart','dateEnd','title','tags','content'],
+    };
+  }
+
+  function storyTimelineUpdateResponseSchema(validRefs) {
+    return {
+      type:'OBJECT', properties:{
+        status:{ type:'STRING', enum:['CHANGED','NO_CHANGE'] },
+        cards:{ type:'ARRAY', items:storyTimelineCardJsonSchema(validRefs) },
+      }, required:['status','cards'],
+    };
+  }
+
+  function storyTimelineAuditResponseSchema(validRefs) {
+    return {
+      type:'OBJECT', properties:{
+        audit:{ type:'OBJECT', properties:{
+          result:{ type:'STRING', enum:['PASS','FAIL','UNVERIFIED'] },
+          sourceScope:{ type:'STRING', enum:['FULL','PARTIAL','TIMELINE_ONLY'] },
+          currentCount:{ type:'INTEGER' }, recommendedCount:{ type:'INTEGER', nullable:true },
+          keep:{ type:'ARRAY', items:{ type:'STRING', enum:validRefs } },
+          update:{ type:'ARRAY', items:{ type:'STRING', enum:validRefs } },
+          merge:{ type:'ARRAY', items:{ type:'OBJECT', properties:{ refs:{ type:'ARRAY', items:{ type:'STRING', enum:validRefs } }, targetRef:{ type:'STRING', enum:validRefs } }, required:['refs','targetRef'] } },
+          remove:{ type:'ARRAY', items:{ type:'STRING', enum:validRefs } },
+          split:{ type:'ARRAY', items:{ type:'STRING', enum:validRefs } },
+          addCount:{ type:'INTEGER' }, lockedIssues:{ type:'ARRAY', items:{ type:'STRING' } }, summary:{ type:'STRING' },
+        }, required:['result','sourceScope','currentCount','recommendedCount','keep','update','merge','remove','split','addCount','lockedIssues','summary'] },
+        cards:{ type:'ARRAY', items:storyTimelineCardJsonSchema(validRefs) },
+      }, required:['audit','cards'],
+    };
+  }
+
+  function parseStoryTimelineJsonObject(value) {
+    const raw = normalizeLineBreaks(String(value || '')).trim();
+    if (!raw) throw new Error('응답 형식 오류: 빈 응답입니다.');
+    const fenced = raw.match(/^```(?:json)?[ \t]*\n([\s\S]*?)\n```[ \t]*$/i);
+    const jsonText = fenced ? fenced[1].trim() : raw;
+    let parsed;
+    try { parsed = JSON.parse(jsonText); }
+    catch (_) { const error = new Error('JSON 파싱 실패: 응답 전체가 하나의 JSON 객체가 아닙니다.'); error.rawExcerpt = safeAiContextRawExcerpt(raw); throw error; }
+    if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') throw new Error('응답 최상위 값은 JSON 객체여야 합니다.');
+    return parsed;
+  }
+
+  function normalizeStoryTimelineJsonDate(value, fieldName, index) {
+    if (value == null || String(value).trim().toUpperCase() === 'UNKNOWN') return '';
+    const normalized = normalizeStoryDate(value);
+    if (!normalized) throw new Error(`${index + 1}번째 카드의 ${fieldName} 날짜 형식이 올바르지 않습니다.`);
+    return normalized;
+  }
+
+  function materializeStoryTimelineJsonCards(rawCards, room, run, options = {}) {
+    if (!Array.isArray(rawCards)) throw new Error('cards는 배열이어야 합니다.');
+    const workingCards = Array.isArray(options.workingCards) ? options.workingCards : run.masterSnapshot;
+    ensureStoryTimelineRunRefs(run, workingCards);
+    const maps = storyTimelineRunRefMaps(run);
+    const currentById = new Map(workingCards.map(card => [String(card.cardId), card]));
+    const originalById = new Map((run.masterSnapshot || []).map(card => [String(card.cardId), card]));
+    const usedExistingRefs = new Set();
+    const now = nowIso();
+    const materialized = rawCards.map((source, index) => {
+      if (!source || Array.isArray(source) || typeof source !== 'object') throw new Error(`${index + 1}번째 카드는 객체여야 합니다.`);
+      for (const key of ['ref','dateStart','dateEnd','title','tags','content']) if (!(key in source)) throw new Error(`${index + 1}번째 카드에 ${key} 필드가 없습니다.`);
+      const ref = String(source.ref || '').trim();
+      const isNew = ref === 'NEW';
+      if (!isNew && !maps.refToId.has(ref)) throw new Error(`${index + 1}번째 카드의 알 수 없는 REF: ${ref || '(빈 값)'}`);
+      if (!isNew && usedExistingRefs.has(ref)) throw new Error(`중복 REF가 있습니다: ${ref}`);
+      if (!isNew) usedExistingRefs.add(ref);
+      if (!Array.isArray(source.tags) || source.tags.some(tag => typeof tag !== 'string')) throw new Error(`${index + 1}번째 카드의 tags는 문자열 배열이어야 합니다.`);
+      const dateStart = normalizeStoryTimelineJsonDate(source.dateStart, 'dateStart', index);
+      const dateEnd = normalizeStoryTimelineJsonDate(source.dateEnd, 'dateEnd', index);
+      if (dateStart && dateEnd && dateEnd < dateStart) throw new Error(`${index + 1}번째 카드의 끝 날짜가 시작 날짜보다 빠릅니다.`);
+      const title = String(source.title || '').trim();
+      const content = String(source.content || '').trim();
+      if (!title) throw new Error(`${index + 1}번째 카드의 title이 비어 있습니다.`);
+      if (!content) throw new Error(`${index + 1}번째 카드의 content가 비어 있습니다.`);
+      const cardId = isNew ? makeStoryCardId() : maps.refToId.get(ref);
+      const previous = currentById.get(cardId) || originalById.get(cardId);
+      return {
+        cardId, timelineLabel:String(previous?.timelineLabel || run.timelineLabel || DEFAULT_LOG_TIMELINE), dateStart, dateEnd, title, content,
+        tags:[...new Set(source.tags.map(tag => tag.trim()).filter(Boolean))], userLocked:!!previous?.userLocked,
+        inject:previous ? previous.inject !== false : true, sortOrder:index, createdAt:String(previous?.createdAt || now), updatedAt:now,
+      };
+    });
+    const nextById = new Map(materialized.map(card => [String(card.cardId), card]));
+    for (const locked of workingCards.filter(card => card.userLocked)) {
+      const next = nextById.get(String(locked.cardId));
+      if (!next) throw new Error(`잠금 카드가 결과에서 누락되었습니다: ${maps.idToRef.get(String(locked.cardId)) || locked.title}`);
+      if (storyTimelineComparable(next) !== storyTimelineComparable(locked)) throw new Error(`잠금 카드를 변경할 수 없습니다: ${maps.idToRef.get(String(locked.cardId)) || locked.title}`);
+    }
+    ensureStoryTimelineRunRefs(run, materialized);
+    return materialized;
+  }
+
+  function buildStoryTimelinePreview(cards, run) {
+    const existing = run.masterSnapshot || [];
+    const existingById = new Map(existing.map(card => [String(card.cardId), card]));
+    const nextById = new Map((cards || []).map(card => [String(card.cardId), card]));
+    const diff = [];
+    for (const card of (cards || [])) {
+      const previous = existingById.get(String(card.cardId));
+      if (!previous) diff.push({ type:'new', cardId:card.cardId, title:card.title });
+      else if (storyTimelineComparable(previous) !== storyTimelineComparable(card)) diff.push({ type:'updated', cardId:card.cardId, title:card.title });
+    }
+    for (const card of existing) if (!nextById.has(String(card.cardId)) && !card.userLocked) diff.push({ type:'removed', cardId:card.cardId, title:card.title });
+    return { cards:(cards || []).map((card, index) => ({ ...card, sortOrder:index })), diff, removedCards:existing.filter(card => !nextById.has(String(card.cardId)) && !card.userLocked), warnings:[], protectedCount:existing.filter(card => card.userLocked).length };
+  }
+
+  function parseStoryTimelineUpdateJson(value, room, run, options = {}) {
+    const parsed = typeof value === 'string' ? parseStoryTimelineJsonObject(value) : value;
+    if (!['CHANGED','NO_CHANGE'].includes(parsed?.status) || !Array.isArray(parsed?.cards)) throw new Error('status와 cards가 포함된 일반 타임라인 JSON schema가 필요합니다.');
+    if (parsed.status === 'NO_CHANGE') {
+      if (parsed.cards.length) throw new Error('NO_CHANGE일 때 cards는 빈 배열이어야 합니다.');
+      return { status:'NO_CHANGE', cards:Array.isArray(options.workingCards) ? options.workingCards : run.masterSnapshot };
+    }
+    if (!parsed.cards.length) throw new Error('CHANGED일 때 최신 전체 카드 배열이 필요합니다.');
+    return { status:'CHANGED', cards:materializeStoryTimelineJsonCards(parsed.cards, room, run, options) };
+  }
+
   function backupStoryTimeline(room, reason = '변경 전') {
     room.storyTimelineBackup = { cards:snapshotStoryTimelineCards(room), savedAt:nowIso(), reason:String(reason || '변경 전') };
     return room.storyTimelineBackup;
@@ -6237,16 +6633,18 @@ ${dialogueText}`;
     return true;
   }
 
-  async function loadStoryTimelineReviewSnapshot(room) {
+  async function loadStoryTimelineReviewSnapshot(room, requireFullHistory = false) {
     const anchor = String(room.storyTimelineLastReviewedMessageId || '');
-    const messages = await fetchAiMessageHistory(apiChatIdOf(room), anchor, 5000);
+    // 일반 갱신은 기존 기준점 직전 문맥까지만, 전체 근거 점검은 기준점과 무관하게 처음부터 요청합니다.
+    const messages = await fetchAiMessageHistory(apiChatIdOf(room), requireFullHistory ? '' : anchor, 5000);
     const turns = buildCompletedAiDialogueTurns(messages);
     let anchorIndex = anchor ? turns.findIndex(turn => String(turn.key) === anchor) : -1;
-    if (anchor && anchorIndex < 0) throw new Error('마지막 타임라인 검토 기준 메시지를 현재 브랜치에서 찾지 못했습니다. 설정에서 기준점을 다시 잡아 주세요.');
+    if (!requireFullHistory && anchor && anchorIndex < 0) throw new Error('마지막 타임라인 검토 기준 메시지를 현재 브랜치에서 찾지 못했습니다. 설정에서 기준점을 다시 잡아 주세요.');
     const fresh = anchorIndex >= 0 ? turns.slice(anchorIndex + 1) : turns;
     return {
       turns:fresh,
       allTurns:turns,
+      historyLimitReached:messages.length >= 5000,
       anchorIndex,
       // 직전 40턴은 새 RP의 시작 문맥 보강용이며, fresh 범위를 줄이지 않습니다.
       lookbackTurns:anchorIndex >= 0 ? turns.slice(Math.max(0, anchorIndex - 39), anchorIndex + 1) : [],
@@ -6278,26 +6676,30 @@ ${dialogueText}`;
     storyReviewCountLoads.set(key, task);
   }
 
-  function buildStoryTimelineUpdatePrompt(room, mode, selectedLogs, reviewSnapshot) {
+  function buildStoryTimelineUpdatePrompt(room, mode, selectedLogs, reviewSnapshot, suppliedRun = null) {
     const currentState = (room.slots || []).find(slot => slot.id === 'currentState');
-    const cards = storyTimelineCardsFor(room);
-    const rawTurns = formatAiDialogueTurns(reviewSnapshot?.turns || []);
+    const timelineLabel = activeLogTimelineLabel(room);
+    const run = suppliedRun || createStoryTimelineRun(room, timelineLabel, mode === 'rebuild' ? 'rebuild' : 'update', 'FULL');
+    const cards = run.masterSnapshot;
+    const targetTurns = mode === 'rebuild' ? (reviewSnapshot?.allTurns || []) : (reviewSnapshot?.turns || []);
+    if (mode === 'rebuild') reviewSnapshot = { ...(reviewSnapshot || {}), turns:targetTurns, startKey:String(targetTurns[0]?.key || ''), endKey:String(targetTurns[targetTurns.length - 1]?.key || '') };
+    const rawTurns = formatAiDialogueTurns(targetTurns);
     const logs = (selectedLogs || []).map(item => `[DATE_LOG]\nSOURCE_TIMELINE=${logTimelineLabelOfBlock(item.block)}\nLOG_ID=${item.meta.logId}\nVERSION=${item.meta.version}\nSTATUS=${item.status === 'modified' ? 'MODIFIED_AFTER_REVIEW' : 'NEW'}\n${item.block.raw}\n[/DATE_LOG]`).join('\n\n');
-    return `${String(room.storyTimelineGuide || STORY_TIMELINE_GUIDE_V13).trim()}\n\n━━━━━━━━━━━━━━━━━━━━\n아래는 RP Manager가 붙인 실행 자료와 고정 출력 규격입니다. 사용자용 서사 지침과 별개의 수정 대상이 아닙니다.\n━━━━━━━━━━━━━━━━━━━━\n\n[UPDATE_MODE]\n${mode === 'rebuild' ? '전체 재정리' : '이어서 갱신'}\n[/UPDATE_MODE]\n\n[EXISTING_TIMELINE]\n${serializeStoryTimelineMaster(cards)}\n[/EXISTING_TIMELINE]\n\n[LATEST_CURRENT_STATE]\n${String(currentState?.content || '').trim()}\n[/LATEST_CURRENT_STATE]\n\n[UNREVIEWED_RP]\nSTART_MESSAGE_ID=${reviewSnapshot?.startKey || ''}\nEND_MESSAGE_ID=${reviewSnapshot?.endKey || ''}\nTURN_COUNT=${(reviewSnapshot?.turns || []).length}\n${rawTurns}\n[/UNREVIEWED_RP]\n\n[OPTIONAL_DATE_LOGS]\n${logs}\n[/OPTIONAL_DATE_LOGS]\n\n[OUTPUT_REQUIREMENT]\n변화가 없으면 정확히 ‘타임라인 변경 없음’ 한 줄만 출력한다. 변화가 있으면 설명이나 변경 목록 없이 갱신된 전체 타임라인 완성본만 아래 형식으로 출력한다. 기존 카드는 ID와 SOURCE_TIMELINE을 유지하고 새 카드만 ID=NEW로 출력한다. USER_LOCKED=true 카드는 변경·삭제·병합·분할하지 않는다.\n\n[TIMELINE]\nVERSION=1\n\n[TIMELINE_CARD]\nID=TL_xxxx 또는 NEW\nSOURCE_TIMELINE=카드가 속한 세계선 표시\nDATE_START=YYYY.MM.DD\nDATE_END=YYYY.MM.DD\nTITLE=제목\nTAGS=태그1,태그2\nUSER_LOCKED=false\nINJECT=true\nCONTENT=\n본문\n[/TIMELINE_CARD]\n\n[/TIMELINE]\n[/OUTPUT_REQUIREMENT]`.trim();
+    return `${String(room.storyTimelineGuide || STORY_TIMELINE_GUIDE_V15).trim()}\n\n━━━━━━━━━━━━━━━━━━━━\n아래는 RP Manager가 붙인 실행 자료와 고정 출력 규격입니다. 서사 판단 지침과 별개인 실행 규격입니다.\n━━━━━━━━━━━━━━━━━━━━\n\n[UPDATE_MODE]\n${mode === 'rebuild' ? '전체 재정리' : '이어서 갱신'}\n[/UPDATE_MODE]\n[ACTIVE_TIMELINE]\n${timelineLabel}\n[/ACTIVE_TIMELINE]\n\n[EXISTING_TIMELINE]\n${serializeStoryTimelineRefMaster(cards, run, true)}\n[/EXISTING_TIMELINE]\n\n[LATEST_CURRENT_STATE]\n${String(currentState?.content || '').trim()}\n[/LATEST_CURRENT_STATE]\n\n[UNREVIEWED_RP]\nSTART_MESSAGE_ID=${reviewSnapshot?.startKey || ''}\nEND_MESSAGE_ID=${reviewSnapshot?.endKey || ''}\nTURN_COUNT=${(reviewSnapshot?.turns || []).length}\n${rawTurns}\n[/UNREVIEWED_RP]\n\n[OPTIONAL_DATE_LOGS]\n${logs}\n[/OPTIONAL_DATE_LOGS]\n\n[OUTPUT_REQUIREMENT]\n실제 TL ID를 만들거나 출력하지 않는다. 기존 카드는 입력의 REF=C번호를 유지하고 신규 카드만 REF=NEW로 쓴다. LOCKED_INPUT=true 카드는 수정·삭제·병합·분할하지 않는다. USER_LOCKED, INJECT, VERSION, SOURCE_TIMELINE은 출력하지 않는다. 변경이 없으면 정확히 ‘타임라인 변경 없음’ 한 줄만 출력한다. 변경이 있으면 설명 없이 최신 전체 배열을 다음 형식으로 출력한다.\n\n[TIMELINE]\n[CARD]\nREF=C001\nDATE_START=YYYY.MM.DD 또는 UNKNOWN\nDATE_END=YYYY.MM.DD 또는 UNKNOWN\nTITLE=제목\nTAGS=태그1,태그2\nCONTENT=\n본문\n[/CARD]\n[/TIMELINE]\n[/OUTPUT_REQUIREMENT]`.trim();
   }
 
   function storyTimelineSelectedLogPayload(selectedLogs) {
     return (selectedLogs || []).map(item => `[DATE_LOG]\nSOURCE_TIMELINE=${logTimelineLabelOfBlock(item.block)}\nLOG_ID=${item.meta.logId}\nVERSION=${item.meta.version}\nSTATUS=${item.status === 'modified' ? 'MODIFIED_AFTER_REVIEW' : 'NEW'}\n${item.block.raw}\n[/DATE_LOG]`).join('\n\n');
   }
 
-  function buildStoryTimelineApiPrompt(room, updateMode, masterCards, targetTurns, lookbackTurns, selectedLogs, chunkIndex, chunkCount) {
+  function buildStoryTimelineApiPrompt(room, updateMode, masterCards, targetTurns, lookbackTurns, selectedLogs, chunkIndex, chunkCount, run) {
     const currentState = (room.slots || []).find(slot => slot.id === 'currentState');
-    const fullMaster = serializeStoryTimelineMaster(masterCards || []);
+    const fullMaster = serializeStoryTimelineRefMaster(masterCards || [], run, true);
     const targetText = formatAiDialogueTurns(targetTurns || []);
     const lookbackText = formatAiDialogueTurns(lookbackTurns || []);
     const logText = storyTimelineSelectedLogPayload(selectedLogs);
     const isRebuild = updateMode === 'rebuild';
-    return `[RP_MANAGER_TIMELINE_TASK]\nMODE=${isRebuild ? '전체 다시 읽기' : '이어서 갱신'}\nCHUNK=${chunkIndex + 1}/${chunkCount}\n\n[WORKING_FULL_TIMELINE]\n${fullMaster}\n[/WORKING_FULL_TIMELINE]\n\n[LATEST_CURRENT_STATE]\n${String(currentState?.content || '').trim()}\n[/LATEST_CURRENT_STATE]\n\n[RECONSIDERATION_LOOKBACK]\n이 구간은 직전 검토 때 카드가 되지 않았던 사건도 다음 흐름과 연결해 다시 판단하기 위한 원문입니다. 기존 카드와 중복 생성하지 마세요.\nTURN_COUNT=${(lookbackTurns || []).length}\n${lookbackText}\n[/RECONSIDERATION_LOOKBACK]\n\n[TARGET_RP]\n이번 단계에서 새로 검토할 원문입니다. 50턴은 알림 기준일 뿐이며, 여기에 들어온 전체 범위를 검토해야 합니다.\nTURN_COUNT=${(targetTurns || []).length}\n${targetText}\n[/TARGET_RP]\n\n[OPTIONAL_DATE_LOGS]\n${logText}\n[/OPTIONAL_DATE_LOGS]\n\n[FIXED_OUTPUT_SCHEMA]\n현재 작업 타임라인을 기준으로 새 원문을 반영하세요. 변화가 없으면 정확히 '타임라인 변경 없음' 한 줄만 출력합니다. 변화가 있으면 설명 없이 최신 전체 타임라인을 출력합니다. 기존 카드 ID는 유지하고 신규 카드만 ID=NEW로 출력합니다. 잠긴 카드는 바꾸거나 빼지 않습니다.\n\n[TIMELINE]\nVERSION=1\n\n[TIMELINE_CARD]\nID=TL_xxxx 또는 NEW\nSOURCE_TIMELINE=기본 시간선\nDATE_START=YYYY.MM.DD\nDATE_END=YYYY.MM.DD\nTITLE=제목\nTAGS=태그1,태그2\nUSER_LOCKED=false\nINJECT=true\nCONTENT=\n본문\n[/TIMELINE_CARD]\n\n[/TIMELINE]\n[/FIXED_OUTPUT_SCHEMA]\n[/RP_MANAGER_TIMELINE_TASK]`;
+    return `[RP_MANAGER_TIMELINE_TASK]\nMODE=${isRebuild ? '전체 재정리' : '이어서 갱신'}\nACTIVE_TIMELINE=${run.timelineLabel}\nCHUNK=${chunkIndex + 1}/${chunkCount}\n\n[WORKING_FULL_TIMELINE]\n${fullMaster}\n[/WORKING_FULL_TIMELINE]\n\n[LATEST_CURRENT_STATE]\n${String(currentState?.content || '').trim()}\n[/LATEST_CURRENT_STATE]\n\n[RECONSIDERATION_LOOKBACK]\nTURN_COUNT=${(lookbackTurns || []).length}\n${lookbackText}\n[/RECONSIDERATION_LOOKBACK]\n\n[TARGET_RP]\nTURN_COUNT=${(targetTurns || []).length}\n${targetText}\n[/TARGET_RP]\n\n[OPTIONAL_DATE_LOGS]\n${logText}\n[/OPTIONAL_DATE_LOGS]\n\n[FIXED_JSON_OUTPUT]\n지정된 JSON schema만 출력한다. 실제 TL ID, USER_LOCKED, INJECT, VERSION, SOURCE_TIMELINE을 만들거나 출력하지 않는다. 기존 카드는 이번 입력의 정확한 C번호 REF를 사용하고 신규 카드만 NEW를 사용한다. LOCKED_INPUT=true 카드는 변경·삭제·병합·분할하지 않는다. 변경되면 status=CHANGED와 최신 전체 카드 배열을, 변화가 없으면 status=NO_CHANGE와 빈 cards 배열을 반환한다. 날짜를 확인할 수 없으면 null을 사용한다.\n[/FIXED_JSON_OUTPUT]\n[/RP_MANAGER_TIMELINE_TASK]`;
   }
 
   function splitStoryTimelineTurns(turns, maxChars = 90000) {
@@ -6329,16 +6731,17 @@ ${dialogueText}`;
     const targets = updateMode === 'rebuild' ? (snapshot?.allTurns || []) : (snapshot?.turns || []);
     const lookback = updateMode === 'rebuild' ? [] : (snapshot?.lookbackTurns || []);
     const chunks = splitStoryTimelineTurns(targets);
-    const master = updateMode === 'rebuild' ? [] : storyTimelineCardsFor(room);
+    const run = createStoryTimelineRun(room, activeLogTimelineLabel(room), updateMode, 'FULL');
+    const master = run.masterSnapshot;
     let chars = 0;
     for (let index = 0; index < Math.max(1, chunks.length); index++) {
       const chunk = chunks[index] || [];
       const start = chunk.length ? targets.indexOf(chunk[0]) : 0;
       const preceding = updateMode === 'rebuild' ? targets.slice(Math.max(0, start - 40), start) : (index === 0 ? lookback : targets.slice(Math.max(0, start - 40), start));
-      chars += String(room.storyTimelineGuide || STORY_TIMELINE_GUIDE_V13).length + buildStoryTimelineApiPrompt(room, updateMode, master, chunk, preceding, index === 0 ? selectedLogs : [], index, Math.max(1, chunks.length)).length;
+      chars += String(room.storyTimelineGuide || STORY_TIMELINE_GUIDE_V15).length + buildStoryTimelineApiPrompt(room, updateMode, master, chunk, preceding, index === 0 ? selectedLogs : [], index, Math.max(1, chunks.length), run).length;
     }
     const inputTokens = Math.ceil(chars / 2);
-    const perCallOutput = Math.max(1800, Math.ceil(serializeStoryTimelineMaster(storyTimelineCardsFor(room)).length / 2));
+    const perCallOutput = Math.max(1800, Math.ceil(serializeStoryTimelineRefMaster(master, run, false).length / 2));
     const outputTokens = perCallOutput * Math.max(1, chunks.length);
     const settings = aiFeatureSettings(loadAiSummarySettings(), 'timeline');
     const provider = settings.provider;
@@ -6355,20 +6758,49 @@ ${dialogueText}`;
     return total;
   }
 
+  function storyTimelineJsonCards(cards, run) {
+    const maps = ensureStoryTimelineRunRefs(run, cards);
+    const originalIds = new Set((run.masterSnapshot || []).map(card => String(card.cardId)));
+    return (cards || []).map(card => ({
+      ref:originalIds.has(String(card.cardId)) ? maps.idToRef.get(String(card.cardId)) : 'NEW',
+      dateStart:card.dateStart ? String(card.dateStart).replace(/-/g, '.') : null,
+      dateEnd:card.dateEnd ? String(card.dateEnd).replace(/-/g, '.') : null,
+      title:String(card.title || ''), tags:[...(card.tags || [])], content:String(card.content || ''),
+    }));
+  }
+
+  async function callStoryTimelineStructured(provider, settings, secret, systemInstruction, prompt, schema, parser, usage, onStatus = () => {}) {
+    let lastError = null;
+    let lastRaw = '';
+    for (let formatAttempt = 0; formatAttempt < 2; formatAttempt++) {
+      const correction = formatAttempt ? `\n\n[FORMAT_CORRECTION]\n이전 응답의 형식 검증에 실패했습니다: ${String(lastError?.message || lastError || '').slice(0, 500)}\n처음 제공된 C번호만 사용하고, 기존 카드에는 정확한 C번호를, 신규 카드에만 NEW를 사용하세요. 실제 TL ID를 만들지 마세요. 지정 JSON schema 밖의 텍스트를 출력하지 마세요. CHANGED 또는 FAIL 수정본은 최신 전체 카드 배열이어야 합니다.\n[/FORMAT_CORRECTION]` : '';
+      if (formatAttempt) onStatus('응답 형식 오류 · JSON 규격을 강조해 1회 자동 재요청 중…');
+      const result = await callAiSummaryProvider(provider, settings, secret, systemInstruction, `${prompt}${correction}`, 32768, onStatus, { feature:'timeline', room:settings.__timelineRoom, responseJsonSchema:schema });
+      addStoryApiUsage(usage, result);
+      lastRaw = String(result.text || '').trim();
+      try { return { parsed:parser(lastRaw), result, raw:lastRaw, formatRetried:formatAttempt > 0 }; }
+      catch (error) { lastError = error; if (!error.rawExcerpt) error.rawExcerpt = safeAiContextRawExcerpt(lastRaw); }
+    }
+    const failure = new Error(`타임라인 JSON 검증에 두 번 실패했습니다: ${String(lastError?.message || lastError)}`);
+    failure.rawExcerpt = lastError?.rawExcerpt || safeAiContextRawExcerpt(lastRaw);
+    throw failure;
+  }
+
   async function generateStoryTimelineApiDraft(room, settings, secret, updateMode, snapshot, selectedLogs, onStatus = () => {}) {
     const provider = settings.provider;
-    const systemInstruction = String(room.storyTimelineGuide || STORY_TIMELINE_GUIDE_V13).trim();
-    // API 실행 직전 마스터를 고정해 두고, 이후 Diff는 이 snapshot과 최종 결과를 비교합니다.
-    const masterSnapshot = snapshotStoryTimelineCards(room);
-    const masterSnapshotIds = masterSnapshot.map(card => String(card.cardId));
-    const issuedNewIds = new Set();
+    const systemInstruction = String(room.storyTimelineGuide || STORY_TIMELINE_GUIDE_V15).trim();
+    const timelineLabel = activeLogTimelineLabel(room);
+    // API 실행 직전 선택 시간선 마스터와 REF 대응을 고정합니다.
+    const run = createStoryTimelineRun(room, timelineLabel, updateMode, 'FULL');
+    settings.__timelineRoom = room;
     const allTurns = snapshot?.allTurns || [];
     const targets = updateMode === 'rebuild' ? allTurns : (snapshot?.turns || []);
     if (!targets.length) throw new Error(updateMode === 'rebuild' ? '전체 다시 읽기에 사용할 완료 RP가 없습니다.' : '마지막 검토 이후 새로 완료된 RP가 없습니다.');
     const chunks = splitStoryTimelineTurns(targets);
-    let workingCards = updateMode === 'rebuild' ? [] : snapshotStoryTimelineCards(room);
+    let workingCards = run.masterSnapshot.map(card => ({ ...card, tags:[...(card.tags || [])] }));
     let changed = false;
     let lastRaw = '';
+    let formatRetried = false;
     const usage = { calls:0, inputTokens:0, outputTokens:0, estimatedCostUsd:0 };
     for (let index = 0; index < chunks.length; index++) {
       const chunk = chunks[index];
@@ -6377,31 +6809,209 @@ ${dialogueText}`;
         ? targets.slice(Math.max(0, targetStart - 40), targetStart)
         : (index === 0 ? (snapshot.lookbackTurns || []) : targets.slice(Math.max(0, targetStart - 40), targetStart));
       onStatus(`타임라인 검토 중 · ${index + 1}/${chunks.length}묶음 · ${chunk.length}턴`);
-      const prompt = buildStoryTimelineApiPrompt(room, updateMode, workingCards, chunk, preceding, index === 0 ? selectedLogs : [], index, chunks.length);
-      const result = await callAiSummaryProvider(provider, settings, secret, systemInstruction, prompt, 32768, onStatus, { feature:'timeline', room });
-      addStoryApiUsage(usage, result);
-      lastRaw = String(result.text || '').trim();
-      if (/^타임라인\s*변경\s*없음\s*$/.test(lastRaw)) {
-        if (updateMode === 'rebuild' && !workingCards.length) throw new Error('전체 다시 읽기 첫 결과가 “타임라인 변경 없음”입니다. 전체 타임라인 출력이 필요합니다.');
-        continue;
-      }
-      const tempRoom = { ...room, storyTimelineCards:workingCards.map(card => ({ ...card, tags:[...(card.tags || [])] })) };
-      const parsed = parseStoryTimelineImport(lastRaw, tempRoom);
-      for (const cardId of (parsed.issuedNewIds || [])) issuedNewIds.add(String(cardId));
-      workingCards = parsed.cards.map(card => ({ ...card, tags:[...(card.tags || [])] }));
+      ensureStoryTimelineRunRefs(run, workingCards);
+      const validRefs = run.refEntries.map(item => item.ref);
+      const prompt = buildStoryTimelineApiPrompt(room, updateMode, workingCards, chunk, preceding, index === 0 ? selectedLogs : [], index, chunks.length, run);
+      const response = await callStoryTimelineStructured(provider, settings, secret, systemInstruction, prompt, storyTimelineUpdateResponseSchema(validRefs), raw => parseStoryTimelineUpdateJson(raw, room, run, { workingCards }), usage, onStatus);
+      lastRaw = response.raw;
+      formatRetried = formatRetried || response.formatRetried;
+      if (response.parsed.status === 'NO_CHANGE') continue;
+      workingCards = response.parsed.cards.map(card => ({ ...card, tags:[...(card.tags || [])] }));
       changed = true;
     }
-    const finalText = changed ? serializeStoryTimelineMaster(workingCards) : '타임라인 변경 없음';
+    assertStoryTimelineRunCurrent(room, run);
+    const finalText = JSON.stringify(changed ? { status:'CHANGED', cards:storyTimelineJsonCards(workingCards, run) } : { status:'NO_CHANGE', cards:[] }, null, 2);
     const reviewedEndIndex = allTurns.findIndex(turn => String(turn.key) === String(snapshot.endKey));
     const reviewedThrough = reviewedEndIndex >= 0 ? reviewedEndIndex + 1 : allTurns.length;
     const reviewedTailKeys = allTurns.slice(0, reviewedThrough).slice(-40).map(turn => String(turn.key));
     return {
       id:`TLRUN_${Date.now().toString(36)}${Math.random().toString(36).slice(2,7)}`,
       createdAt:nowIso(), provider, model:String(settings.models?.[provider] || ''), updateMode,
-      finalText, rawResult:lastRaw, noChange:!changed, usage,
-      masterSnapshot, masterSnapshotIds, issuedNewIds:[...issuedNewIds],
+      finalText, rawResult:lastRaw, noChange:!changed, usage, formatRetried,
+      run, masterSnapshot:run.masterSnapshot, masterSnapshotIds:run.masterSnapshot.map(card => String(card.cardId)),
+      preview:changed ? buildStoryTimelinePreview(workingCards, run) : null,
       reviewScope:storyTimelineReviewScopeFromSnapshot(snapshot, selectedLogs, updateMode, reviewedTailKeys),
     };
+  }
+
+  function validateStoryTimelineAudit(audit, cards, room, run, expectedScope) {
+    if (!audit || typeof audit !== 'object' || Array.isArray(audit)) throw new Error('audit 객체가 없습니다.');
+    const required = ['result','sourceScope','currentCount','recommendedCount','keep','update','merge','remove','split','addCount','lockedIssues','summary'];
+    for (const key of required) if (!(key in audit)) throw new Error(`audit.${key} 필드가 없습니다.`);
+    if (!['PASS','FAIL','UNVERIFIED'].includes(audit.result)) throw new Error('audit.result 값이 올바르지 않습니다.');
+    if (!['FULL','PARTIAL','TIMELINE_ONLY'].includes(audit.sourceScope)) throw new Error('audit.sourceScope 값이 올바르지 않습니다.');
+    if (expectedScope && audit.sourceScope !== expectedScope) throw new Error(`sourceScope 불일치: 요청 ${expectedScope}, 응답 ${audit.sourceScope}`);
+    if (audit.sourceScope === 'TIMELINE_ONLY' && audit.result === 'PASS') throw new Error('TIMELINE_ONLY에서 구조상 FAIL이 아니면 UNVERIFIED여야 합니다.');
+    const refs = new Set((run.refEntries || []).slice(0, run.masterSnapshot.length).map(item => String(item.ref)));
+    if (Number(audit.currentCount) !== run.masterSnapshot.length) throw new Error(`currentCount 불일치: 실제 ${run.masterSnapshot.length}, 응답 ${audit.currentCount}`);
+    for (const key of ['keep','update','remove','split','lockedIssues']) if (!Array.isArray(audit[key])) throw new Error(`audit.${key}는 배열이어야 합니다.`);
+    if (!Array.isArray(audit.merge)) throw new Error('audit.merge는 배열이어야 합니다.');
+    const classified = new Map();
+    const claim = (ref, kind) => {
+      if (!refs.has(ref)) throw new Error(`${kind}에 알 수 없는 REF가 있습니다: ${ref}`);
+      if (classified.has(ref)) throw new Error(`REF 판정이 충돌합니다: ${ref} (${classified.get(ref)} / ${kind})`);
+      classified.set(ref, kind);
+    };
+    for (const key of ['keep','update','remove','split']) for (const ref of audit[key].map(String)) claim(ref, key);
+    for (const group of audit.merge) {
+      if (!group || !Array.isArray(group.refs) || group.refs.length < 2) throw new Error('merge.refs에는 서로 다른 기존 REF가 2개 이상 필요합니다.');
+      const unique = [...new Set(group.refs.map(String))];
+      if (unique.length !== group.refs.length || !unique.includes(String(group.targetRef || ''))) throw new Error('merge.refs 중복 또는 targetRef 관계가 올바르지 않습니다.');
+      for (const ref of unique) claim(ref, 'merge');
+    }
+    for (const ref of refs) if (!classified.has(ref)) throw new Error(`기존 카드 판정이 누락되었습니다: ${ref}`);
+    const maps = storyTimelineRunRefMaps(run);
+    const lockedRefs = new Set(run.masterSnapshot.filter(card => card.userLocked).map(card => maps.idToRef.get(String(card.cardId))));
+    for (const ref of lockedRefs) if (classified.get(ref) !== 'keep') throw new Error(`잠금 카드는 KEEP으로만 판정할 수 있습니다: ${ref}`);
+    if (typeof audit.summary !== 'string' || !audit.summary.trim()) throw new Error('audit.summary가 비어 있습니다.');
+    if (!Number.isInteger(Number(audit.addCount)) || Number(audit.addCount) < 0) throw new Error('audit.addCount가 올바르지 않습니다.');
+    if (audit.result === 'FAIL') {
+      if (!cards.length) throw new Error('FAIL 수정 결과에는 최신 전체 cards 배열이 필요합니다.');
+      if (Number(audit.recommendedCount) !== cards.length) throw new Error(`recommendedCount 불일치: cards ${cards.length}개, 응답 ${audit.recommendedCount}`);
+      const originalById = new Map(run.masterSnapshot.map(card => [String(card.cardId), card]));
+      const outputById = new Map(cards.map(card => [String(card.cardId), card]));
+      const cardForRef = ref => outputById.get(maps.refToId.get(String(ref)));
+      for (const ref of audit.keep.map(String)) {
+        const original = originalById.get(maps.refToId.get(ref));
+        const output = cardForRef(ref);
+        if (!output || storyTimelineComparable(output) !== storyTimelineComparable(original)) throw new Error(`KEEP 카드가 누락되거나 변경되었습니다: ${ref}`);
+      }
+      for (const ref of audit.update.map(String)) {
+        const original = originalById.get(maps.refToId.get(ref));
+        const output = cardForRef(ref);
+        if (!output || storyTimelineComparable(output) === storyTimelineComparable(original)) throw new Error(`UPDATE 카드가 누락되었거나 실제 변경이 없습니다: ${ref}`);
+      }
+      for (const ref of audit.remove.map(String)) if (cardForRef(ref)) throw new Error(`REMOVE 카드가 최종 배열에 남아 있습니다: ${ref}`);
+      for (const ref of audit.split.map(String)) if (!cardForRef(ref)) throw new Error(`SPLIT 원본 REF가 최종 배열에 없습니다: ${ref}`);
+      for (const group of audit.merge) {
+        if (!cardForRef(group.targetRef)) throw new Error(`MERGE targetRef가 최종 배열에 없습니다: ${group.targetRef}`);
+        for (const ref of group.refs.map(String)) if (ref !== String(group.targetRef) && cardForRef(ref)) throw new Error(`MERGE로 흡수된 카드가 최종 배열에 남아 있습니다: ${ref}`);
+      }
+      const newCount = cards.filter(card => !originalById.has(String(card.cardId))).length;
+      const minimumNew = Number(audit.addCount) + audit.split.length;
+      if (newCount < minimumNew) throw new Error(`NEW 카드 수가 ADD·SPLIT 판정보다 적습니다: 최소 ${minimumNew}개, 결과 ${newCount}개`);
+    } else {
+      if (cards.length) throw new Error(`${audit.result} 결과에는 타임라인 변경 cards를 포함할 수 없습니다.`);
+    }
+    return { ...audit, currentCount:run.masterSnapshot.length, recommendedCount:audit.result === 'FAIL' ? cards.length : (audit.recommendedCount == null ? null : Number(audit.recommendedCount)), addCount:Number(audit.addCount) };
+  }
+
+  function parseStoryTimelineAuditJson(value, room, run, expectedScope) {
+    const parsed = typeof value === 'string' ? parseStoryTimelineJsonObject(value) : value;
+    if (!parsed.audit || !Array.isArray(parsed.cards)) throw new Error('audit와 cards가 포함된 점검 JSON schema가 필요합니다.');
+    const cards = parsed.audit.result === 'FAIL' ? materializeStoryTimelineJsonCards(parsed.cards, room, run, { workingCards:run.masterSnapshot }) : [];
+    const audit = validateStoryTimelineAudit(parsed.audit, cards, room, run, expectedScope);
+    return { audit, cards, preview:audit.result === 'FAIL' ? buildStoryTimelinePreview(cards, run) : null };
+  }
+
+  function buildStoryTimelineAuditManualPrompt(room, run, snapshot, sourceScope) {
+    const currentState = (room.slots || []).find(slot => slot.id === 'currentState');
+    const allLogs = parseDatedLogBlocks(String((room.slots || []).find(slot => slot.id === 'logSummary')?.content || ''))
+      .filter(block => blockBelongsToTimeline(block, run.timelineLabel)).map(block => block.raw).join('\n\n');
+    const evidence = sourceScope === 'TIMELINE_ONLY' ? '' : `\n[FULL_RP_EVIDENCE]\n${formatAiDialogueTurns(snapshot?.allTurns || [])}\n[/FULL_RP_EVIDENCE]\n[LATEST_CURRENT_STATE]\n${String(currentState?.content || '').trim()}\n[/LATEST_CURRENT_STATE]\n[DATE_LOGS]\n${allLogs}\n[/DATE_LOGS]`;
+    return `${String(room.storyTimelineGuide || STORY_TIMELINE_GUIDE_V15).trim()}\n\n[RP_MANAGER_TIMELINE_AUDIT]\nMODE=점검\nSOURCE_SCOPE=${sourceScope}\nACTIVE_TIMELINE=${run.timelineLabel}\nCURRENT_COUNT=${run.masterSnapshot.length}\n[MASTER_TIMELINE]\n${serializeStoryTimelineRefMaster(run.masterSnapshot, run, true)}\n[/MASTER_TIMELINE]${evidence}\n\n실제 TL ID, USER_LOCKED, INJECT, VERSION, SOURCE_TIMELINE은 출력하지 않습니다. 모든 기존 REF를 판정하고, FAIL이면 수정된 최신 전체 타임라인을 이어서 출력합니다.\n[TIMELINE_AUDIT]\nRESULT=PASS | FAIL | UNVERIFIED\nSOURCE_SCOPE=${sourceScope}\nCURRENT_COUNT=${run.masterSnapshot.length}\nRECOMMENDED_COUNT=수정 적용 후 카드 수 또는 UNKNOWN\nKEEP=REF 목록 또는 NONE\nUPDATE=REF 목록 또는 NONE\nMERGE=C003+C004 또는 NONE\nREMOVE=REF 목록 또는 NONE\nSPLIT=REF 목록 또는 NONE\nADD=추가 카드 수 또는 NONE\nLOCKED_ISSUES=잠금 카드 문제 또는 NONE\nSUMMARY=짧고 구체적인 판정 근거\n[/TIMELINE_AUDIT]\n\nFAIL일 때만:\n[TIMELINE]\n[CARD]\nREF=C001 또는 NEW\nDATE_START=YYYY.MM.DD 또는 UNKNOWN\nDATE_END=YYYY.MM.DD 또는 UNKNOWN\nTITLE=제목\nTAGS=키워드1,키워드2\nCONTENT=\n본문\n[/CARD]\n[/TIMELINE]\n[/RP_MANAGER_TIMELINE_AUDIT]`;
+  }
+
+  function buildStoryTimelineAuditApiPrompt(room, run, snapshot, sourceScope, candidateCards = null) {
+    const manual = buildStoryTimelineAuditManualPrompt(room, run, snapshot, sourceScope);
+    const candidate = candidateCards ? `\n[INDEPENDENT_STORY_SPINE_CANDIDATE]\n${serializeStoryTimelineRefMaster(candidateCards, run, true, true)}\n[/INDEPENDENT_STORY_SPINE_CANDIDATE]\n원본 master와 독립 후보를 전체 비교해 카드별 판정과 최종 결과를 작성한다. 독립 후보의 REF=NEW는 원본 master에 없던 카드이므로 최종 결과에서도 NEW로 출력한다.` : '';
+    return `${manual}\n${candidate}\n[FIXED_JSON_OUTPUT]\n수동 출력 블록 대신 지정된 점검 JSON schema 하나만 출력한다. FAIL이면 cards에 수정된 최신 전체 타임라인을 넣고, PASS/UNVERIFIED이면 cards를 비운다.\n[/FIXED_JSON_OUTPUT]`;
+  }
+
+  function storyTimelineAuditEstimate(room, snapshot, requestedScope = 'FULL') {
+    const sourceScope = requestedScope === 'TIMELINE_ONLY' ? 'TIMELINE_ONLY' : (snapshot?.historyLimitReached ? 'PARTIAL' : 'FULL');
+    const run = createStoryTimelineRun(room, activeLogTimelineLabel(room), 'audit', sourceScope);
+    const prompt = buildStoryTimelineAuditApiPrompt(room, run, snapshot, sourceScope);
+    const inputTokens = Math.ceil((String(room.storyTimelineGuide || '').length + prompt.length) / 2);
+    const outputTokens = Math.max(2200, Math.ceil(serializeStoryTimelineRefMaster(run.masterSnapshot, run, false).length / 2));
+    const settings = aiFeatureSettings(loadAiSummarySettings(), 'timeline');
+    const model = settings.models?.[settings.provider] || '';
+    return { sourceScope, inputTokens, outputTokens, estimatedCostUsd:estimateAiCostUsd({ inputTokens, outputTokens }, getAiPricing(settings, settings.provider, model)), chars:prompt.length };
+  }
+
+  function addStoryTimelineAuditHistory(room, draft) {
+    const entry = { id:String(draft.id || ''), createdAt:String(draft.createdAt || nowIso()), timelineLabel:String(draft.run?.timelineLabel || activeLogTimelineLabel(room)), result:String(draft.audit?.result || 'UNVERIFIED'), sourceScope:String(draft.audit?.sourceScope || draft.run?.sourceScope || 'TIMELINE_ONLY'), currentCount:Number(draft.audit?.currentCount ?? draft.run?.masterSnapshot?.length ?? 0), recommendedCount:draft.audit?.recommendedCount == null ? null : Number(draft.audit.recommendedCount), provider:String(draft.provider || ''), model:String(draft.model || ''), usage:{ ...(draft.usage || {}) }, summary:String(draft.audit?.summary || '') };
+    const sameTimeline = [entry, ...(room.storyTimelineAuditHistory || []).filter(item => String(item.id) !== entry.id && normalizedLogTimelineKey(item.timelineLabel) === normalizedLogTimelineKey(entry.timelineLabel))].slice(0, 5);
+    const otherTimelines = (room.storyTimelineAuditHistory || []).filter(item => String(item.id) !== entry.id && normalizedLogTimelineKey(item.timelineLabel) !== normalizedLogTimelineKey(entry.timelineLabel));
+    room.storyTimelineAuditHistory = [...sameTimeline, ...otherTimelines].sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || ''))).slice(0, 50);
+    return entry;
+  }
+
+  async function generateStoryTimelineAuditDraft(room, settings, secret, snapshot, requestedScope = 'FULL', onStatus = () => {}) {
+    const sourceScope = requestedScope === 'TIMELINE_ONLY' ? 'TIMELINE_ONLY' : (snapshot?.historyLimitReached ? 'PARTIAL' : 'FULL');
+    const run = createStoryTimelineRun(room, activeLogTimelineLabel(room), 'audit', sourceScope);
+    settings.__timelineRoom = room;
+    const provider = settings.provider;
+    const systemInstruction = String(room.storyTimelineGuide || STORY_TIMELINE_GUIDE_V15).trim();
+    const usage = { calls:0, inputTokens:0, outputTokens:0, estimatedCostUsd:0 };
+    let candidateCards = null;
+    const chunks = sourceScope === 'TIMELINE_ONLY' ? [] : splitStoryTimelineTurns(snapshot?.allTurns || []);
+    if (chunks.length > 1) {
+      candidateCards = [];
+      for (let index = 0; index < chunks.length; index++) {
+        onStatus(`독립 Story Spine 후보 구성 중 · ${index + 1}/${chunks.length}묶음`);
+        const prompt = `[AUDIT_CANDIDATE_BUILD]\n원래 타임라인을 문장만 다듬지 말고, 제공된 원문으로 이상적인 최소 Story Spine 후보를 독립적으로 누적 구축한다.\n[ORIGINAL_REFERENCE]\n${serializeStoryTimelineRefMaster(run.masterSnapshot, run, true)}\n[/ORIGINAL_REFERENCE]\n[WORKING_CANDIDATE]\n${serializeStoryTimelineRefMaster(candidateCards, run, false)}\n[/WORKING_CANDIDATE]\n[TARGET_RP]\n${formatAiDialogueTurns(chunks[index])}\n[/TARGET_RP]\n지정 JSON schema만 출력한다. 후보가 바뀌면 CHANGED와 전체 후보 배열, 아니면 NO_CHANGE와 빈 배열을 쓴다.`;
+        const validRefs = run.refEntries.map(item => item.ref);
+        const response = await callStoryTimelineStructured(provider, settings, secret, systemInstruction, prompt, storyTimelineUpdateResponseSchema(validRefs), raw => parseStoryTimelineUpdateJson(raw, room, run, { workingCards:candidateCards }), usage, onStatus);
+        if (response.parsed.status === 'CHANGED') candidateCards = response.parsed.cards;
+      }
+    }
+    onStatus('실행 전 master와 독립 후보를 전체 비교해 점검 중…');
+    const finalSnapshot = candidateCards ? { ...snapshot, allTurns:[] } : snapshot;
+    const prompt = buildStoryTimelineAuditApiPrompt(room, run, finalSnapshot, sourceScope, candidateCards);
+    const validRefs = run.refEntries.slice(0, run.masterSnapshot.length).map(item => item.ref);
+    const response = await callStoryTimelineStructured(provider, settings, secret, systemInstruction, prompt, storyTimelineAuditResponseSchema(validRefs), raw => parseStoryTimelineAuditJson(raw, room, run, sourceScope), usage, onStatus);
+    assertStoryTimelineRunCurrent(room, run);
+    const result = response.parsed;
+    const draft = { id:run.runId, createdAt:nowIso(), provider, model:String(settings.models?.[provider] || ''), run, audit:result.audit, preview:result.preview, usage, rawResult:response.raw, formatRetried:response.formatRetried };
+    addStoryTimelineAuditHistory(room, draft);
+    return draft;
+  }
+
+  function parseStoryTimelineAuditManual(value, room, run, expectedScope) {
+    const src = normalizeLineBreaks(String(value || '')).trim();
+    const match = src.match(/\[TIMELINE_AUDIT\]([\s\S]*?)\[\/TIMELINE_AUDIT\]/i);
+    if (!match) throw new Error('[TIMELINE_AUDIT] 점검 결과 구획을 찾지 못했습니다.');
+    const body = match[1];
+    const field = key => String(body.match(new RegExp(`^${key}[ \\t]*=[ \\t]*(.*)$`, 'im'))?.[1] || '').trim();
+    const refs = value => /^(?:NONE|없음)$/i.test(value) || !value ? [] : value.split(/[,，]/).map(item => item.trim()).filter(Boolean);
+    const merge = refs(field('MERGE')).map(group => {
+      const items = group.split('+').map(item => item.trim()).filter(Boolean);
+      return { refs:items, targetRef:items[0] || '' };
+    });
+    const recommendedRaw = field('RECOMMENDED_COUNT');
+    const addRaw = field('ADD');
+    const audit = {
+      result:field('RESULT').toUpperCase(), sourceScope:field('SOURCE_SCOPE').toUpperCase(), currentCount:Number(field('CURRENT_COUNT')),
+      recommendedCount:/^(?:UNKNOWN|미상)$/i.test(recommendedRaw) ? null : Number(recommendedRaw),
+      keep:refs(field('KEEP')), update:refs(field('UPDATE')), merge, remove:refs(field('REMOVE')), split:refs(field('SPLIT')),
+      addCount:/^(?:NONE|없음)$/i.test(addRaw) || !addRaw ? 0 : Number(addRaw),
+      lockedIssues:refs(field('LOCKED_ISSUES')), summary:field('SUMMARY'),
+    };
+    let preview = null;
+    let cards = [];
+    if (audit.result === 'FAIL') {
+      preview = parseStoryTimelineImport(src, room, { run });
+      cards = preview.cards;
+    }
+    const normalizedAudit = validateStoryTimelineAudit(audit, cards, room, run, expectedScope);
+    return { audit:normalizedAudit, cards, preview };
+  }
+
+  function applyStoryTimelinePreviewForRun(room, run, preview) {
+    assertStoryTimelineRunCurrent(room, run);
+    const key = normalizedLogTimelineKey(run.timelineLabel === DEFAULT_LOG_TIMELINE ? '' : run.timelineLabel);
+    const otherCards = normalizeStoryTimelineCards(room).filter(card => normalizedLogTimelineKey((card.timelineLabel || DEFAULT_LOG_TIMELINE) === DEFAULT_LOG_TIMELINE ? '' : card.timelineLabel) !== key);
+    const originalById = new Map((run.masterSnapshot || []).map(card => [String(card.cardId), card]));
+    const safeCards = (preview.cards || []).map((card, index) => {
+      const original = originalById.get(String(card.cardId));
+      if (original?.userLocked) return { ...original, sortOrder:index, tags:[...(original.tags || [])] };
+      return { ...card, timelineLabel:run.timelineLabel, userLocked:!!original?.userLocked, inject:original ? original.inject !== false : true, sortOrder:index, tags:[...(card.tags || [])] };
+    });
+    for (const locked of (run.masterSnapshot || []).filter(card => card.userLocked && !safeCards.some(next => String(next.cardId) === String(card.cardId)))) safeCards.push({ ...locked, sortOrder:safeCards.length, tags:[...(locked.tags || [])] });
+    room.storyTimelineCards = [...otherCards, ...safeCards];
+    normalizeStoryTimelineCards(room);
+    return safeCards;
   }
 
   function markStoryReviewCompleted(room) {
@@ -8179,7 +8789,7 @@ ${dialogueText}`;
     });
 
     if (room) {
-      const needsStoryLogMigration = !room.storyLogReviewRevisionV1 || !room.storyTimelineGuideRevisionV14 || !room.storyTimelineGuideFullRevisionV14;
+      const needsStoryLogMigration = !room.storyLogReviewRevisionV1 || !room.storyTimelineGuideRevisionV15;
       normalizeRoomSlots(room);
       room.maxChars = APP.defaultMaxChars;
       room.apiChatId = room.apiChatId || apiChatId || String(chatId).split('::')[0];
@@ -8223,7 +8833,9 @@ ${dialogueText}`;
       activeLogTimeline: DEFAULT_LOG_TIMELINE,
       storyTimelineCards: [],
       storyLogReviews: [],
-      storyTimelineGuide: STORY_TIMELINE_GUIDE_V13,
+      storyTimelineGuide: STORY_TIMELINE_GUIDE_V15,
+      storyTimelineGuideSource: 'builtin-v1.5',
+      storyTimelineGuideRevisionV15: true,
       storyTimelinePendingReview: null,
       storyLogReviewRevisionV1: true,
       storyTimelineLastReviewedMessageId: '',
@@ -8233,6 +8845,8 @@ ${dialogueText}`;
       storyTimelineBackup: null,
       storyTimelineApiDraft: null,
       storyTimelineApiHistory: [],
+      storyTimelineAuditHistory: [],
+      storyTimelineManualRun: null,
       storyTimelineCarryoverTurnKeys: [],
       storyTimelineGuideRevisionV14: true,
       storyTimelineGuideFullRevisionV14: true,
@@ -8784,6 +9398,29 @@ ${dialogueText}`;
   function parseStoryTimelineImport(text, room, options = {}) {
     const src = normalizeLineBreaks(String(text || '')).trim();
     if (!src) throw new Error('붙여넣은 내용이 없습니다.');
+    if (/^\s*\{/.test(src)) {
+      const run = options.run;
+      if (!run) throw new Error('이 JSON 결과에 대응하는 REF 작업 정보를 찾지 못했습니다. 작업을 다시 시작해 주세요.');
+      assertStoryTimelineRunCurrent(room, run);
+      const workingCards = Array.isArray(options.workingCards) ? options.workingCards : run.masterSnapshot;
+      const result = parseStoryTimelineUpdateJson(src, room, run, { workingCards });
+      return result.status === 'NO_CHANGE' ? buildStoryTimelinePreview(run.masterSnapshot, run) : buildStoryTimelinePreview(result.cards, run);
+    }
+    if (/\[CARD\]/i.test(src)) {
+      const run = options.run;
+      if (!run) throw new Error('이 REF 결과에 대응하는 실행 정보를 찾지 못했습니다. 프롬프트를 다시 생성해 주세요.');
+      assertStoryTimelineRunCurrent(room, run);
+      if (!/\[TIMELINE\]/i.test(src) || !/\[\/TIMELINE\]/i.test(src)) throw new Error('[TIMELINE] 시작·종료 구획이 모두 필요합니다.');
+      const chunks = [...src.matchAll(/\[CARD\]([\s\S]*?)\[\/CARD\]/gi)].map(match => match[1]);
+      if (!chunks.length) throw new Error('[CARD] 형식의 카드를 찾지 못했습니다.');
+      const field = (chunk, key) => String(chunk.match(new RegExp(`^${key}[ \\t]*=[ \\t]*(.*)$`, 'im'))?.[1] || '').trim();
+      const rawCards = chunks.map((chunk, index) => {
+        const content = chunk.match(/^CONTENT\s*=\s*\n?([\s\S]*)$/im)?.[1];
+        if (content == null) throw new Error(`${index + 1}번째 카드에 CONTENT가 없습니다.`);
+        return { ref:field(chunk, 'REF'), dateStart:field(chunk, 'DATE_START') || null, dateEnd:field(chunk, 'DATE_END') || null, title:field(chunk, 'TITLE'), tags:field(chunk, 'TAGS').split(/[,，#]/).map(tag => tag.trim()).filter(Boolean), content:String(content).trim() };
+      });
+      return buildStoryTimelinePreview(materializeStoryTimelineJsonCards(rawCards, room, run, { workingCards:run.masterSnapshot }), run);
+    }
     if (!/\[TIMELINE\]/i.test(src) || !/\[\/TIMELINE\]/i.test(src)) throw new Error('[TIMELINE] 시작·종료 구획이 모두 필요합니다. GPT 답변의 전체 타임라인을 붙여넣어 주세요.');
     const version = String(src.match(/^VERSION[ \t]*=[ \t]*(.*)$/im)?.[1] || '').trim();
     if (version !== '1') throw new Error(`지원하지 않는 타임라인 형식입니다${version ? ` (VERSION=${version})` : ' (VERSION 누락)'}.`);
@@ -8794,7 +9431,7 @@ ${dialogueText}`;
     if (!chunks.length) throw new Error('[TIMELINE_CARD] 형식의 카드를 찾지 못했습니다.');
 
     const comparable = card => JSON.stringify({ timelineLabel:card.timelineLabel || '', dateStart:card.dateStart || '', dateEnd:card.dateEnd || '', title:card.title || '', content:card.content || '', tags:card.tags || [], userLocked:!!card.userLocked, inject:card.inject !== false });
-    const currentMaster = orderedStoryTimelineCards(normalizeStoryTimelineCards(room));
+    const currentMaster = snapshotStoryTimelineCardsForLabel(room, options.timelineLabel || activeLogTimelineLabel(room));
     const hasMasterSnapshot = Array.isArray(options.masterSnapshot);
     const existing = hasMasterSnapshot
       ? options.masterSnapshot.map(card => ({ ...card, tags:[...(card.tags || [])] }))
@@ -9022,6 +9659,11 @@ ${dialogueText}`;
       let apiBusy = false;
       let apiStatus = '';
       let updateMode = 'continue';
+      let activeLabel = activeLogTimelineLabel(room);
+      let auditScope = 'FULL';
+      let auditDraft = null;
+      let auditResultText = '';
+      let auditMarkReviewed = false;
       let guideReturnMode = 'view';
       let apiSettings = aiFeatureSettings(loadAiSummarySettings(), 'timeline');
       let apiDraft = room.storyTimelineApiDraft || null;
@@ -9031,18 +9673,15 @@ ${dialogueText}`;
       const backdrop = document.createElement('div');
       backdrop.id = 'rpcm-story-view-backdrop';
 
-      const cards = () => storyTimelineCardsFor(room);
-      const allUnreviewedLogs = () => storyUnreviewedLogs(room);
+      const cards = () => storyTimelineCardsForLabel(room, activeLabel);
+      const allUnreviewedLogs = () => storyUnreviewedLogs(room).filter(item => blockBelongsToTimeline(item.block, activeLabel));
       const selectedUnreviewedLogs = () => allUnreviewedLogs().filter(item => selectedStoryLogIds.has(String(item.meta.logId)));
       const apiImportOptionsFor = value => {
-        if (!apiDraft || !Array.isArray(apiDraft.masterSnapshot)) return {};
         const result = String(value || '').trim();
-        const draftResult = String(apiDraft.finalText || '').trim();
-        const resultIds = new Set([...result.matchAll(/^ID[ \t]*=[ \t]*(.*)$/gim)].map(match => String(match[1] || '').trim()));
-        const issuedNewIds = (Array.isArray(apiDraft.issuedNewIds) ? apiDraft.issuedNewIds : []).map(String);
-        const cameFromDraft = !!draftResult && result === draftResult;
-        const containsIssuedId = issuedNewIds.some(cardId => resultIds.has(cardId));
-        return cameFromDraft || containsIssuedId ? { masterSnapshot:apiDraft.masterSnapshot, issuedNewIds } : {};
+        if (apiDraft?.run && String(apiDraft.run.timelineLabel) === String(activeLabel) && (/^\s*\{/.test(result) || /\bREF\s*=\s*(?:C\d+|NEW)/i.test(result))) return { run:apiDraft.run, timelineLabel:activeLabel };
+        const manualRun = room.storyTimelineManualRun;
+        if (manualRun?.runId && manualRun.kind !== 'audit' && String(manualRun.timelineLabel) === String(activeLabel) && (/^\s*\{/.test(result) || /\bREF\s*=\s*(?:C\d+|NEW)/i.test(result))) return { run:manualRun, timelineLabel:activeLabel };
+        return { timelineLabel:activeLabel };
       };
       const diffMap = () => new Map((room.storyTimelineLastDiff || []).map(item => [String(item.cardId), item.type]));
       const renderReadCards = (list, allowDelete = false, changes = diffMap()) => list.length ? list.map((card, index) => {
@@ -9080,7 +9719,7 @@ ${dialogueText}`;
         const s = room.storyTimelineReviewSettings || {};
         return `<aside class="rpcm-story-float-panel rpcm-story-settings-panel" ${settingsOpen ? '' : 'hidden'}><header><h3>타임라인 설정</h3><button type="button" data-story-view-act="close-settings">✕</button></header><div class="rpcm-story-panel-scroll"><label class="rpcm-story-number-setting"><span><b>검토 권장 기준</b><small>마지막 검토 이후 쌓인 RP</small></span><span><input id="rpcm-story-threshold" type="number" min="1" max="1000" value="${Number(s.threshold || 50)}"> 턴</span></label><div class="rpcm-story-toggle-list"><label><span><b>메뉴 배지</b><small>Manager 메뉴에 미검토 턴 수 표시</small></span><input id="rpcm-story-menu-badge" type="checkbox" ${s.menuBadge ? 'checked' : ''}></label><label><span><b>타임라인 상단 안내</b><small>타임라인 화면에 검토 상태 표시</small></span><input id="rpcm-story-top-notice" type="checkbox" ${s.topNotice ? 'checked' : ''}></label><label><span><b>팝업 알림</b><small>기준을 넘었을 때 한 번 알림</small></span><input id="rpcm-story-popup" type="checkbox" ${s.popup ? 'checked' : ''}></label><label><span><b>날짜별 카드 탐색</b><small>날짜와 제목으로 바로 이동</small></span><input id="rpcm-story-date-indicator" type="checkbox" ${s.dateIndicator !== false ? 'checked' : ''}></label><label><span><b>월별 접기</b><small>카드가 많을 때 월 단위로 묶기</small></span><input id="rpcm-story-monthly-fold" type="checkbox" ${s.monthlyFold !== false ? 'checked' : ''}></label></div><label class="rpcm-story-number-setting"><span><b>월별 접기 시작</b><small>이 개수부터 월별 묶음 표시</small></span><span><input id="rpcm-story-monthly-min" type="number" min="2" max="100" value="${Number(s.monthlyFoldMin || 8)}"> 개</span></label></div><footer><button type="button" class="rpcm-btn secondary" data-story-view-act="close-settings">취소</button><button type="button" class="rpcm-btn primary" data-story-view-act="save-settings">설정 저장</button></footer></aside>`;
       };
-      const helpPanel = () => `<aside class="rpcm-story-float-panel" ${helpOpen ? '' : 'hidden'}><header><h3>타임라인 사용 방법</h3><button type="button" data-story-view-act="close-help">✕</button></header><div class="rpcm-story-help-row"><strong>처음 만들기</strong><span>타임라인 갱신에서 ‘전체 다시 읽기’를 고르면 전체 RP를 순서대로 읽어 첫 타임라인을 만듭니다.</span></div><div class="rpcm-story-help-row"><strong>이어서 갱신</strong><span>기존 전체 타임라인, 직전 원문 40턴, 마지막 검토 뒤의 새 RP를 함께 읽습니다. 50턴은 알림 기준일 뿐 입력 제한이 아닙니다.</span></div><div class="rpcm-story-help-row"><strong>결과 확인</strong><span>API 결과나 직접 붙여넣은 결과를 미리보기에서 비교할 수 있고, ‘저장’을 누르면 현재 결과가 최종 타임라인에 바로 적용됩니다. 변경이 없으면 검토 기준점만 옮길 수 있습니다.</span></div><div class="rpcm-story-help-row"><strong>직접 관리</strong><span>카드를 추가·복제·삭제·위아래 이동하고 잠금·주입 여부를 바꿀 수 있습니다.</span></div><div class="rpcm-story-help-row"><strong>지침</strong><span>기본 v1.3를 그대로 쓰거나 필요한 부분을 수정해 저장할 수 있습니다.</span></div></aside>`;
+      const helpPanel = () => `<aside class="rpcm-story-float-panel" ${helpOpen ? '' : 'hidden'}><header><h3>타임라인 사용 방법</h3><button type="button" data-story-view-act="close-help">✕</button></header><div class="rpcm-story-help-row"><strong>처음 만들기</strong><span>타임라인 갱신에서 ‘전체 다시 읽기’를 고르면 전체 RP를 순서대로 읽어 첫 타임라인을 만듭니다.</span></div><div class="rpcm-story-help-row"><strong>이어서 갱신</strong><span>기존 전체 타임라인, 직전 원문 40턴, 마지막 검토 뒤의 새 RP를 함께 읽습니다. 50턴은 알림 기준일 뿐 입력 제한이 아닙니다.</span></div><div class="rpcm-story-help-row"><strong>결과 확인</strong><span>API 결과나 직접 붙여넣은 결과를 미리보기에서 비교할 수 있고, ‘저장’을 누르면 현재 결과가 최종 타임라인에 바로 적용됩니다. 변경이 없으면 검토 기준점만 옮길 수 있습니다.</span></div><div class="rpcm-story-help-row"><strong>직접 관리</strong><span>카드를 추가·복제·삭제·위아래 이동하고 잠금·주입 여부를 바꿀 수 있습니다.</span></div><div class="rpcm-story-help-row"><strong>지침</strong><span>기본 v1.5를 그대로 쓰거나 필요한 부분을 수정해 저장할 수 있습니다.</span></div></aside>`;
       const header = () => `<div class="rpcm-story-head"><div><div class="rpcm-story-title">🧭 연속성 타임라인</div><div class="rpcm-story-desc">이전 세계선부터 현재까지 하나의 서사 골격으로 관리합니다.</div></div><button type="button" class="rpcm-story-help-button" data-story-view-act="help" aria-label="사용 방법">?</button><button type="button" class="rpcm-story-help-button" data-story-view-act="settings" aria-label="설정">⚙</button><button type="button" class="rpcm-lib-close" data-story-view-act="close">✕</button></div>${helpPanel()}${settingsPanel()}`;
       const groupedLogHtml = list => {
         if (!list.length) return '<div class="rpcm-story-empty compact">선택할 신규·수정 날짜로그가 없습니다. RP 원문만으로도 갱신할 수 있습니다.</div>';
@@ -9107,15 +9746,26 @@ ${dialogueText}`;
         const unreviewed = allUnreviewedLogs();
         const cachedTurns = Math.max(0, Number(room.storyTimelineUnreviewedTurnCount || 0));
         const threshold = Number(room.storyTimelineReviewSettings?.threshold || 50);
+        const guideModified = isStoryTimelineGuideModified(room);
         if (mode === 'help') {
-          backdrop.innerHTML = `<div class="rpcm-story-dialog">${header()}<div class="rpcm-story-help"><h2>타임라인 사용 방법</h2><div><strong>지침</strong><span>기본 v1.3를 그대로 쓰거나 필요한 부분을 수정해 저장합니다. 외부 AI에 전달할 때는 ‘전체 복사’를 사용하세요.</span></div><div><strong>처음 만들기</strong><span>지침과 전체 RP 로그를 외부 AI에 전달하고, 받은 전체 타임라인을 ‘타임라인 갱신’에 붙여넣습니다.</span></div><div><strong>이어서 갱신</strong><span>마지막 검토 뒤의 새 RP를 외부 AI에 함께 전달합니다. 결과는 변경분만이 아니라 최신 전체 타임라인이어야 합니다.</span></div><div><strong>결과 적용</strong><span>붙여넣은 결과를 미리보기로 확인한 뒤 적용합니다. 바뀐 내용이 없다면 ‘변경 없음 · 검토 완료’를 누릅니다.</span></div><div><strong>직접 관리</strong><span>카드 편집에서 추가·복제·삭제·위아래 이동·잠금·주입 여부를 바꿀 수 있습니다.</span></div></div><div class="rpcm-story-actions"><span>자동 적용하지 않으며, 적용 전에는 저장된 타임라인이 바뀌지 않습니다.</span><button type="button" class="rpcm-btn primary" data-story-view-act="view">확인</button></div></div>`;
+          backdrop.innerHTML = `<div class="rpcm-story-dialog">${header()}<div class="rpcm-story-help"><h2>타임라인 사용 방법</h2><div><strong>지침</strong><span>기본 v1.5를 그대로 쓰거나 필요한 부분을 수정해 저장합니다. 외부 AI에 전달할 때는 ‘전체 복사’를 사용하세요.</span></div><div><strong>처음 만들기</strong><span>지침과 전체 RP 로그를 외부 AI에 전달하고, 받은 전체 타임라인을 ‘타임라인 갱신’에 붙여넣습니다.</span></div><div><strong>이어서 갱신</strong><span>마지막 검토 뒤의 새 RP를 외부 AI에 함께 전달합니다. 결과는 변경분만이 아니라 최신 전체 타임라인이어야 합니다.</span></div><div><strong>결과 적용</strong><span>붙여넣은 결과를 미리보기로 확인한 뒤 적용합니다. 바뀐 내용이 없다면 ‘변경 없음 · 검토 완료’를 누릅니다.</span></div><div><strong>직접 관리</strong><span>카드 편집에서 추가·복제·삭제·위아래 이동·잠금·주입 여부를 바꿀 수 있습니다.</span></div></div><div class="rpcm-story-actions"><span>자동 적용하지 않으며, 적용 전에는 저장된 타임라인이 바뀌지 않습니다.</span><button type="button" class="rpcm-btn primary" data-story-view-act="view">확인</button></div></div>`;
         } else if (mode === 'guide') {
-          backdrop.innerHTML = `<div class="rpcm-story-dialog">${header()}<div class="rpcm-story-guide"><div class="rpcm-story-guide-note"><strong>기본 v1.3 지침이 이미 들어 있습니다.</strong><span>그대로 사용해도 되고, 필요한 부분을 직접 수정한 뒤 ‘지침 저장’을 누르면 다음 타임라인 갱신부터 수정한 지침을 사용합니다. ‘기본값 복원’은 내장 v1.3로 되돌립니다.</span></div><label>타임라인 지침 · 기본 v1.3<textarea id="rpcm-story-guide-text">${esc(room.storyTimelineGuide || STORY_TIMELINE_GUIDE_V13)}</textarea></label></div><div class="rpcm-story-actions"><span>사용자에게 보이는 서사 판단 지침은 이것 하나입니다.</span><button type="button" class="rpcm-btn secondary" data-story-view-act="copy-guide">전체 복사</button><button type="button" class="rpcm-btn secondary" data-story-view-act="reset-guide">기본값 복원</button><button type="button" class="rpcm-btn secondary" data-story-view-act="view">취소</button><button type="button" class="rpcm-btn primary" data-story-view-act="save-guide">지침 저장</button></div></div>`;
+          backdrop.innerHTML = `<div class="rpcm-story-dialog">${header()}<div class="rpcm-story-guide"><div class="rpcm-story-guide-note${guideModified ? ' is-modified' : ''}"><strong>${guideModified ? '사용자가 수정한 지침을 사용 중입니다.' : '기본 v1.5 지침을 사용 중입니다.'}</strong><span>${guideModified ? '기본 v1.5와 내용이 다릅니다. 저장된 수정 지침이 수동 프롬프트와 API 호출에 사용됩니다.' : '그대로 사용해도 되고, 필요한 부분을 직접 수정해 저장할 수 있습니다.'} ‘기본값 복원’은 내장 v1.5로 되돌립니다.</span></div><label>타임라인 지침 · ${guideModified ? '수정됨' : '기본 v1.5'}<textarea id="rpcm-story-guide-text">${esc(room.storyTimelineGuide || STORY_TIMELINE_GUIDE_V15)}</textarea></label></div><div class="rpcm-story-actions"><span>사용자에게 보이는 서사 판단 지침은 이것 하나입니다.</span><button type="button" class="rpcm-btn secondary" data-story-view-act="copy-guide">전체 복사</button><button type="button" class="rpcm-btn secondary" data-story-view-act="reset-guide">기본값 복원</button><button type="button" class="rpcm-btn secondary" data-story-view-act="view">취소</button><button type="button" class="rpcm-btn primary" data-story-view-act="save-guide">지침 저장</button></div></div>`;
         } else if (mode === 'settings') {
           const s = room.storyTimelineReviewSettings;
           backdrop.innerHTML = `<div class="rpcm-story-dialog">${header()}<div class="rpcm-story-settings">
             <section class="rpcm-story-setting-card"><div class="rpcm-story-setting-head"><strong>검토 알림</strong><span>자동 실행 없이, 확인할 시점만 알려줍니다.</span></div><label class="rpcm-story-number-setting"><span><b>검토 권장 기준</b><small>마지막 검토 이후 쌓인 RP</small></span><span><input id="rpcm-story-threshold" type="number" min="1" max="1000" value="${Number(s.threshold || 50)}"> 턴</span></label><div class="rpcm-story-toggle-list"><label><span><b>메뉴 배지</b><small>Manager 메뉴에 미검토 턴 수 표시</small></span><input id="rpcm-story-menu-badge" type="checkbox" ${s.menuBadge ? 'checked' : ''}></label><label><span><b>타임라인 상단 안내</b><small>타임라인 화면에 검토 상태 표시</small></span><input id="rpcm-story-top-notice" type="checkbox" ${s.topNotice ? 'checked' : ''}></label><label><span><b>팝업 알림</b><small>기준을 넘었을 때 한 번 알림</small></span><input id="rpcm-story-popup" type="checkbox" ${s.popup ? 'checked' : ''}></label></div><p>50턴은 알림 기준일 뿐입니다. 83턴이 쌓였다면 갱신할 때 83턴 전체를 포함합니다.</p><div class="rpcm-story-setting-head"><strong>타임라인 표시</strong><span>긴 타임라인을 읽고 이동하는 방식을 정합니다.</span></div><div class="rpcm-story-toggle-list"><label><span><b>날짜별 카드 탐색</b><small>왼쪽 목록에서 날짜와 제목으로 바로 이동</small></span><input id="rpcm-story-date-indicator" type="checkbox" ${s.dateIndicator !== false ? 'checked' : ''}></label><label><span><b>월별 접기</b><small>카드가 많을 때 월 단위로 묶기</small></span><input id="rpcm-story-monthly-fold" type="checkbox" ${s.monthlyFold !== false ? 'checked' : ''}></label></div><label class="rpcm-story-number-setting"><span><b>월별 접기 시작</b><small>이 개수부터 월별 묶음을 표시</small></span><span><input id="rpcm-story-monthly-min" type="number" min="2" max="100" value="${Number(s.monthlyFoldMin || 8)}"> 개</span></label></section>
           </div><div class="rpcm-story-actions"><span>설정은 타임라인 내용에는 영향을 주지 않습니다.</span><button type="button" class="rpcm-btn secondary" data-story-view-act="view">취소</button><button type="button" class="rpcm-btn primary" data-story-view-act="save-settings">설정 저장</button></div></div>`;
+        } else if (mode === 'audit') {
+          const requestedScope = auditScope === 'TIMELINE_ONLY' ? 'TIMELINE_ONLY' : 'FULL';
+          const estimate = storyTimelineAuditEstimate(room, reviewSnapshot, requestedScope);
+          const effectiveScope = estimate.sourceScope;
+          const history = (room.storyTimelineAuditHistory || []).filter(item => normalizedLogTimelineKey(item.timelineLabel || DEFAULT_LOG_TIMELINE) === normalizedLogTimelineKey(activeLabel)).slice(0, 5);
+          const audit = auditDraft?.audit;
+          const mergeCount = (audit?.merge || []).reduce((sum, item) => sum + (item.refs?.length || 0), 0);
+          const report = audit ? `<section class="rpcm-story-audit-report is-${String(audit.result || '').toLowerCase()}"><div><strong>점검 결과 · ${esc(audit.result)}</strong><span>근거 범위 ${esc(audit.sourceScope)} · 현재 ${audit.currentCount}개${audit.recommendedCount == null ? '' : ` → 권장 ${audit.recommendedCount}개`}</span></div><div class="rpcm-story-audit-counts"><b>유지 ${(audit.keep || []).length}</b><b>수정 ${(audit.update || []).length}</b><b>병합 ${mergeCount}</b><b>삭제 ${(audit.remove || []).length}</b><b>분할 ${(audit.split || []).length}</b><b>추가 ${audit.addCount || 0}</b></div><p>${esc(audit.summary || '')}</p>${(audit.merge || []).length ? `<details><summary>병합 조합</summary>${audit.merge.map(item => `<span>${esc(item.refs.join('+'))} → ${esc(item.targetRef)}</span>`).join('')}</details>` : ''}${(audit.lockedIssues || []).length ? `<div class="rpcm-story-audit-locked">잠금 카드 문제: ${audit.lockedIssues.map(esc).join(', ')}</div>` : ''}</section>` : '';
+          const historyHtml = history.length ? `<details class="rpcm-story-audit-history"><summary>최근 점검 ${history.length}회</summary>${history.map(item => `<div><b>${esc(item.result)}</b><span>${esc(new Date(item.createdAt).toLocaleString('ko-KR'))} · ${esc(item.sourceScope)} · ${item.currentCount}${item.recommendedCount == null ? '' : `→${item.recommendedCount}`} · ${esc(item.model || '')}</span></div>`).join('')}</details>` : '';
+          backdrop.innerHTML = `<div class="rpcm-story-dialog">${header()}<div class="rpcm-story-update-scroll"><div class="rpcm-story-update-head"><div><strong>타임라인 점검</strong><span>카드 수·중복·누락·병합·삭제를 v1.5 기준으로 독립 재검사합니다.</span></div><span>${current.length}개 카드</span></div>${reviewError ? `<div class="rpcm-story-review-error">${esc(reviewError)}</div>` : ''}<section class="rpcm-story-audit-controls"><label><span>점검 범위</span><select id="rpcm-story-audit-scope"><option value="FULL" ${requestedScope === 'FULL' ? 'selected' : ''}>전체 근거 대조 점검</option><option value="TIMELINE_ONLY" ${requestedScope === 'TIMELINE_ONLY' ? 'selected' : ''}>타임라인만 구조 점검</option></select></label><div><span>실제 적용 범위</span><strong>${esc(effectiveScope)}</strong><small>${effectiveScope === 'PARTIAL' ? '전체 원본을 모두 확보하지 못해 일부 범위로 표시합니다.' : effectiveScope === 'TIMELINE_ONLY' ? '사실 정확성·원본 누락은 확인하지 않습니다.' : '현재 시간선의 전체 원본·현재상태·날짜로그를 대조합니다.'}</small></div></section><div class="rpcm-story-token-card"><strong>예상 입력 ${formatCount(estimate.inputTokens)} tokens · 약 ${formatAiCostUsd(estimate.estimatedCostUsd)}</strong><span>예상 출력 ${formatCount(estimate.outputTokens)} tokens · 새 RP 0턴이어도 실행할 수 있습니다.</span></div>${report}${historyHtml}<section class="rpcm-story-exchange rpcm-story-result-paste"><div class="rpcm-story-exchange-head"><div><strong>외부 GPT 점검 결과</strong><span>[TIMELINE_AUDIT]와 FAIL 수정본을 붙여넣을 수 있습니다.</span></div><button type="button" class="rpcm-btn secondary" data-story-view-act="copy-audit-prompt">점검 프롬프트 복사</button></div><textarea id="rpcm-story-audit-text" placeholder="[TIMELINE_AUDIT] ... [/TIMELINE_AUDIT]">${esc(auditResultText)}</textarea></section><label class="rpcm-story-audit-reviewed"><input type="checkbox" id="rpcm-story-audit-reviewed" ${auditMarkReviewed ? 'checked' : ''} ${effectiveScope !== 'FULL' || !reviewSnapshot?.latestKey ? 'disabled' : ''}><span>수정본 저장 시 이번 전체 원본 범위도 검토 완료로 처리</span><small>기본값은 해제이며, 점검만으로 기존 검토 기준점은 바뀌지 않습니다.</small></label>${apiStatus ? `<div class="rpcm-story-api-status">${esc(apiStatus)}</div>` : ''}</div><div class="rpcm-story-actions"><span>PASS는 보고서만 저장하고, UNVERIFIED는 자동 적용하지 않습니다.</span><button type="button" class="rpcm-btn secondary" data-story-view-act="view" ${apiBusy ? 'disabled' : ''}>취소</button><button type="button" class="rpcm-btn secondary" data-story-view-act="audit-parse" ${apiBusy ? 'disabled' : ''}>붙여넣기 결과 확인</button><button type="button" class="rpcm-btn primary" data-story-view-act="audit-generate" ${apiBusy || reviewLoading || (requestedScope === 'FULL' && !!reviewError) ? 'disabled' : ''}>${apiBusy ? '점검 중…' : 'API로 점검'}</button></div></div>`;
         } else if (mode === 'api-update') {
           const turns = reviewSnapshot?.turns?.length || 0;
           const totalTurns = reviewSnapshot?.allTurns?.length || 0;
@@ -9127,17 +9777,17 @@ ${dialogueText}`;
           const historyBody = history.length ? history.map(item => `<div class="rpcm-story-history-row"><div><strong>${esc(item.updateMode === 'rebuild' ? '전체 다시 읽기' : '이어서 갱신')}</strong><span>${esc(new Date(item.createdAt || Date.now()).toLocaleString('ko-KR'))} · ${Number(item.reviewScope?.turnCount || 0)}턴 · ${esc(item.model || '')}</span></div><button type="button" class="rpcm-lib-small" data-story-view-act="load-api-history" data-story-history-id="${esc(item.id || '')}">결과 불러오기</button></div>`).join('') : '<div class="rpcm-story-empty compact">저장된 생성 결과가 없습니다.</div>';
           const featureState = loadAiSummarySettings().featureStatus?.timeline;
           const connectionBody = `<div class="rpcm-story-api-compact"><div><strong>${esc(AI_SUMMARY_PROVIDER_DEFAULTS[provider]?.label || provider)} · ${esc(savedModel || '모델 미선택')}</strong><span>${featureState?.state === 'ok' ? '● 정상' : featureState?.state === 'error' ? `● 오류 · ${esc(featureState.message || '')}` : '● 상태 확인 전'}</span></div><button type="button" class="rpcm-btn secondary" data-story-view-act="open-api-settings">메인 API 설정</button></div>`;
-          const guideBody = `<div class="rpcm-story-guide-summary"><strong>연속성 타임라인 지침 v1.3</strong><span>사용자가 저장한 지침 하나를 API 판단 기준으로 사용합니다. 출력 스키마는 호출할 때 자동으로 붙습니다.</span><button type="button" class="rpcm-lib-small" data-story-view-act="guide">지침 확인·수정</button></div>`;
+          const guideBody = `<div class="rpcm-story-guide-summary${guideModified ? ' is-modified' : ''}"><strong>연속성 타임라인 지침 v1.5${guideModified ? ' · 수정됨' : ''}</strong><span>사용자가 저장한 지침 하나를 API 판단 기준으로 사용합니다. 출력 스키마는 호출할 때 자동으로 붙습니다.</span><button type="button" class="rpcm-lib-small${guideModified ? ' is-modified' : ''}" data-story-view-act="guide">지침 확인·수정</button></div>`;
           const rangeBody = `<div class="rpcm-story-range-grid"><label class="rpcm-story-range-mode"><span>갱신 방식</span><select id="rpcm-story-update-mode"><option value="continue" ${updateMode === 'continue' ? 'selected' : ''}>이어서 갱신</option><option value="rebuild" ${updateMode === 'rebuild' ? 'selected' : ''}>전체 다시 읽기</option></select></label><div class="rpcm-story-range-stat"><span>API가 읽을 RP</span><strong>${updateMode === 'rebuild' ? `전체 ${totalTurns}턴` : `새 RP ${turns}턴 + 직전 원문 ${reviewSnapshot?.lookbackTurns?.length || 0}턴`}</strong></div><div class="rpcm-story-range-stat"><span>보조 날짜로그</span><strong>${selectedLogs.length}개 선택</strong></div><div class="rpcm-story-range-stat"><span>예상 호출</span><strong>${estimate?.chunks || 0}회</strong></div></div><details class="rpcm-story-update-logs"><summary>보조 날짜로그 선택 <span>${selectedLogs.length}/${unreviewed.length}개</span></summary>${groupedLogHtml(unreviewed)}</details><p class="rpcm-story-range-copy">이어서 갱신은 직전 검토 구간의 원문 최대 40턴도 다시 읽어, 전에 카드가 되지 않았던 사건이 다음 흐름과 연결되면 나중에 보강할 수 있습니다. 전체 다시 읽기는 RP 전체를 오래된 순서로 나눠 읽고 매 단계의 전체 마스터본을 다음 단계로 넘깁니다.</p>`;
           const cumulativeUsage = loadAiSummaryUsage();
           const tokenBody = estimate ? `<div class="rpcm-story-token-card"><div class="rpcm-story-token-top"><div><strong>예상 입력 ${formatCount(estimate.inputTokens)} tokens · 약 ${formatAiCostUsd(estimate.estimatedCostUsd)}</strong><span>원문 ${formatCount(estimate.chars)}자 · 예상 출력 ${formatCount(estimate.outputTokens)} tokens</span></div><button type="button" class="rpcm-btn primary rpcm-story-api-generate" data-story-view-act="api-generate" ${apiBusy || reviewLoading || reviewError || !reviewSnapshot ? 'disabled' : ''}>${apiBusy ? '생성 중…' : 'API로 생성'}</button></div><div class="rpcm-story-token-meter"><span style="width:${Math.min(100, Math.max(2, estimate.inputTokens / 160000 * 100))}%"></span></div><span>실제 비용은 모델 응답 길이에 따라 달라집니다. · 전체 API 누적 ${formatCount(cumulativeUsage.calls)}회 · 입력 ${formatCount(cumulativeUsage.inputTokens)} / 출력 ${formatCount(cumulativeUsage.outputTokens)} tokens · 예상 비용 ${formatAiCostUsd(cumulativeUsage.estimatedCostUsd)}</span></div>` : '<div class="rpcm-story-token-card"><span>검토 범위를 확인하는 중입니다.</span><button type="button" class="rpcm-btn primary rpcm-story-api-generate" disabled>API로 생성</button></div>';
-          const resultBody = `<div class="rpcm-story-api-result"><textarea id="rpcm-story-paste-text" placeholder="API가 만든 결과가 여기에 들어옵니다. 외부 AI 결과를 직접 붙여넣어도 됩니다.">${esc(resultText || apiDraft?.finalText || '')}</textarea>${apiDraft?.usage ? `<div class="rpcm-story-result-meta">최근 생성 · ${Number(apiDraft.usage.calls || 0)}회 · 입력 ${formatCount(apiDraft.usage.inputTokens || 0)} tokens · 출력 ${formatCount(apiDraft.usage.outputTokens || 0)} tokens · ${formatAiCostUsd(apiDraft.usage.estimatedCostUsd)}</div>` : ''}</div>`;
-          backdrop.innerHTML = `<div class="rpcm-story-dialog">${header()}<div class="rpcm-story-update-scroll"><div class="rpcm-story-update-head"><div><strong>타임라인 갱신</strong><span>API로 초안을 만들거나 외부 AI의 전체 결과를 바로 붙여넣을 수 있습니다.</span></div><span>${reviewLoading ? 'RP 확인 중…' : reviewError ? 'RP 확인 실패' : `마지막 검토 이후 ${turns}턴`}</span></div>${reviewError ? `<div class="rpcm-story-review-error">${esc(reviewError)}</div>` : ''}${renderApiSection('history','이전 생성 결과',`${history.length}개 저장`,historyBody)}${renderApiSection('connection','API 상태',`${esc(AI_SUMMARY_PROVIDER_DEFAULTS[provider]?.label || provider)} · ${esc(savedModel)}`,connectionBody)}${renderApiSection('guide','지침','기본 v1.3 · 수정 가능',guideBody)}${renderApiSection('range','요약 범위',updateMode === 'rebuild' ? `전체 ${totalTurns}턴` : `새 RP ${turns}턴`,rangeBody)}${tokenBody}${renderApiSection('result','결과 확인',apiDraft?.noChange ? '변경 없음' : resultText || apiDraft?.finalText ? '결과 있음' : '직접 붙여넣기 가능',resultBody)}${apiStatus ? `<div class="rpcm-story-api-status">${esc(apiStatus)}</div>` : ''}</div><div class="rpcm-story-actions"><span>현재 결과를 확인한 뒤 저장하면 최종 타임라인에 바로 적용됩니다.</span><button type="button" class="rpcm-btn secondary" data-story-view-act="view" ${apiBusy ? 'disabled' : ''}>취소</button><button type="button" class="rpcm-btn secondary" data-story-view-act="complete-no-change" ${apiBusy || reviewLoading || reviewError || !reviewSnapshot ? 'disabled' : ''}>변경 없음 · 검토 완료</button><button type="button" class="rpcm-btn secondary" data-story-view-act="parse" ${apiBusy ? 'disabled' : ''}>결과 미리보기</button><button type="button" class="rpcm-btn primary" data-story-view-act="save-result" ${apiBusy ? 'disabled' : ''}>저장</button></div></div>`;
+          const resultBody = `<div class="rpcm-story-api-result"><div class="rpcm-story-api-inline-actions"><button type="button" class="rpcm-btn secondary" data-story-view-act="copy-update-prompt">외부 GPT용 프롬프트 복사</button></div><textarea id="rpcm-story-paste-text" placeholder="API JSON 또는 외부 AI의 [TIMELINE][CARD] REF 결과를 붙여넣을 수 있습니다.">${esc(resultText || apiDraft?.finalText || '')}</textarea>${apiDraft?.usage ? `<div class="rpcm-story-result-meta">최근 생성 · ${Number(apiDraft.usage.calls || 0)}회 · 입력 ${formatCount(apiDraft.usage.inputTokens || 0)} tokens · 출력 ${formatCount(apiDraft.usage.outputTokens || 0)} tokens · ${formatAiCostUsd(apiDraft.usage.estimatedCostUsd)}</div>` : ''}</div>`;
+          backdrop.innerHTML = `<div class="rpcm-story-dialog">${header()}<div class="rpcm-story-update-scroll"><div class="rpcm-story-update-head"><div><strong>타임라인 갱신</strong><span>API로 초안을 만들거나 외부 AI의 전체 결과를 바로 붙여넣을 수 있습니다.</span></div><span>${reviewLoading ? 'RP 확인 중…' : reviewError ? 'RP 확인 실패' : `마지막 검토 이후 ${turns}턴`}</span></div>${reviewError ? `<div class="rpcm-story-review-error">${esc(reviewError)}</div>` : ''}${renderApiSection('history','이전 생성 결과',`${history.length}개 저장`,historyBody)}${renderApiSection('connection','API 상태',`${esc(AI_SUMMARY_PROVIDER_DEFAULTS[provider]?.label || provider)} · ${esc(savedModel)}`,connectionBody)}${renderApiSection('guide','지침',guideModified ? '수정됨' : '기본 v1.5',guideBody)}${renderApiSection('range','요약 범위',updateMode === 'rebuild' ? `전체 ${totalTurns}턴` : `새 RP ${turns}턴`,rangeBody)}${tokenBody}${renderApiSection('result','결과 확인',apiDraft?.noChange ? '변경 없음' : resultText || apiDraft?.finalText ? '결과 있음' : '직접 붙여넣기 가능',resultBody)}${apiStatus ? `<div class="rpcm-story-api-status">${esc(apiStatus)}</div>` : ''}</div><div class="rpcm-story-actions"><span>현재 결과를 확인한 뒤 저장하면 최종 타임라인에 바로 적용됩니다.</span><button type="button" class="rpcm-btn secondary" data-story-view-act="view" ${apiBusy ? 'disabled' : ''}>취소</button><button type="button" class="rpcm-btn secondary" data-story-view-act="complete-no-change" ${apiBusy || reviewLoading || reviewError || !reviewSnapshot ? 'disabled' : ''}>변경 없음 · 검토 완료</button><button type="button" class="rpcm-btn secondary" data-story-view-act="parse" ${apiBusy ? 'disabled' : ''}>결과 미리보기</button><button type="button" class="rpcm-btn primary" data-story-view-act="save-result" ${apiBusy ? 'disabled' : ''}>저장</button></div></div>`;
         } else if (mode === 'update') {
           const turns = reviewSnapshot?.turns?.length || 0;
           const fresh = unreviewed;
           backdrop.innerHTML = `<div class="rpcm-story-dialog">${header()}<div class="rpcm-story-update-scroll"><div class="rpcm-story-update-head"><div><strong>타임라인 갱신</strong><span>외부 AI에서 만든 최신 전체 타임라인을 붙여넣으세요.</span></div><span>${reviewLoading ? '새 RP 확인 중…' : reviewError ? '새 RP 확인 실패' : `마지막 검토 이후 RP ${turns}턴`}</span></div><div class="rpcm-story-update-note">먼저 ‘지침 복사’로 저장된 지침을 외부 AI에 전달하세요. 처음 만들 때는 전체 RP 로그, 이후에는 마지막 검토 뒤의 새 RP를 함께 전달하면 됩니다.</div>${reviewError ? `<div class="rpcm-story-review-error">${esc(reviewError)}</div>` : ''}<div class="rpcm-story-review-range"><strong>이번 검토 범위</strong><span>${reviewSnapshot ? `${turns}턴 · ${esc(shortId(reviewSnapshot.startKey))} → ${esc(shortId(reviewSnapshot.endKey))}` : '범위 확인 중'}</span>${reviewSnapshot?.anchorMissing && current.length ? '<button type="button" class="rpcm-lib-small" data-story-view-act="set-baseline">현재를 최초 검토 기준으로 설정</button>' : ''}<small>50턴은 알림 기준일 뿐이며 타임라인 결과를 자르지 않습니다. 보조 날짜로그 ${fresh.length}개도 검토 완료 기록에 포함됩니다.</small></div><section class="rpcm-story-exchange rpcm-story-result-paste"><div class="rpcm-story-exchange-head"><div><strong>전체 타임라인 결과</strong><span>[TIMELINE]부터 [/TIMELINE]까지 전부 붙여넣으세요.</span></div><button type="button" class="rpcm-btn secondary" data-story-view-act="copy-guide">지침 복사</button></div><textarea id="rpcm-story-paste-text" placeholder="[TIMELINE]\nVERSION=1\n\n[TIMELINE_CARD]\nID=NEW\n...\n[/TIMELINE_CARD]\n\n[/TIMELINE]">${esc(resultText)}</textarea></section></div><div class="rpcm-story-actions"><span>결과는 적용 전 미리보기에서 신규·수정·삭제를 확인할 수 있습니다.</span><button type="button" class="rpcm-btn secondary" data-story-view-act="view">취소</button><button type="button" class="rpcm-btn secondary" data-story-view-act="complete-no-change" ${reviewLoading || reviewError || !reviewSnapshot ? 'disabled' : ''}>변경 없음 · 검토 완료</button><button type="button" class="rpcm-btn primary" data-story-view-act="parse">결과 미리보기</button></div></div>`;
-        } else if (mode === 'preview' && preview) {
+        } else if ((mode === 'preview' || mode === 'audit-preview') && preview) {
           const previewChanges = new Map((preview.diff || []).filter(item => item.type !== 'removed').map(item => [String(item.cardId), item.type]));
           const unchanged = Math.max(0, preview.cards.length - (preview.diff || []).filter(item => item.type !== 'removed').length);
           const changedCards = preview.cards.filter(card => previewChanges.has(String(card.cardId)));
@@ -9147,11 +9797,21 @@ ${dialogueText}`;
           const emptyChanged = previewFilter === 'changed' && !shownCards.length && !(preview.removedCards || []).length ? '<div class="rpcm-story-empty compact">기존 타임라인과 달라진 카드가 없습니다.</div>' : '';
           const emptyAll = previewFilter === 'all' && !shownCards.length ? '<div class="rpcm-story-empty compact">적용 후 타임라인에 남는 카드가 없습니다.</div>' : '';
           const shownHtml = shownCards.length ? renderReadCards(shownCards, false, previewChanges) : '';
-          backdrop.innerHTML = `<div class="rpcm-story-dialog">${header()}<div class="rpcm-story-import-summary"><div><strong>타임라인 결과 미리보기</strong><span>전체 카드 ${current.length} → ${preview.cards.length}</span></div><div class="rpcm-story-diff-counts"><b>✨ 추가 ${(preview.diff || []).filter(item => item.type === 'new').length}</b><b>✏️ 수정 ${(preview.diff || []).filter(item => item.type === 'updated').length}</b><b>🗑 제거 ${(preview.diff || []).filter(item => item.type === 'removed').length}</b><b>변경 없음 ${unchanged}</b></div><div class="rpcm-story-preview-tabs"><button type="button" class="${previewFilter === 'changed' ? 'active' : ''}" data-story-view-act="preview-changed">변경 카드만 보기</button><button type="button" class="${previewFilter === 'all' ? 'active' : ''}" data-story-view-act="preview-all">전체 새 타임라인 보기</button></div></div>${warningsHtml}<div class="rpcm-story-read-list">${emptyChanged}${emptyAll}${shownHtml}${removedHtml}</div><div class="rpcm-story-actions"><span>저장을 누르면 이 결과를 최종 타임라인에 적용하고 이번 검토 범위를 완료 처리합니다.</span><button type="button" class="rpcm-btn secondary" data-story-view-act="return-update">결과 다시 편집</button><button type="button" class="rpcm-btn primary" data-story-view-act="save-result">저장</button></div></div>`;
+          const auditHead = mode === 'audit-preview' && auditDraft?.audit ? `<section class="rpcm-story-audit-report is-fail"><div><strong>점검 결과 · FAIL</strong><span>${auditDraft.audit.currentCount}개 → 권장 ${auditDraft.audit.recommendedCount}개</span></div><p>${esc(auditDraft.audit.summary || '')}</p></section>` : '';
+          backdrop.innerHTML = `<div class="rpcm-story-dialog">${header()}${auditHead}<div class="rpcm-story-import-summary"><div><strong>타임라인 결과 미리보기</strong><span>전체 카드 ${current.length} → ${preview.cards.length}</span></div><div class="rpcm-story-diff-counts"><b>✨ 추가 ${(preview.diff || []).filter(item => item.type === 'new').length}</b><b>✏️ 수정 ${(preview.diff || []).filter(item => item.type === 'updated').length}</b><b>🗑 제거 ${(preview.diff || []).filter(item => item.type === 'removed').length}</b><b>변경 없음 ${unchanged}</b></div><div class="rpcm-story-preview-tabs"><button type="button" class="${previewFilter === 'changed' ? 'active' : ''}" data-story-view-act="preview-changed">변경 카드만 보기</button><button type="button" class="${previewFilter === 'all' ? 'active' : ''}" data-story-view-act="preview-all">전체 새 타임라인 보기</button></div></div>${warningsHtml}<div class="rpcm-story-read-list">${emptyChanged}${emptyAll}${shownHtml}${removedHtml}</div><div class="rpcm-story-actions"><span>${mode === 'audit-preview' ? '저장 전 snapshot 충돌과 잠금 카드를 다시 확인합니다.' : '저장하면 이번 갱신 검토 범위를 완료 처리합니다.'}</span><button type="button" class="rpcm-btn secondary" data-story-view-act="${mode === 'audit-preview' ? 'return-audit' : 'return-update'}">결과 다시 편집</button><button type="button" class="rpcm-btn primary" data-story-view-act="save-result">저장</button></div></div>`;
         } else {
           const latestDiff = room.storyTimelineLastDiff || [];
           const alert = cachedTurns >= threshold;
-          backdrop.innerHTML = `<div class="rpcm-story-dialog">${header()}<div class="rpcm-story-toolbar"><span class="rpcm-story-count">${current.length ? `${current.length}개 카드` : '카드 없음'}</span>${room.storyTimelineReviewSettings?.topNotice !== false ? `<span class="rpcm-story-review-status${alert ? ' is-due' : ''}">마지막 검토 이후 RP ${cachedTurns}턴${alert ? ' · 검토 권장' : ''}</span>` : ''}<button type="button" class="rpcm-lib-small" data-story-view-act="guide">지침</button><button type="button" class="rpcm-lib-small" data-story-view-act="update">타임라인 갱신</button>${room.storyTimelineBackup ? '<button type="button" class="rpcm-lib-small" data-story-view-act="restore-backup">직전 타임라인으로 되돌리기</button>' : ''}<button type="button" class="rpcm-lib-small story-primary" data-story-view-act="edit">카드 편집</button></div>${latestDiff.length ? `<div class="rpcm-story-last-diff"><strong>이번 갱신</strong><span>${diffSummary(latestDiff)}</span><button type="button" data-story-view-act="clear-diff">표시 지우기</button></div>` : ''}<div class="rpcm-story-view-body">${renderDateIndicator(current)}<div class="rpcm-story-read-list">${renderTimelineCards(current)}</div></div><div class="rpcm-story-actions"><span>주입 포함 카드는 다음 주입부터 하나의 전체 타임라인으로 들어갑니다.</span><button type="button" class="rpcm-btn secondary" data-story-view-act="close">닫기</button></div></div>`;
+          backdrop.innerHTML = `<div class="rpcm-story-dialog">${header()}<div class="rpcm-story-toolbar"><span class="rpcm-story-count">${current.length ? `${current.length}개 카드` : '카드 없음'} · ${esc(activeLabel)}</span>${room.storyTimelineReviewSettings?.topNotice !== false ? `<span class="rpcm-story-review-status${alert ? ' is-due' : ''}">마지막 검토 이후 RP ${cachedTurns}턴${alert ? ' · 검토 권장' : ''}</span>` : ''}<button type="button" class="rpcm-lib-small${guideModified ? ' is-modified' : ''}" data-story-view-act="guide">지침${guideModified ? ' · 수정됨' : ''}</button><button type="button" class="rpcm-lib-small" data-story-view-act="update">타임라인 갱신</button><button type="button" class="rpcm-lib-small" data-story-view-act="audit">타임라인 점검</button>${room.storyTimelineBackup ? '<button type="button" class="rpcm-lib-small" data-story-view-act="restore-backup">직전 타임라인으로 되돌리기</button>' : ''}<button type="button" class="rpcm-lib-small story-primary" data-story-view-act="edit">카드 편집</button></div>${latestDiff.length ? `<div class="rpcm-story-last-diff"><strong>이번 갱신</strong><span>${diffSummary(latestDiff)}</span><button type="button" data-story-view-act="clear-diff">표시 지우기</button></div>` : ''}<div class="rpcm-story-view-body">${renderDateIndicator(current)}<div class="rpcm-story-read-list">${renderTimelineCards(current)}</div></div><div class="rpcm-story-actions"><span>주입 포함 카드는 다음 주입부터 하나의 전체 타임라인으로 들어갑니다.</span><button type="button" class="rpcm-btn secondary" data-story-view-act="close">닫기</button></div></div>`;
+        }
+        if ((mode === 'preview' || mode === 'audit-preview') && preview) {
+          const saveButton = backdrop.querySelector('[data-story-view-act="save-result"]');
+          if (saveButton && !backdrop.querySelector('[data-story-view-act="edit-preview"]')) {
+            const editButton = document.createElement('button');
+            editButton.type = 'button'; editButton.className = 'rpcm-btn secondary';
+            editButton.dataset.storyViewAct = 'edit-preview'; editButton.textContent = '수정 후보 직접 편집';
+            saveButton.before(editButton);
+          }
         }
       };
 
@@ -9196,8 +9856,9 @@ ${dialogueText}`;
         if (typedResult) resultText = typedResult.value;
         reviewLoading = true; reviewError = ''; render();
         try {
-          reviewSnapshot = await loadStoryTimelineReviewSnapshot(room);
-          room.storyTimelineUnreviewedTurnCount = reviewSnapshot.turns.length;
+          const requireFullHistory = (mode === 'audit' && auditScope === 'FULL') || (mode === 'api-update' && updateMode === 'rebuild');
+          reviewSnapshot = await loadStoryTimelineReviewSnapshot(room, requireFullHistory);
+          if (mode !== 'audit') room.storyTimelineUnreviewedTurnCount = reviewSnapshot.turns.length;
         } catch (error) { reviewError = error.message || String(error); }
         reviewLoading = false; render();
       };
@@ -9219,7 +9880,7 @@ ${dialogueText}`;
         if (action === 'view') { captureApiForm(false); mode = mode === 'guide' ? guideReturnMode : 'view'; preview = null; previewFilter = 'changed'; render(); return; }
         if (action === 'help') { helpOpen = !helpOpen; settingsOpen = false; render(); return; }
         if (action === 'close-help') { helpOpen = false; render(); return; }
-        if (action === 'guide') { captureApiForm(false); guideReturnMode = mode === 'api-update' ? 'api-update' : 'view'; mode = 'guide'; render(); return; }
+        if (action === 'guide') { captureApiForm(false); guideReturnMode = mode === 'api-update' ? 'api-update' : mode === 'audit' ? 'audit' : 'view'; mode = 'guide'; render(); return; }
         if (action === 'settings') { settingsOpen = !settingsOpen; helpOpen = false; render(); return; }
         if (action === 'open-api-settings') {
           captureApiForm(false);
@@ -9238,7 +9899,9 @@ ${dialogueText}`;
         }
         if (action === 'close-settings') { settingsOpen = false; render(); return; }
         if (action === 'update') { mode = 'api-update'; apiSections.add('range'); apiSections.add('result'); render(); await refreshReviewSnapshot(); return; }
+        if (action === 'audit') { mode = 'audit'; preview = null; auditDraft = null; apiStatus = ''; render(); await refreshReviewSnapshot(); return; }
         if (action === 'return-update') { mode = 'api-update'; preview = null; previewFilter = 'changed'; render(); return; }
+        if (action === 'return-audit') { mode = 'audit'; preview = null; previewFilter = 'changed'; render(); return; }
         if (action === 'toggle-api-section') { captureApiForm(false); const id = String(button.dataset.storySection || ''); if (apiSections.has(id)) apiSections.delete(id); else apiSections.add(id); render(); return; }
         if (action === 'toggle-month') { const section = button.closest('.rpcm-story-month'); if (!section) return; section.classList.toggle('is-open'); button.querySelector('span').textContent = `${section.classList.contains('is-open') ? '▾' : '▸'} ${button.querySelector('span').textContent.replace(/^[▾▸]\s*/, '')}`; return; }
         if (action === 'preview-changed') { previewFilter = 'changed'; render(); return; }
@@ -9266,15 +9929,44 @@ ${dialogueText}`;
           dirty = true; render(); return;
         }
         if (action === 'copy-guide') {
-          try { await copyPlainText(backdrop.querySelector('#rpcm-story-guide-text')?.value || room.storyTimelineGuide || STORY_TIMELINE_GUIDE_V13); notify('타임라인 지침을 복사했습니다.', 'success'); } catch (error) { notify(`복사 실패: ${error.message}`, 'error'); }
+          try { await copyPlainText(backdrop.querySelector('#rpcm-story-guide-text')?.value || room.storyTimelineGuide || STORY_TIMELINE_GUIDE_V15); notify('타임라인 지침을 복사했습니다.', 'success'); } catch (error) { notify(`복사 실패: ${error.message}`, 'error'); }
+          return;
+        }
+        if (action === 'copy-update-prompt') {
+          if (!reviewSnapshot) { notify('RP 검토 범위를 먼저 확인해 주세요.', 'warn'); return; }
+          const existingRun = room.storyTimelineManualRun;
+          const currentSignature = storyTimelineMasterSignature(snapshotStoryTimelineCardsForLabel(room, activeLabel));
+          const reusable = existingRun?.runId && String(existingRun.timelineLabel) === String(activeLabel) && String(existingRun.masterSignature || '') === currentSignature && String(existingRun.kind) === String(updateMode);
+          if (existingRun?.runId && !reusable && !confirm('저장된 미완료 수동 REF 작업이 있습니다. 새 갱신 작업으로 교체할까요?')) return;
+          const run = reusable ? existingRun : createStoryTimelineRun(room, activeLabel, updateMode, 'FULL');
+          room.storyTimelineManualRun = run;
+          const prompt = buildStoryTimelineUpdatePrompt(room, updateMode, selectedUnreviewedLogs(), reviewSnapshot, run);
+          try { await copyPlainText(prompt); dirty = true; await saveRoom(room); notify('REF가 포함된 외부 GPT용 갱신 프롬프트를 복사했습니다.', 'success'); }
+          catch (error) { notify(`복사 실패: ${error.message}`, 'error'); }
+          return;
+        }
+        if (action === 'copy-audit-prompt') {
+          const requested = auditScope === 'TIMELINE_ONLY' ? 'TIMELINE_ONLY' : 'FULL';
+          const effective = requested === 'TIMELINE_ONLY' ? 'TIMELINE_ONLY' : (reviewSnapshot?.historyLimitReached ? 'PARTIAL' : 'FULL');
+          if (requested === 'FULL' && !reviewSnapshot) { notify('전체 RP 근거를 먼저 확인해 주세요.', 'warn'); return; }
+          const existingRun = room.storyTimelineManualRun;
+          const currentSignature = storyTimelineMasterSignature(snapshotStoryTimelineCardsForLabel(room, activeLabel));
+          const reusable = existingRun?.runId && existingRun.kind === 'audit' && String(existingRun.timelineLabel) === String(activeLabel) && String(existingRun.masterSignature || '') === currentSignature && existingRun.sourceScope === effective;
+          if (existingRun?.runId && !reusable && !confirm('저장된 미완료 수동 REF 작업이 있습니다. 새 점검 작업으로 교체할까요?')) return;
+          const run = reusable ? existingRun : createStoryTimelineRun(room, activeLabel, 'audit', effective);
+          room.storyTimelineManualRun = run;
+          try { await copyPlainText(buildStoryTimelineAuditManualPrompt(room, run, reviewSnapshot, effective)); dirty = true; await saveRoom(room); notify('외부 GPT용 점검 프롬프트를 복사했습니다.', 'success'); }
+          catch (error) { notify(`복사 실패: ${error.message}`, 'error'); }
           return;
         }
         if (action === 'reset-guide') {
-          if (!confirm('타임라인 지침을 기본 v1.3로 되돌릴까요? 저장 전에는 취소할 수 있습니다.')) return;
-          backdrop.querySelector('#rpcm-story-guide-text').value = STORY_TIMELINE_GUIDE_V13; return;
+          if (!confirm('타임라인 지침을 기본 v1.5로 되돌릴까요? 저장 전에는 취소할 수 있습니다.')) return;
+          backdrop.querySelector('#rpcm-story-guide-text').value = STORY_TIMELINE_GUIDE_V15; return;
         }
         if (action === 'save-guide') {
-          room.storyTimelineGuide = String(backdrop.querySelector('#rpcm-story-guide-text')?.value || '').trim() || STORY_TIMELINE_GUIDE_V13;
+          room.storyTimelineGuide = String(backdrop.querySelector('#rpcm-story-guide-text')?.value || '').trim() || STORY_TIMELINE_GUIDE_V15;
+          room.storyTimelineGuideSource = room.storyTimelineGuide.trim() === STORY_TIMELINE_GUIDE_V15.trim() ? 'builtin-v1.5' : 'custom';
+          room.storyTimelineGuideRevisionV15 = true;
           dirty = true; mode = guideReturnMode; render(); notify('타임라인 지침을 저장했습니다.', 'success'); return;
         }
         if (action === 'save-settings') {
@@ -9311,6 +10003,38 @@ ${dialogueText}`;
           } catch (error) { const failure = classifyAiFailure(error); setAiFeatureStatus('timeline', 'error', apiSettings.provider, apiSettings.models?.[apiSettings.provider] || '', failure.category, failure.detail); apiStatus = `생성 실패 · ${failure.category} · ${friendlyAiErrorMessage(error)}`; }
           apiBusy = false; render(); return;
         }
+        if (action === 'audit-generate') {
+          const requested = auditScope === 'TIMELINE_ONLY' ? 'TIMELINE_ONLY' : 'FULL';
+          if (requested === 'FULL' && !reviewSnapshot) { notify('전체 RP 근거를 확인하지 못했습니다.', 'warn'); return; }
+          try {
+            const next = captureApiForm(true);
+            apiBusy = true; apiStatus = '타임라인 독립 점검 준비 중…'; render();
+            auditDraft = await generateStoryTimelineAuditDraft(room, next, readAiSecret(next.provider), reviewSnapshot, requested, message => { apiStatus = message; render(); });
+            auditResultText = auditDraft.rawResult || '';
+            apiStatus = `점검 완료 · ${auditDraft.audit.result} · ${auditDraft.usage.calls}회 호출 · ${formatAiCostUsd(auditDraft.usage.estimatedCostUsd)}`;
+            dirty = true; await saveRoom(room);
+            if (auditDraft.audit.result === 'FAIL') { preview = auditDraft.preview; mode = 'audit-preview'; }
+          } catch (error) {
+            const excerpt = error.rawExcerpt ? `\n응답 일부: ${error.rawExcerpt}` : '';
+            apiStatus = `점검 실패 · ${friendlyAiErrorMessage(error)}${excerpt}`;
+          }
+          apiBusy = false; render(); return;
+        }
+        if (action === 'audit-parse') {
+          try {
+            auditResultText = String(backdrop.querySelector('#rpcm-story-audit-text')?.value || auditResultText || '');
+            const run = room.storyTimelineManualRun;
+            if (!run || run.kind !== 'audit' || String(run.timelineLabel) !== String(activeLabel)) throw new Error('이 결과에 대응하는 수동 점검 REF 작업이 없습니다. 먼저 점검 프롬프트를 복사해 주세요.');
+            const expected = run.sourceScope || (auditScope === 'TIMELINE_ONLY' ? 'TIMELINE_ONLY' : 'FULL');
+            const parsedAudit = /^\s*\{/.test(auditResultText) ? parseStoryTimelineAuditJson(auditResultText, room, run, expected) : parseStoryTimelineAuditManual(auditResultText, room, run, expected);
+            auditDraft = { id:run.runId, createdAt:nowIso(), provider:'external', model:'외부 GPT', run, audit:parsedAudit.audit, preview:parsedAudit.preview, usage:{ calls:0, inputTokens:0, outputTokens:0, estimatedCostUsd:0 }, rawResult:auditResultText };
+            addStoryTimelineAuditHistory(room, auditDraft); dirty = true; await saveRoom(room);
+            if (auditDraft.audit.result === 'FAIL') { preview = auditDraft.preview; mode = 'audit-preview'; }
+            else apiStatus = `점검 결과 · ${auditDraft.audit.result} · 타임라인은 변경하지 않았습니다.`;
+            render();
+          } catch (error) { notify(`점검 결과 확인 실패: ${error.message}`, 'error', 7000); }
+          return;
+        }
         if (action === 'set-baseline') {
           if (!reviewSnapshot?.latestKey || !confirm(`기존 타임라인이 현재 RP까지 이미 반영되어 있나요?\n\n현재까지 ${reviewSnapshot.turns.length}턴을 검토 완료 기준으로 잡고 새 RP부터 계산합니다.`)) return;
           room.storyTimelineLastReviewedMessageId = reviewSnapshot.latestKey; room.storyTimelineLastReviewedAt = nowIso(); room.storyTimelineUnreviewedTurnCount = 0; dirty = true;
@@ -9329,12 +10053,28 @@ ${dialogueText}`;
           if (edited === true) dirty = true;
           document.body.appendChild(backdrop); mode = 'view'; render(); return;
         }
+        if (action === 'edit-preview') {
+          if (!preview) return;
+          const returnMode = mode;
+          const run = returnMode === 'audit-preview' ? auditDraft?.run : (apiDraft?.run || room.storyTimelineManualRun || createStoryTimelineRun(room, activeLabel, 'manual-edit', 'FULL'));
+          const temporaryRoom = { ...room, activeLogTimeline:activeLabel, storyTimelineCards:(preview.cards || []).map(card => ({ ...card, timelineLabel:activeLabel, tags:[...(card.tags || [])] })), storyTimelineBackup:null };
+          backdrop.remove();
+          const edited = await openStoryTimelineEditorDialog(temporaryRoom);
+          document.body.appendChild(backdrop);
+          if (edited === true) {
+            preview = buildStoryTimelinePreview(snapshotStoryTimelineCardsForLabel(temporaryRoom, activeLabel), run);
+            if (returnMode === 'audit-preview' && auditDraft) auditDraft.preview = preview;
+            dirty = true;
+          }
+          mode = returnMode; render(); return;
+        }
         if (action === 'parse') {
           try { resultText = String(backdrop.querySelector('#rpcm-story-paste-text')?.value || ''); if (/^타임라인\s*변경\s*없음\s*$/.test(resultText.trim())) { notify('변경 없음 결과입니다. “변경 없음 · 검토 완료”를 눌러 주세요.', 'info', 4200); return; } preview = parseStoryTimelineImport(resultText, room, apiImportOptionsFor(resultText)); mode = 'preview'; render(); }
           catch (error) { notify(`타임라인 결과 확인 실패: ${error.message}`, 'error', 6500); }
           return;
         }
         if (action === 'save-result') {
+          const savingAudit = mode === 'audit-preview';
           if (!preview) {
             try {
               resultText = String(backdrop.querySelector('#rpcm-story-paste-text')?.value || resultText || '');
@@ -9344,19 +10084,46 @@ ${dialogueText}`;
           }
           const summary = diffSummary(preview.diff);
           if (!confirm(`현재 결과를 최신 전체 타임라인으로 저장할까요?\n\n${summary}\n전체 카드 ${cards().length} → ${preview.cards.length}`)) return;
-          backupStoryTimeline(room, 'GPT 타임라인 적용 전');
-          room.storyTimelineCards = preview.cards; normalizeStoryTimelineCards(room);
+          const run = savingAudit ? auditDraft?.run : (apiDraft?.run || room.storyTimelineManualRun);
+          if (run) {
+            try { assertStoryTimelineRunCurrent(room, run); }
+            catch (error) { notify(error.message, 'error', 7000); return; }
+          }
+          backupStoryTimeline(room, savingAudit ? '타임라인 점검 수정본 적용 전' : 'GPT 타임라인 적용 전');
+          if (run) applyStoryTimelinePreviewForRun(room, run, preview);
+          else {
+            const key = normalizedLogTimelineKey(activeLabel === DEFAULT_LOG_TIMELINE ? '' : activeLabel);
+            const others = normalizeStoryTimelineCards(room).filter(card => normalizedLogTimelineKey((card.timelineLabel || DEFAULT_LOG_TIMELINE) === DEFAULT_LOG_TIMELINE ? '' : card.timelineLabel) !== key);
+            room.storyTimelineCards = [...others, ...preview.cards.map(card => ({ ...card, timelineLabel:activeLabel }))]; normalizeStoryTimelineCards(room);
+          }
           room.storyTimelineLastDiff = preview.diff || [];
-          const hadPendingReview = stageCurrentReviewScope() || !!room.storyTimelinePendingReview;
-          const completedScope = room.storyTimelinePendingReview;
-          markStoryReviewCompleted(room);
-          room.storyTimelineCarryoverTurnKeys = (completedScope?.reviewedTailKeys || apiDraft?.reviewScope?.reviewedTailKeys || []).map(String).slice(-40);
+          let hadPendingReview = false;
+          let completedScope = null;
+          if (savingAudit) {
+            if (auditMarkReviewed && reviewSnapshot?.latestKey && auditDraft?.audit?.sourceScope === 'FULL') {
+              room.storyTimelinePendingReview = storyTimelineReviewScopeFromSnapshot(reviewSnapshot, [], 'rebuild', (reviewSnapshot.allTurns || []).slice(-40).map(turn => turn.key));
+              completedScope = room.storyTimelinePendingReview; hadPendingReview = true; markStoryReviewCompleted(room);
+              room.storyTimelineUnreviewedTurnCount = 0;
+            }
+          } else {
+            hadPendingReview = stageCurrentReviewScope() || !!room.storyTimelinePendingReview;
+            completedScope = room.storyTimelinePendingReview; markStoryReviewCompleted(room);
+          }
+          room.storyTimelineCarryoverTurnKeys = (completedScope?.reviewedTailKeys || apiDraft?.reviewScope?.reviewedTailKeys || room.storyTimelineCarryoverTurnKeys || []).map(String).slice(-40);
           room.storyTimelineApiDraft = null;
+          if (room.storyTimelineManualRun?.runId === run?.runId) room.storyTimelineManualRun = null;
           if (hadPendingReview) room.storyTimelineUnreviewedTurnCount = 0;
           dirty = true; finish(true); return;
         }
       }, true);
       backdrop.addEventListener('change', event => {
+        if (event.target?.id === 'rpcm-story-audit-scope') {
+          auditScope = event.target.value === 'TIMELINE_ONLY' ? 'TIMELINE_ONLY' : 'FULL';
+          auditDraft = null; auditResultText = ''; apiStatus = ''; render(); return;
+        }
+        if (event.target?.id === 'rpcm-story-audit-reviewed') {
+          auditMarkReviewed = !!event.target.checked; return;
+        }
         if (mode !== 'api-update') return;
         if (event.target?.matches?.('[data-story-log-id]')) {
           const logId = String(event.target.dataset.storyLogId || '');
@@ -9380,7 +10147,9 @@ ${dialogueText}`;
         }
         if (event.target?.id === 'rpcm-story-update-mode') {
           captureApiForm(false);
+          updateMode = event.target.value === 'rebuild' ? 'rebuild' : 'continue';
           render();
+          refreshReviewSnapshot();
         }
       });
       backdrop.onkeydown = event => {
@@ -9587,7 +10356,7 @@ ${dialogueText}`;
     }).join('');
     const chips = segments.map(item => {
       const ofUsed = used ? item.chars / used * 100 : 0;
-      return `<span class="rpcm-breakdown-chip"><i class="rpcm-usage-dot tone-${item.tone}"></i><strong>${esc(item.label)}</strong><span>${formatCount(item.chars)}자 · ${ofUsed < 1 && ofUsed > 0 ? '&lt;1' : Math.round(ofUsed)}%</span></span>`;
+      return `<span class="rpcm-breakdown-chip tone-${item.tone}"><i class="rpcm-usage-dot"></i><strong>${esc(item.label)}</strong><span>${formatCount(item.chars)}자 · ${ofUsed < 1 && ofUsed > 0 ? '&lt;1' : Math.round(ofUsed)}%</span></span>`;
     }).join('');
     const emptyWidth = Math.max(0, 100 - Math.min(100, used / max * 100));
     return {
@@ -10721,8 +11490,8 @@ ${dialogueText}`;
       autoLogRelatedBlocks:Number(room?.autoLogRelatedBlocks || 0),
       autoLogPinnedKeys:room?.autoLogPinnedKeys || [], autoLogExcludedKeys:room?.autoLogExcludedKeys || [], manualLogSelectedKeys:room?.manualLogSelectedKeys || [], favoriteLogKeys:room?.favoriteLogKeys || [], aiContextLogRerankEnabled:!!room?.aiContextLogRerankEnabled,
       aiApiUsage:room?.aiApiUsage || { version:1, features:{ summary:emptyRoomAiFeatureUsage(), timeline:emptyRoomAiFeatureUsage(), context:emptyRoomAiFeatureUsage() }, history:[] },
-      storyTimelineCards:(room?.storyTimelineCards || []).map(card => ({ cardId:card.cardId, timelineLabel:card.timelineLabel, dateStart:card.dateStart, dateEnd:card.dateEnd, title:card.title, content:card.content, tags:card.tags || [], userLocked:!!card.userLocked, inject:card.inject !== false, sortOrder:Number(card.sortOrder || 0) })), storyTimelineCarryoverTurnKeys:room?.storyTimelineCarryoverTurnKeys || [], storyTimelineApiHistory:room?.storyTimelineApiHistory || [],
-      storyLogReviews:room?.storyLogReviews || [], storyTimelineGuide:String(room?.storyTimelineGuide || STORY_TIMELINE_GUIDE_V13), storyTimelinePendingReview:room?.storyTimelinePendingReview || null,
+      storyTimelineCards:(room?.storyTimelineCards || []).map(card => ({ cardId:card.cardId, timelineLabel:card.timelineLabel, dateStart:card.dateStart, dateEnd:card.dateEnd, title:card.title, content:card.content, tags:card.tags || [], userLocked:!!card.userLocked, inject:card.inject !== false, sortOrder:Number(card.sortOrder || 0) })), storyTimelineCarryoverTurnKeys:room?.storyTimelineCarryoverTurnKeys || [], storyTimelineApiHistory:room?.storyTimelineApiHistory || [], storyTimelineAuditHistory:room?.storyTimelineAuditHistory || [], storyTimelineManualRun:room?.storyTimelineManualRun || null,
+      storyLogReviews:room?.storyLogReviews || [], storyTimelineGuide:String(room?.storyTimelineGuide || STORY_TIMELINE_GUIDE_V15), storyTimelineGuideSource:String(room?.storyTimelineGuideSource || ''), storyTimelineGuideRevisionV15:!!room?.storyTimelineGuideRevisionV15, storyTimelinePendingReview:room?.storyTimelinePendingReview || null,
       storyTimelineLastReviewedMessageId:String(room?.storyTimelineLastReviewedMessageId || ''), storyTimelineLastReviewedAt:String(room?.storyTimelineLastReviewedAt || ''),
       storyTimelineReviewSettings:room?.storyTimelineReviewSettings || { threshold:50, menuBadge:true, topNotice:true, popup:false, dateIndicator:true, monthlyFold:true, monthlyFoldMin:8 }, storyTimelineLastDiff:room?.storyTimelineLastDiff || [], storyTimelineBackup:room?.storyTimelineBackup || null,
     });
@@ -12819,6 +13588,7 @@ ${dialogueText}`;
       .rpcm-ai-draft-banner{padding:8px 10px;border-radius:9px;font-size:10px}
       .rpcm-ai-history{border:1px solid #343434;border-radius:10px;background:#1b1b1b;overflow:hidden}.rpcm-ai-history[hidden]{display:none!important}.rpcm-ai-history>summary{display:flex;align-items:center;gap:8px;list-style:none;padding:9px 12px;cursor:pointer}.rpcm-ai-history>summary::-webkit-details-marker{display:none}.rpcm-ai-history>summary strong{font-size:12px}.rpcm-ai-history>summary span{color:#888;font-size:10px}.rpcm-ai-history>summary b{margin-left:auto;color:#aaa;font-size:10px}.rpcm-ai-history-body{display:grid;gap:8px;padding:10px 12px;border-top:1px solid #303030}.rpcm-ai-history-toolbar{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.rpcm-ai-history-toolbar select{min-width:0;flex:1;border:1px solid #3c3c3c;border-radius:8px;background:#101010;color:#ddd;padding:8px 9px;font:inherit;font-size:11px}.rpcm-ai-history-tabs{display:flex;gap:5px}.rpcm-ai-history-tab{border:1px solid #3c3c3c;border-radius:7px;background:#232323;color:#aaa;padding:6px 9px;font-size:10px;font-weight:700;cursor:pointer}.rpcm-ai-history-tab.active{border-color:#92506f;background:#32212a;color:#efc4d8}.rpcm-ai-history-meta{color:#888;font-size:9px;line-height:1.45}.rpcm-ai-history-text{box-sizing:border-box;width:100%;min-height:240px;max-height:52vh;resize:vertical;border:1px solid #3c3c3c;border-radius:8px;background:#101010;color:#ddd;padding:9px 10px;font:11px/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;outline:none}
       .rpcm-ai-guide-editor{border:1px solid #343434;border-radius:10px;background:#1b1b1b;overflow:hidden}.rpcm-ai-guide-editor[open]{height:auto!important;max-height:none!important;overflow:visible!important;contain:none!important}.rpcm-ai-guide-editor>summary{display:flex;align-items:center;gap:8px;list-style:none;padding:9px 12px;cursor:pointer}.rpcm-ai-guide-editor>summary::-webkit-details-marker{display:none}.rpcm-ai-guide-editor>summary strong{font-size:12px}.rpcm-ai-guide-editor>summary span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#888;font-size:10px}.rpcm-ai-guide-editor>summary b{margin-left:auto;color:#aaa;font-size:10px}.rpcm-ai-guide-body{display:grid!important;gap:8px;padding:10px 12px;border-top:1px solid #303030;height:auto!important;max-height:none!important;overflow:visible!important;contain:none!important}.rpcm-ai-guide-toolbar{display:flex;align-items:center;gap:5px;flex-wrap:wrap}.rpcm-ai-guide-tab{border:1px solid #3c3c3c;border-radius:7px;background:#232323;color:#aaa;padding:5px 8px;font-size:10px;font-weight:700;cursor:pointer}.rpcm-ai-guide-tab.active{border-color:#92506f;background:#32212a;color:#efc4d8}.rpcm-ai-guide-variant{height:28px;border:1px solid #4b3a44;border-radius:7px;background:#211a1e;color:#e6c5d5;padding:0 24px 0 8px;font-size:10px;font-weight:700;cursor:pointer}.rpcm-ai-guide-variant[hidden]{display:none!important}.rpcm-ai-guide-body textarea{box-sizing:border-box;width:100%;min-height:220px;max-height:48vh;resize:vertical;border:1px solid #3c3c3c;border-radius:8px;background:#101010;color:#ddd;padding:9px 10px;font:11px/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;outline:none}.rpcm-ai-guide-status{font-size:9px;color:#777}
+      .rpcm-ai-guide-tab.is-modified:after{content:"수정됨";display:inline-flex;margin-left:5px;padding:1px 5px;border-radius:999px;background:#6b2f4c;color:#ffd8e9;font-size:8px;line-height:1.4}.rpcm-ai-guide-status.is-modified,#rpcm-ai-guide-summary-status.is-modified{color:#f0a9ca!important;font-weight:750}
       .rpcm-ai-history,.rpcm-ai-connection,.rpcm-ai-guide-editor{box-sizing:border-box;height:auto!important;min-height:38px!important;max-height:none!important;contain:none!important}.rpcm-ai-history>summary,.rpcm-ai-connection>summary,.rpcm-ai-guide-editor>summary{box-sizing:border-box;display:flex!important;min-height:38px!important;visibility:visible!important;position:relative!important}
       #rpcm-ai-backdrop details{position:static!important;float:none!important;transform:none!important;content-visibility:visible!important}
       #rpcm-ai-backdrop details>summary{position:static!important;float:none!important;transform:none!important}
@@ -13009,7 +13779,7 @@ ${dialogueText}`;
           </section>
           <div id="rpcm-ai-connection" hidden aria-hidden="true"><span class="rpcm-ai-connection-state ${hasSavedSecret ? 'ready' : ''}" id="rpcm-ai-connection-state"></span><span class="rpcm-ai-connection-summary" id="rpcm-ai-connection-summary">${hasSavedSecret ? `${esc(AI_SUMMARY_PROVIDER_DEFAULTS[settings.provider]?.label || settings.provider)} · ${esc(settings.models?.[settings.provider] || '')}` : '연결 정보가 필요합니다.'}</span><button type="button" id="rpcm-ai-open-api-settings"></button><select id="rpcm-ai-provider">${AI_SUMMARY_PROVIDERS.map(id => `<option value="${id}" ${id === settings.provider ? 'selected' : ''}>${esc(AI_SUMMARY_PROVIDER_DEFAULTS[id].label)}</option>`).join('')}</select><select id="rpcm-ai-model"></select><input id="rpcm-ai-openai-url" value="${esc(settings.openaiBaseUrl)}"><input id="rpcm-ai-vertex-location" value="${esc(settings.vertexLocation)}"><input id="rpcm-ai-vertex-project" value="${esc(settings.vertexProjectId)}"><span id="rpcm-ai-secret-label"></span><div id="rpcm-ai-secret-host"></div><div id="rpcm-ai-provider-help"></div><button id="rpcm-ai-save-settings"></button><button id="rpcm-ai-test"></button><div id="rpcm-ai-total-usage"></div></div>
           <section class="rpcm-ai-guide-editor rpcm-ai-collapsible" id="rpcm-ai-guide-editor" data-ai-collapsible>
-            <button type="button" class="rpcm-ai-disclosure-trigger"><strong>요약 지침</strong><span>기본 지침과 API 보강 지침을 한 번에 확인·수정</span><b data-ai-disclosure data-closed-label="열기 ▾" data-open-label="접기 ▴">열기 ▾</b></button>
+            <button type="button" class="rpcm-ai-disclosure-trigger"><strong>요약 지침</strong><span id="rpcm-ai-guide-summary-status">기본 지침과 API 보강 지침을 한 번에 확인·수정</span><b data-ai-disclosure data-closed-label="열기 ▾" data-open-label="접기 ▴">열기 ▾</b></button>
             <div class="rpcm-ai-guide-body">
               <div class="rpcm-ai-guide-toolbar"><button type="button" class="rpcm-ai-guide-tab active" data-ai-guide="logSummary">날짜요약</button><button type="button" class="rpcm-ai-guide-tab" data-ai-guide="currentState">현재상태</button><select class="rpcm-ai-guide-variant" id="rpcm-ai-log-guide-variant" aria-label="API 날짜요약 지침 종류"><option value="general">일반용</option><option value="adult">성인용</option></select><span class="rpcm-ai-spacer"></span><button type="button" class="rpcm-ai-btn" id="rpcm-ai-guide-copy">복사</button><button type="button" class="rpcm-ai-btn" id="rpcm-ai-guide-reset">기본값 복원</button></div>
               <textarea id="rpcm-ai-guide-text" spellcheck="false" aria-label="API 요약 전체 지침"></textarea>
@@ -13325,16 +14095,41 @@ ${dialogueText}`;
 
     const guideTextEl = $('#rpcm-ai-guide-text');
     const guideStatusEl = $('#rpcm-ai-guide-status');
+    const guideSummaryStatusEl = $('#rpcm-ai-guide-summary-status');
     const guideVariantEl = $('#rpcm-ai-log-guide-variant');
     let activeGuideId = 'logSummary';
     let activeLogGuideVariant = getLogSummaryGuideVariant(true);
     let guideLoaded = false;
     let guideSaveTimer = 0;
     if (guideVariantEl) guideVariantEl.value = activeLogGuideVariant;
+    const refreshAiGuideModifiedState = (statusMessage = '') => {
+      const activeVariant = activeGuideId === 'logSummary' ? activeLogGuideVariant : '';
+      const activeModified = isAiSystemInstructionModified(activeGuideId, activeVariant, guideTextEl?.value);
+      backdrop.querySelectorAll('[data-ai-guide]').forEach(button => {
+        const slotId = button.dataset.aiGuide;
+        const variant = slotId === 'logSummary' ? activeLogGuideVariant : '';
+        const modified = slotId === activeGuideId
+          ? activeModified
+          : isAiSystemInstructionModified(slotId, variant);
+        button.classList.toggle('is-modified', modified);
+      });
+      const anyModified = isAiSystemInstructionModified('currentState')
+        || isAiSystemInstructionModified('logSummary', 'general')
+        || isAiSystemInstructionModified('logSummary', 'adult')
+        || activeModified;
+      if (guideSummaryStatusEl) guideSummaryStatusEl.textContent = anyModified
+        ? '사용자가 수정한 API 지침이 있습니다.'
+        : '기본 지침과 API 보강 지침을 한 번에 확인·수정';
+      if (guideSummaryStatusEl) guideSummaryStatusEl.classList.toggle('is-modified', anyModified);
+      const label = activeGuideId === 'logSummary' ? `날짜요약 ${logSummaryGuideVariantLabel(activeLogGuideVariant)}` : '현재상태';
+      if (guideStatusEl) guideStatusEl.textContent = statusMessage || `${label} · ${activeModified ? '수정됨' : '기본값'} · API 호출에 사용되는 전체본`;
+      if (guideStatusEl) guideStatusEl.classList.toggle('is-modified', activeModified);
+      return activeModified;
+    };
     const saveVisibleGuide = () => {
       if (!guideTextEl) return;
       saveAiSystemInstruction(activeGuideId, guideTextEl.value, activeGuideId === 'logSummary' ? activeLogGuideVariant : '');
-      if (guideStatusEl) guideStatusEl.textContent = '자동 저장됨 · 다음 API 요약부터 사용됩니다.';
+      refreshAiGuideModifiedState(`자동 저장됨 · ${isAiSystemInstructionModified(activeGuideId, activeGuideId === 'logSummary' ? activeLogGuideVariant : '', guideTextEl.value) ? '수정됨' : '기본값'} · 다음 API 요약부터 사용됩니다.`);
     };
     const showGuide = slotId => {
       if (!BASE_GUIDES[slotId]) return;
@@ -13348,7 +14143,7 @@ ${dialogueText}`;
       }
       guideTextEl.value = getAiSystemInstruction(slotId, slotId === 'logSummary' ? activeLogGuideVariant : '');
       guideLoaded = true;
-      if (guideStatusEl) guideStatusEl.textContent = `${slotId === 'logSummary' ? `날짜요약 ${logSummaryGuideVariantLabel(activeLogGuideVariant)}` : '현재상태'} 기본 지침 + 하단 API 보강 지침 · API 호출에 사용되는 전체본`;
+      refreshAiGuideModifiedState();
     };
     backdrop.querySelectorAll('[data-ai-guide]').forEach(button => { button.onclick = () => showGuide(button.dataset.aiGuide); });
     if (guideVariantEl) guideVariantEl.onchange = () => {
@@ -13357,10 +14152,10 @@ ${dialogueText}`;
       activeLogGuideVariant = saveLogSummaryGuideVariant(guideVariantEl.value, true);
       guideVariantEl.value = activeLogGuideVariant;
       guideTextEl.value = getAiSystemInstruction('logSummary', activeLogGuideVariant);
-      if (guideStatusEl) guideStatusEl.textContent = `날짜요약 ${logSummaryGuideVariantLabel(activeLogGuideVariant)} 기본 지침 + 하단 API 보강 지침 · API 호출에 사용되는 전체본`;
+      refreshAiGuideModifiedState();
     };
     guideTextEl.oninput = () => {
-      if (guideStatusEl) guideStatusEl.textContent = '저장 중…';
+      refreshAiGuideModifiedState('저장 중…');
       if (guideSaveTimer) clearTimeout(guideSaveTimer);
       guideSaveTimer = setTimeout(() => { guideSaveTimer = 0; saveVisibleGuide(); }, 300);
     };
@@ -13369,7 +14164,7 @@ ${dialogueText}`;
       const label = activeGuideId === 'logSummary' ? `날짜요약 ${logSummaryGuideVariantLabel(activeLogGuideVariant)}` : '현재상태';
       if (!confirm(`${label} API 요약 지침 전체를 기본값으로 복원할까요? API 화면에서 직접 수정한 내용은 사라집니다.`)) return;
       guideTextEl.value = resetAiSystemInstruction(activeGuideId, activeGuideId === 'logSummary' ? activeLogGuideVariant : '');
-      if (guideStatusEl) guideStatusEl.textContent = `${label} 기본 지침 + API 보강 지침을 기본값으로 복원했습니다.`;
+      refreshAiGuideModifiedState(`${label} 기본값으로 복원했습니다.`);
     };
     showGuide('logSummary');
 
@@ -13948,7 +14743,10 @@ ${dialogueText}`;
       .rpcm-body{padding:16px 18px 68px;overflow-y:auto;min-height:0}
       .rpcm-summary{background:#1d1d1d;border:1px solid #303030;border-radius:11px;padding:12px 14px;margin-bottom:14px}
       .rpcm-summary-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px}.rpcm-summary-label{font-size:10px;font-weight:750;color:#777;letter-spacing:.02em}.rpcm-summary-main{display:flex;align-items:baseline;gap:8px;margin-top:3px}.rpcm-summary-main strong{color:#f3f3f3;font-size:18px;line-height:1.2}.rpcm-summary-count{font-size:11px;color:#888}.rpcm-summary-capacity-detail{margin-top:5px;color:#969096;font-size:10px;line-height:1.45}.rpcm-summary-side{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}.rpcm-summary-status{font-size:10px;font-weight:800;padding:3px 7px;border-radius:6px;background:#262626}.rpcm-limit{font-size:10px;color:#777;white-space:nowrap}.rpcm-limit input{display:none}
-      .rpcm-usage-bar{height:9px;background:#2c2c2c;border-radius:999px;overflow:hidden;margin-top:11px;display:flex}.rpcm-usage-segment,.rpcm-usage-empty{display:block;height:100%;transition:width .2s}.rpcm-usage-empty{background:#2c2c2c;flex:1}.tone-state{--rpcm-tone:#9b7de3}.tone-timeline{--rpcm-tone:#63D5E8}.tone-log{--rpcm-tone:#4f9fd8}.tone-character{--rpcm-tone:#df6298}.tone-extra{--rpcm-tone:#d59a4a}.tone-format{--rpcm-tone:#6f7782}.tone-carrier{--rpcm-tone:#38bdf8}.rpcm-usage-segment{background:var(--rpcm-tone)}.rpcm-usage-dot{width:7px;height:7px;border-radius:50%;flex:0 0 auto;background:var(--rpcm-tone)}
+      .rpcm-usage-bar{height:10px;background:#2c2c2c;border-radius:999px;overflow:hidden;margin-top:11px;display:flex;box-shadow:inset 0 0 0 1px rgba(255,255,255,.04)}.rpcm-usage-segment,.rpcm-usage-empty{display:block;height:100%;transition:width .2s}.rpcm-usage-empty{background:#2c2c2c;flex:1}.tone-carrier{--rpcm-tone:#2f9bff}.tone-state{--rpcm-tone:#a78bfa}.tone-timeline{--rpcm-tone:#34d399}.tone-log{--rpcm-tone:#f472b6}.tone-character{--rpcm-tone:#fb923c}.tone-extra{--rpcm-tone:#f6c453}.tone-format{--rpcm-tone:#94a3b8}.rpcm-usage-segment{background:var(--rpcm-tone)}.rpcm-usage-segment+.rpcm-usage-segment{box-shadow:-1px 0 0 rgba(15,15,15,.65)}.rpcm-usage-dot{width:8px;height:8px;border-radius:50%;flex:0 0 auto;background:var(--rpcm-tone);box-shadow:0 0 0 2px color-mix(in srgb,var(--rpcm-tone) 18%,transparent)}
+      .rpcm-breakdown-chip{gap:8px!important;padding:7px 3px!important}.rpcm-breakdown-chip strong{color:#d3d3d3!important;font-weight:750!important}.rpcm-breakdown-chip>span:last-child{color:color-mix(in srgb,var(--rpcm-tone) 78%,white);font-weight:700}.rpcm-breakdown-chip:hover{background:color-mix(in srgb,var(--rpcm-tone) 6%,transparent)}
+      .rpcm-story-audit-controls{display:grid;grid-template-columns:minmax(210px,.8fr) minmax(260px,1.2fr);gap:10px;margin:12px 0}.rpcm-story-audit-controls>label,.rpcm-story-audit-controls>div{display:flex;min-width:0;flex-direction:column;gap:5px;padding:11px 12px;border:1px solid #35564f;border-radius:10px;background:#19231f}.rpcm-story-audit-controls span{color:#87a59e;font-size:9px;font-weight:750}.rpcm-story-audit-controls select{height:34px;border:1px solid #4d756c;border-radius:8px;background:#101513;color:#ddf3ed;padding:0 9px}.rpcm-story-audit-controls strong{color:#82dbc8;font-size:13px}.rpcm-story-audit-controls small{color:#78928c;font-size:9px;line-height:1.45}.rpcm-story-audit-report{margin:12px 0;padding:12px 14px;border:1px solid #43635c;border-left:4px solid #67c0ad;border-radius:10px;background:#19231f}.rpcm-story-audit-report>div:first-child{display:flex;align-items:center;justify-content:space-between;gap:12px}.rpcm-story-audit-report strong{color:#d9f4ee;font-size:12px}.rpcm-story-audit-report span{color:#91ada6;font-size:9px}.rpcm-story-audit-report.is-pass{border-left-color:#4ade80}.rpcm-story-audit-report.is-fail{border-color:#77584a;border-left-color:#fb923c;background:#251d18}.rpcm-story-audit-report.is-unverified{border-color:#5d6370;border-left-color:#94a3b8;background:#1d2025}.rpcm-story-audit-counts{display:flex!important;justify-content:flex-start!important;flex-wrap:wrap;gap:6px!important;margin-top:10px}.rpcm-story-audit-counts b{padding:4px 7px;border-radius:999px;background:#263a35;color:#a9ddd1;font-size:9px}.rpcm-story-audit-report.is-fail .rpcm-story-audit-counts b{background:#3b2c23;color:#ffc594}.rpcm-story-audit-report p{margin:10px 0 0;color:#b8c9c5;font-size:10px;line-height:1.55}.rpcm-story-audit-report details{margin-top:9px;color:#a9bdb8;font-size:9px}.rpcm-story-audit-report details span{display:block;padding:3px 0;color:#c8ddd8}.rpcm-story-audit-locked{margin-top:9px;color:#f7b7be;font-size:9px}.rpcm-story-audit-history{margin:12px 0;border:1px solid #34433f;border-radius:9px;background:#171c1b;color:#9bb1ab}.rpcm-story-audit-history>summary{padding:9px 11px;cursor:pointer;font-size:10px;font-weight:800}.rpcm-story-audit-history>div{display:flex;align-items:center;gap:9px;padding:8px 11px;border-top:1px solid #2a3532}.rpcm-story-audit-history b{min-width:72px;color:#8ed8c8;font-size:9px}.rpcm-story-audit-history span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#82958f;font-size:9px}.rpcm-story-audit-reviewed{display:grid;grid-template-columns:auto minmax(0,1fr);gap:3px 8px;align-items:start;margin:12px 0;padding:10px 12px;border:1px solid #3a4845;border-radius:9px;background:#191d1c;color:#b4c5c1;font-size:10px}.rpcm-story-audit-reviewed input{grid-row:1/3;margin:2px 0 0;accent-color:#67c0ad}.rpcm-story-audit-reviewed small{color:#74847f;font-size:9px;line-height:1.4}.rpcm-story-audit-reviewed:has(input:disabled){opacity:.55}.rpcm-story-toolbar>[data-story-view-act]{flex:0 1 auto}.rpcm-story-toolbar .rpcm-story-count{min-width:150px}.rpcm-story-dialog button:focus-visible,.rpcm-story-dialog select:focus-visible,.rpcm-story-dialog textarea:focus-visible{outline:2px solid #67c0ad;outline-offset:2px}
+      @media(max-width:680px){.rpcm-story-audit-controls{grid-template-columns:1fr}.rpcm-story-audit-report>div:first-child{align-items:flex-start;flex-direction:column}.rpcm-story-audit-history>div{align-items:flex-start;flex-direction:column;gap:3px}.rpcm-story-audit-history span{white-space:normal}.rpcm-story-toolbar{align-items:stretch}.rpcm-story-toolbar .rpcm-story-count{flex-basis:100%;min-width:0}.rpcm-story-toolbar>[data-story-view-act]{flex:1 1 calc(50% - 8px)}.rpcm-story-actions{align-items:stretch;flex-wrap:wrap}.rpcm-story-actions>span{flex-basis:100%}.rpcm-story-actions button{flex:1 1 auto}}
       .rpcm-quickbar{position:sticky;top:-16px;z-index:8;display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin:-2px -4px 13px;padding:9px 4px;background:rgba(24,24,24,.95);backdrop-filter:blur(9px);border-bottom:1px solid #292929}.rpcm-jump{border:1px solid #373737;background:#222;color:#aaa;border-radius:999px;padding:6px 9px;font-size:10px;font-weight:700;cursor:pointer}.rpcm-jump:hover{border-color:#70405a;color:#efb5d1;background:#2b1d25}.rpcm-search-box{position:relative;display:flex;align-items:center;gap:5px;flex:1;min-width:240px}.rpcm-search-input{width:100%;height:30px;box-sizing:border-box;border:1px solid #3c3c3c;border-radius:8px;background:#111;color:#eee;padding:0 9px;font-size:11px;outline:none}.rpcm-search-input:focus{border-color:#df6298;box-shadow:0 0 0 2px rgba(223,98,152,.14)}.rpcm-search-nav{width:29px;height:29px;padding:0;border:1px solid #3c3c3c;border-radius:7px;background:#242424;color:#aaa;cursor:pointer}.rpcm-search-count{min-width:52px;text-align:center;color:#888;font-size:10px}.rpcm-search-results{position:absolute;top:35px;left:0;right:0;z-index:40;max-height:min(420px,58vh);overflow:auto;padding:6px;background:#151515;border:1px solid #3a3a3a;border-radius:10px;box-shadow:0 18px 48px rgba(0,0,0,.58)}.rpcm-search-results[hidden]{display:none!important}.rpcm-search-empty{padding:12px;color:#777;font-size:11px;text-align:center}.rpcm-search-result{width:100%;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 10px;align-items:center;text-align:left;border:0;border-bottom:1px solid #292929;background:transparent;color:#ddd;padding:9px 10px;cursor:pointer;border-radius:7px}.rpcm-search-result:last-child{border-bottom:0}.rpcm-search-result:hover,.rpcm-search-result:focus{outline:0;background:#231c21}.rpcm-search-result-head{min-width:0;display:flex;align-items:center;gap:7px}.rpcm-search-result-head strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:#eee}.rpcm-search-result-kind{flex:0 0 auto;padding:2px 5px;border-radius:999px;background:#292329;color:#c89aae;font-size:9px;font-weight:750}.rpcm-search-result-count{grid-column:2;grid-row:1/3;align-self:center;color:#a87991;font-size:9px;font-weight:750;white-space:nowrap}.rpcm-search-result-snippet{grid-column:1;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#858585;font-size:10px}.rpcm-search-result-more{padding:7px 10px;color:#777;font-size:9px;text-align:center;border-top:1px solid #292929}.rpcm-density-select{height:30px;border:1px solid #3c3c3c;border-radius:7px;background:#242424;color:#aaa;padding:0 7px;font-size:10px}
       .rpcm-slot{border:1px solid #333;background:#1f1f1f;border-radius:11px;margin-bottom:9px;overflow:hidden}
       .rpcm-slot summary{list-style:none;display:flex;align-items:center;gap:10px;padding:11px 12px;cursor:pointer;user-select:none}.rpcm-slot summary::-webkit-details-marker{display:none}.rpcm-slot summary:hover{background:#252525}
@@ -13975,6 +14773,8 @@ ${dialogueText}`;
       #rpcm-modal-wrap{position:fixed;top:64px;right:16px;display:flex;flex-direction:column;max-height:calc(100vh - 140px);width:min(820px,calc(100vw - 32px));pointer-events:auto}
       .rpcm-btn{border:none;border-radius:9px;padding:10px 14px;font-weight:750;font-size:13px;cursor:pointer;white-space:nowrap}.rpcm-btn.primary{background:#df6298;color:#fff}.rpcm-btn.primary:hover{background:#d6538e}.rpcm-btn.secondary{background:#2a2a2a;color:#ddd;border:1px solid #3b3b3b}.rpcm-btn.secondary:hover{background:#353535}.rpcm-btn.warn{background:#92400e;color:#fff}.rpcm-btn.danger{background:#7f1d1d;color:#fff}.rpcm-btn:disabled{opacity:.4;cursor:not-allowed}.rpcm-footnote{font-size:11px;color:#777;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
       .rpcm-section{margin:16px 0 8px}.rpcm-section-head{display:flex;align-items:center;gap:8px;margin:0 2px 8px}.rpcm-section-head.rpcm-character-head,.rpcm-section-head.rpcm-extra-head{display:block}.rpcm-section-title{font-size:13px;font-weight:850;color:#d7d7d7}.rpcm-section-desc{font-size:11px;color:#747474;line-height:1.55}.rpcm-charlib-actions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-start;margin-top:10px}.rpcm-charlib-actions .rpcm-add-btn{margin-left:0}.rpcm-add-btn{margin-left:auto;border:1px solid #3b3b3b;background:#242424;color:#ccc;border-radius:8px;padding:7px 10px;font-size:11px;font-weight:700;cursor:pointer}.rpcm-add-btn:hover{background:#303030;color:#fff}.rpcm-delete-btn{border:1px solid #5a2a2a;background:#2a1818;color:#fca5a5;border-radius:7px;padding:6px 9px;font-size:11px;cursor:pointer;margin-left:8px}.rpcm-delete-btn:hover{background:#3a1b1b}.rpcm-fixed-note{font-size:11px;color:#777;margin:-2px 0 8px;line-height:1.55}.rpcm-guide-toggle{flex:0 0 auto;border:1px solid #6b3a55;background:#2a1a24;color:#e5a3c3;border-radius:6px;padding:3px 7px;font-size:9px;font-weight:750;cursor:pointer}.rpcm-guide-toggle:hover,.rpcm-guide-toggle.is-open{color:#fce7f3;background:#3a2130;border-color:#be5f91}.rpcm-guide-panel{margin:0 0 11px;border:1px solid #5d3149;border-left:3px solid #df6298;border-radius:8px;background:#20131b;overflow:hidden;box-shadow:inset 0 0 0 1px rgba(223,98,152,.04)}.rpcm-guide-panel[hidden]{display:none!important}.rpcm-guide-head{display:flex;align-items:center;gap:8px;padding:8px 9px;border-bottom:1px solid #4a293b;background:#291823;color:#d8a0bc;font-size:10px}.rpcm-guide-head span{flex:1;min-width:120px}.rpcm-guide-variant{height:26px;border:1px solid #71405a;border-radius:6px;background:#321d29;color:#efc2d7;padding:0 23px 0 8px;font-size:9px;font-weight:750;cursor:pointer}.rpcm-guide-icon{display:inline-flex;align-items:center;justify-content:center;width:28px;height:26px;padding:0;border:1px solid #71405a;border-radius:6px;background:#321d29;color:#efb5d1;cursor:pointer}.rpcm-guide-icon:hover{background:#452638;color:#fff1f7;border-color:#c46497}.rpcm-guide-icon svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}.rpcm-guide-reset{height:26px;padding:0 8px;border:1px solid #71405a;border-radius:6px;background:#321d29;color:#e6abc8;font-size:9px;font-weight:700;cursor:pointer}.rpcm-guide-reset:hover{background:#452638;color:#fce7f3;border-color:#c46497}.rpcm-guide-textarea{display:block;width:100%;box-sizing:border-box;min-height:260px;max-height:420px;resize:vertical;border:0;background:#170f14;color:#eadbe3;padding:11px 12px;font:11px/1.58 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;outline:none;caret-color:#df6298}.rpcm-guide-textarea::selection{background:#7a3159;color:#fff}.rpcm-slot-options{display:flex;align-items:center;gap:8px;margin:0 0 8px;color:#888;font-size:11px}.rpcm-slot-options select{height:30px;border:1px solid #444;border-radius:7px;background:#232323;color:#eee;padding:0 8px;font:inherit}.rpcm-auto-panel{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:8px 0 10px;padding:10px 12px;border:1px solid #333;border-radius:10px;background:#191919;color:#aaa;font-size:11px}
+      .rpcm-guide-toggle.is-modified{border-color:#b65a83;background:#3b2030;color:#ffd2e5}.rpcm-guide-toggle.is-modified:after{content:"수정됨";display:inline-flex;margin-left:5px;padding:1px 4px;border-radius:999px;background:#8b3d62;color:#fff0f7;font-size:8px;line-height:1.35}
+      .rpcm-story-guide-note.is-modified{border-color:#a75b7b!important;background:#2a1b24!important;color:#d8aabd!important}.rpcm-story-guide-note.is-modified strong{color:#ffd5e6!important}.rpcm-story-toolbar .rpcm-lib-small.is-modified,.rpcm-story-guide-summary .rpcm-lib-small.is-modified{border-color:#b65a83!important;background:#3b2030!important;color:#ffd2e5!important}.rpcm-story-guide-summary.is-modified>strong{color:#ffc2dc!important}
 .rpcm-auto-note{flex-basis:100%;font-size:11px;line-height:1.55;color:#8d8d93;padding-top:2px}.rpcm-auto-note b{color:#b8b8bf;font-weight:650}.rpcm-auto-panel label{display:flex;gap:6px;align-items:center}.rpcm-auto-panel input[type=checkbox]{accent-color:#df6298}.rpcm-auto-panel select{height:30px;border:1px solid #444;border-radius:7px;background:#232323;color:#eee;padding:0 8px;font:inherit;max-width:260px}.rpcm-alias-row{display:grid;grid-template-columns:1fr auto auto;gap:8px;align-items:center;margin:0 0 8px}.rpcm-alias-input{height:32px;border:1px solid #404040;border-radius:7px;background:#1e1e1e;color:#ddd;padding:0 9px;font:11px/1.2 inherit;min-width:0}.rpcm-auto-exclude,.rpcm-auto-pin{display:flex;align-items:center;gap:5px;color:#888;font-size:10px;white-space:nowrap}.rpcm-auto-exclude input,.rpcm-auto-pin input{accent-color:#df6298}.rpcm-auto-terms{font-size:10px;color:#777;line-height:1.5;margin:-2px 0 8px;padding:6px 8px;border-left:2px solid #3b3b3b;background:#191919}.rpcm-auto-terms strong{color:#aaa}.rpcm-slot-remain{font-size:10px;font-weight:800;color:#fbbf24;border:1px solid rgba(245,158,11,.35);background:rgba(245,158,11,.08);padding:3px 6px;border-radius:6px}.rpcm-empty{border:1px dashed #343434;border-radius:10px;color:#666;font-size:12px;padding:14px;text-align:center;margin-bottom:9px}.rpcm-lib-dialog-backdrop{}#rpcm-lib-dialog-backdrop,#rpcm-library-manager-backdrop{position:fixed;inset:0;z-index:1000004;background:rgba(0,0,0,.62);display:flex;align-items:center;justify-content:center;padding:18px}#rpcm-library-manager-backdrop{z-index:1000006}.rpcm-lib-dialog{width:min(520px,94vw);max-height:min(720px,88vh);display:flex;flex-direction:column;background:#171717;border:1px solid #3b3b3b;border-radius:14px;box-shadow:0 24px 70px rgba(0,0,0,.55);color:#ddd;overflow:hidden}.rpcm-lib-dialog-head{display:flex;gap:12px;align-items:flex-start;padding:16px;border-bottom:1px solid #2d2d2d}.rpcm-lib-dialog-head>div:first-child{flex:1;min-width:0}.rpcm-lib-dialog-title{font-size:15px;font-weight:850;color:#f1f1f1}.rpcm-lib-dialog-desc{font-size:11px;color:#888;line-height:1.55;margin-top:4px}.rpcm-lib-close{border:0;background:transparent;color:#888;font-size:18px;cursor:pointer}.rpcm-lib-toolbar{display:flex;align-items:center;gap:6px;padding:10px 14px;border-bottom:1px solid #292929}.rpcm-lib-small{border:1px solid #3b3b3b;background:#222;color:#bbb;border-radius:7px;padding:6px 8px;font-size:11px;cursor:pointer}.rpcm-lib-selected{margin-left:auto;font-size:11px;color:#999}.rpcm-lib-list{overflow:auto;padding:8px 12px;min-height:80px}.rpcm-lib-row{display:flex;align-items:flex-start;gap:10px;padding:10px;border-radius:9px;cursor:pointer}.rpcm-lib-row:hover{background:#222}.rpcm-lib-row input{margin-top:2px;accent-color:#df6298}.rpcm-lib-row span{display:flex;flex-direction:column;gap:3px;min-width:0}.rpcm-lib-row strong{font-size:12px;color:#e8e8e8}.rpcm-lib-row small{font-size:10px;color:#777}.rpcm-library-row{align-items:center;padding:6px 8px}.rpcm-lib-row-main{display:flex;align-items:flex-start;gap:10px;flex:1;min-width:0;padding:4px 2px;cursor:pointer}.rpcm-lib-row-main input{margin-top:2px}.rpcm-lib-row-main span{flex:1}.rpcm-lib-manage-btn{flex:0 0 auto;border:1px solid #444;background:#242424;color:#bbb;border-radius:7px;padding:6px 8px;font-size:10px;font-weight:750;cursor:pointer}.rpcm-lib-manage-btn:hover{border-color:#8d4569;background:#32202a;color:#f1b4d1}.rpcm-lib-rename-icon,.rpcm-lib-delete-icon{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:30px;height:30px;border:1px solid transparent;border-radius:7px;background:transparent;color:#7d7d82;cursor:pointer;transition:background .16s,border-color .16s,color .16s}.rpcm-lib-rename-icon:hover{background:rgba(223,98,152,.10);border-color:rgba(223,98,152,.30);color:#df6298}.rpcm-lib-delete-icon:hover{background:rgba(239,68,68,.10);border-color:rgba(239,68,68,.30);color:#f87171}.rpcm-lib-rename-icon svg,.rpcm-lib-delete-icon svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}.rpcm-lib-preserve{display:flex;align-items:flex-start;gap:8px;margin:0 14px 8px;padding:10px;border:1px solid #333;border-radius:9px;background:#1d1d1d;font-size:11px;color:#aaa;line-height:1.45}.rpcm-lib-preserve input{margin-top:2px;accent-color:#df6298}.rpcm-lib-dialog-actions{display:flex;justify-content:flex-end;gap:8px;padding:12px 14px;border-top:1px solid #2d2d2d}.rpcm-library-manager{width:min(760px,96vw);max-height:min(820px,92vh)}.rpcm-library-name-row{display:flex;align-items:flex-end;gap:12px;padding:12px 16px;border-bottom:1px solid #2b2b2b;background:#1b1b1b}.rpcm-library-name-row label{display:flex;flex-direction:column;gap:5px;flex:1;color:#999;font-size:10px}.rpcm-library-name-input,.rpcm-library-item-edit input,.rpcm-library-item-edit select,.rpcm-library-item-edit textarea{box-sizing:border-box;width:100%;border:1px solid #414141;border-radius:8px;background:#111;color:#eee;padding:8px 10px;font:12px/1.45 inherit;outline:none}.rpcm-library-name-input:focus,.rpcm-library-item-edit input:focus,.rpcm-library-item-edit select:focus,.rpcm-library-item-edit textarea:focus{border-color:#df6298;box-shadow:0 0 0 2px rgba(223,98,152,.12)}.rpcm-library-item-count{font-size:11px;color:#888;padding-bottom:9px}.rpcm-library-manager-list{overflow:auto;padding:10px 14px;min-height:120px}.rpcm-library-item-card{border:1px solid #343434;border-radius:10px;background:#1d1d1d;margin-bottom:8px;overflow:hidden}.rpcm-library-item-card>summary{display:flex;align-items:center;gap:8px;padding:10px 12px;cursor:pointer;list-style:none}.rpcm-library-item-card>summary::-webkit-details-marker{display:none}.rpcm-library-item-card>summary strong{flex:1;min-width:0;color:#e8e8e8;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.rpcm-library-item-card>summary>span:not(.rpcm-library-item-number):not(.rpcm-chevron){font-size:10px;color:#777;white-space:nowrap}.rpcm-library-item-number{font-size:10px;color:#df6298;font-weight:800}.rpcm-library-item-delete{border:1px solid #593030;background:#2a1818;color:#fca5a5;border-radius:7px;padding:5px 8px;font-size:10px;cursor:pointer}.rpcm-library-item-edit{display:grid;grid-template-columns:1fr 1fr auto;gap:9px;padding:11px 12px;border-top:1px solid #303030;background:#181818}.rpcm-library-item-edit label{display:flex;flex-direction:column;gap:5px;color:#888;font-size:10px}.rpcm-library-item-edit label:last-child{grid-column:1/-1}.rpcm-library-item-edit textarea{min-height:150px;resize:vertical;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.rpcm-library-retention-label{min-width:110px}.rpcm-library-manager-actions{align-items:center}.rpcm-library-manager-spacer{flex:1}
       .rpcm-lib-row small [data-lib-count]{display:inline}
       .rpcm-ai-launchbar{display:flex;align-items:center;gap:12px;margin:15px 0 18px;padding:13px 15px;border:1px solid #593449;border-radius:11px;background:linear-gradient(135deg,#251a20,#1d1a1c)}.rpcm-ai-launchbar>div{flex:1;min-width:0}.rpcm-ai-launchbar strong{display:block;color:#f2ccdf;font-size:13px}.rpcm-ai-launchbar span{display:block;margin-top:3px;color:#8f7c85;font-size:10px;line-height:1.5}.rpcm-ai-launchbar .rpcm-mini{flex:0 0 auto;border-color:#9c4771;background:#39202c;color:#f5c7dd;font-weight:800;padding:9px 13px}.rpcm-ai-launchbar .rpcm-mini:hover{background:#4a2637;color:#fff}.rpcm-tools{display:flex;gap:7px;flex-wrap:wrap;margin:12px 0 2px}.rpcm-mini{font-size:11px;padding:7px 9px;border-radius:7px;border:1px solid #3b3b3b;background:#232323;color:#aaa;cursor:pointer}.rpcm-mini:hover{color:#fff;background:#303030}.rpcm-shortcuts{flex-basis:100%;color:#666;font-size:10px;margin-top:3px}
@@ -14132,7 +14932,7 @@ ${dialogueText}`;
       */
 
       /* v0.12.42 · 타임라인 민트블루 팔레트 + 관련로그 직접 선택 + 다음 저장 반응형 */
-      .tone-timeline{--rpcm-tone:#63D5E8!important}
+      .tone-timeline{--rpcm-tone:#34d399!important}
       /* v0.12.43 · 메인 타임라인 요약 카드도 상세 화면과 같은 팔레트 사용 */
       .rpcm-story-launchbar{border-color:#2F6F7D!important;background:linear-gradient(135deg,#112A33,#171b1c)!important;box-shadow:inset 3px 0 0 #49BDD3!important}.rpcm-story-launchbar.is-review-due{border-color:#49BDD3!important;background:linear-gradient(135deg,#112A33,#182226)!important}.rpcm-story-launchbar strong{color:#63D5E8!important}.rpcm-story-launchbar.is-review-due strong{color:#7BE3F0!important}.rpcm-story-launchbar span{color:#63D5E8!important;opacity:.72}.rpcm-story-launchbar .rpcm-mini{border-color:#49BDD3!important;background:#112A33!important;color:#63D5E8!important}.rpcm-story-launchbar .rpcm-mini:hover{border-color:#7BE3F0!important;background:#49BDD3!important;color:#071518!important}.rpcm-story-launchbar .rpcm-mini:active{border-color:#63D5E8!important;background:#2F6F7D!important;color:#e9fcff!important}.rpcm-story-launchbar .rpcm-mini:focus-visible{outline:0!important;border-color:#7BE3F0!important;box-shadow:0 0 0 3px rgba(123,227,240,.2)!important}.rpcm-story-launchbar .rpcm-auto-badge,.rpcm-story-launchbar .rpcm-timeline-badge{border-color:#2F6F7D!important;background:#112A33!important;color:#63D5E8!important}
       .rpcm-log-auto-panel{display:flex!important;flex-wrap:wrap!important;gap:7px 8px!important;overflow:visible!important;overscroll-behavior:auto!important;scrollbar-width:auto!important}
@@ -15137,6 +15937,8 @@ ${dialogueText}`;
     function createSlotCard(slot, openDefault = false) {
       const d = document.createElement('details');
       const inlineRetention = slot.group === 'character' || slot.group === 'extra' || slot.id === 'currentState';
+      const initialGuideVariant = slot.id === 'logSummary' ? getLogSummaryGuideVariant(false) : '';
+      const initialGuideModified = !!BASE_GUIDES[slot.id] && isGuideTextModified(slot.id, initialGuideVariant);
       d.className = `rpcm-slot${inlineRetention ? ' rpcm-slot-inline-retention' : ''}`;
       d.dataset.slotId = slot.id;
       d.open = hadPreviousRender ? previouslyOpenSlots.has(String(slot.id)) : openDefault;
@@ -15148,7 +15950,7 @@ ${dialogueText}`;
           <input class="rpcm-enable" type="checkbox" ${slot.enabled ? 'checked' : ''} title="${slot.group === 'character' ? '현재 주입 여부 · 자동 선택 대상 지정이 아닙니다.' : '현재 주입 여부'}" aria-label="${esc(slot.title)} 현재 주입 여부">
           <span class="rpcm-slot-name">${slot.id === 'currentState' ? '🧭 ' : slot.id === 'logSummary' ? '🗓️ ' : ''}${esc(slot.title)}</span>
           ${inlineRetention ? `<label class="rpcm-inline-retention" title="호출 후 앞으로 몇 번의 AI 응답에 연속 주입할지 선택 · 주기 반복 아님"><span>연속 유지</span><select class="rpcm-slot-retention" aria-label="${esc(slot.title)} 연속 유지 턴">${retentionOptionsHtml(slot.retentionTurns)}</select></label>` : ''}
-          ${BASE_GUIDES[slot.id] ? `<button class="rpcm-guide-toggle" type="button" title="GPT/Gemini에 복사해 쓸 수 있는 업데이트 지침">지침</button>` : ''}
+          ${BASE_GUIDES[slot.id] ? `<button class="rpcm-guide-toggle${initialGuideModified ? ' is-modified' : ''}" type="button" title="GPT/Gemini에 복사해 쓸 수 있는 업데이트 지침">지침</button>` : ''}
           ${pendingItem ? `<span class="rpcm-slot-remain">${esc(remainingLabelForItem(pendingItem))}</span>` : ''}
           <span class="rpcm-slot-count">${formatCount(String(slot.content || '').length)}자</span>
           ${deletable ? `<button class="rpcm-delete-btn" type="button">삭제</button>` : ''}
@@ -15180,7 +15982,7 @@ ${dialogueText}`;
       const editorClean = d.querySelector('[data-editor-clean]');
       const editorFocus = d.querySelector('[data-editor-focus]');
       let guideSaveTimer = 0;
-      let activeGuideVariant = slot.id === 'logSummary' ? getLogSummaryGuideVariant(false) : '';
+      let activeGuideVariant = initialGuideVariant;
       let cleanupUndo = null;
       let cleanupUndoTimer = 0;
       ta.value = slot.content || '';
@@ -15260,6 +16062,14 @@ ${dialogueText}`;
       if (editorFocus) editorFocus.onclick = () => openDetachedEditor(slot, ta);
       if (guideVariantSelect) guideVariantSelect.value = activeGuideVariant;
       if (guideTextarea) guideTextarea.value = getGuideText(slot.id, activeGuideVariant);
+      const refreshGuideModifiedState = (value = guideTextarea?.value) => {
+        if (!guideToggle) return false;
+        const modified = isGuideTextModified(slot.id, activeGuideVariant, value);
+        guideToggle.classList.toggle('is-modified', modified);
+        guideToggle.title = modified ? '기본값에서 수정된 지침' : '기본 지침';
+        return modified;
+      };
+      refreshGuideModifiedState();
       if (guideToggle && guidePanel) {
         guideToggle.onclick = (e) => {
           e.preventDefault(); e.stopPropagation();
@@ -15271,6 +16081,7 @@ ${dialogueText}`;
         };
       }
       if (guideTextarea) guideTextarea.oninput = () => {
+        refreshGuideModifiedState(guideTextarea.value);
         clearTimeout(guideSaveTimer);
         guideSaveTimer = setTimeout(() => saveGuideText(slot.id, guideTextarea.value, activeGuideVariant), 250);
       };
@@ -15281,6 +16092,7 @@ ${dialogueText}`;
         activeGuideVariant = saveLogSummaryGuideVariant(guideVariantSelect.value, false);
         guideVariantSelect.value = activeGuideVariant;
         if (guideTextarea) guideTextarea.value = getGuideText(slot.id, activeGuideVariant);
+        refreshGuideModifiedState();
       };
       if (guideCopy) guideCopy.onclick = async (e) => {
         e.preventDefault(); e.stopPropagation();
@@ -15294,6 +16106,7 @@ ${dialogueText}`;
         if (!confirm(`${guideLabel} 지침을 기본값으로 복원할까요?\n직접 수정한 내용은 사라집니다.`)) return;
         const restored = resetGuideText(slot.id, activeGuideVariant);
         if (guideTextarea) guideTextarea.value = restored;
+        refreshGuideModifiedState(restored);
         notify(`${guideLabel} 지침을 기본값으로 복원했습니다.`, 'success', 3200);
       };
       const refreshAutoTerms = () => {
