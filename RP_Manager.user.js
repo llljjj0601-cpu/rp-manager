@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🪽위시 RP Manager
 // @namespace    local.rp.context.manager
-// @version      0.12.62
+// @version      0.12.63
 // @description  장기 RP용 현재상태·날짜로그·연속성 타임라인·캐릭터 설정을 관리하고, 검수형 AI 생성과 필요한 컨텍스트 자동 주입을 지원합니다.
 // @author       User
 // @license      All Rights Reserved
@@ -42,13 +42,13 @@
   // 버전별 키를 쓰면 구버전과 신버전이 동시에 설치됐을 때 둘 다 실행될 수 있습니다.
   // 모든 버전이 공유하는 고정 키로 중복 실행을 막습니다.
   if (window.__WISH_RP_MANAGER_LOADED__) return;
-  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.12.62', loadedAt: Date.now() };
+  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.12.63', loadedAt: Date.now() };
   // 같은 페이지에 남아 있는 v0.8.10 복사본이 뒤늦게 시작되는 경우도 차단합니다.
   window.__RP_MANAGER_0810_LOADED__ = true;
 
   const APP = {
     name: '🪽위시 RP Manager',
-    version: '0.12.62',
+    version: '0.12.63',
     dbName: 'RPContextManagerDB',
     dbVersion: 2,
     storeName: 'rooms',
@@ -4338,6 +4338,34 @@ USER에 관한 각 문장은 다음 중 하나에 해당할 때만 작성한다.
         reject(new Error('외부 API 주소는 HTTPS만 사용할 수 있습니다.'));
         return;
       }
+      const nativeFetchFallback = async primaryError => {
+        if (!options.nativeFetchFallback || typeof fetch !== 'function') throw primaryError;
+        const timeoutMs = Number(options.timeout) || 120000;
+        const controller = typeof AbortController === 'function' ? new AbortController() : null;
+        const timeoutId = controller ? setTimeout(() => controller.abort(), timeoutMs) : 0;
+        try {
+          const response = await fetch(parsedUrl.href, {
+            method:options.method || 'POST',
+            headers:options.headers || {},
+            body:options.body == null ? undefined : String(options.body),
+            cache:'no-store',
+            credentials:'omit',
+            referrerPolicy:'no-referrer',
+            ...(controller ? { signal:controller.signal } : {}),
+          });
+          return {
+            ok:response.ok,
+            status:Number(response.status || 0),
+            text:String(await response.text()),
+            finalUrl:String(response.url || parsedUrl.href),
+            transport:'fetch-fallback',
+          };
+        } catch (error) {
+          throw new Error(`${String(primaryError?.message || primaryError || '외부 API 네트워크 오류')} 일반 fetch 재시도도 실패했습니다: ${String(error?.message || error || '알 수 없는 오류')}`);
+        } finally {
+          if (timeoutId) clearTimeout(timeoutId);
+        }
+      };
       GM_xmlhttpRequest({
         method:options.method || 'POST',
         url:parsedUrl.href,
@@ -4358,7 +4386,8 @@ USER에 관한 각 문장은 다음 중 하나에 해당할 때만 작성한다.
           const statusText = String(res?.statusText || '').trim();
           const responseText = String(res?.responseText || '').trim().slice(0, 300);
           const detail = [status ? `상태 ${status}` : '', statusText, responseText].filter(Boolean).join(' · ');
-          reject(new Error(`외부 API 네트워크 오류가 발생했습니다${detail ? `: ${detail}` : '.'}`));
+          const primaryError = new Error(`외부 API 네트워크 오류가 발생했습니다${detail ? `: ${detail}` : '.'}`);
+          nativeFetchFallback(primaryError).then(resolve, reject);
         },
         onabort:() => reject(new Error('외부 API 요청이 취소되었습니다.')),
       });
@@ -4880,6 +4909,8 @@ try {
         : (isModernOpenAiChatModel(model) ? 'max_completion_tokens' : 'max_tokens');
       const requestOpenAi = tokenField => aiHttpRequest(url, {
         headers,
+        // 안드로이드 Edge 등 GM 요청 호환 문제가 있는 환경에서만 실패 후 일반 fetch로 재시도합니다.
+        nativeFetchFallback:provider === 'openai',
         body:JSON.stringify(aiOpenAiChatPayload(model, systemInstruction, prompt, maxOutputTokens, {
           ...options,
           openAiTokenField:tokenField,
