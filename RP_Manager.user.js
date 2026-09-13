@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🪽위시 RP Manager
 // @namespace    local.rp.context.manager
-// @version      0.12.57
+// @version      0.12.58
 // @description  장기 RP용 현재상태·날짜로그·연속성 타임라인·캐릭터 설정을 관리하고, 검수형 AI 생성과 필요한 컨텍스트 자동 주입을 지원합니다.
 // @author       User
 // @license      All Rights Reserved
@@ -42,13 +42,13 @@
   // 버전별 키를 쓰면 구버전과 신버전이 동시에 설치됐을 때 둘 다 실행될 수 있습니다.
   // 모든 버전이 공유하는 고정 키로 중복 실행을 막습니다.
   if (window.__WISH_RP_MANAGER_LOADED__) return;
-  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.12.57', loadedAt: Date.now() };
+  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.12.58', loadedAt: Date.now() };
   // 같은 페이지에 남아 있는 v0.8.10 복사본이 뒤늦게 시작되는 경우도 차단합니다.
   window.__RP_MANAGER_0810_LOADED__ = true;
 
   const APP = {
     name: '🪽위시 RP Manager',
-    version: '0.12.57',
+    version: '0.12.58',
     dbName: 'RPContextManagerDB',
     dbVersion: 2,
     storeName: 'rooms',
@@ -3648,6 +3648,10 @@ USER에 관한 각 문장은 다음 중 하나에 해당할 때만 작성한다.
     quickApplyTimer: null,
     quickDesired: new Map(),
     quickApplying: false,
+    // 같은 방의 carrier PATCH는 반드시 한 번에 하나만 실행합니다.
+    // 대용량 로그 붙여넣기·자동 재선정·주입 위치 이동이 겹쳐도 서버 요청 순서를 보장합니다.
+    pendingCarrierSyncQueues: new Map(),
+    pendingCarrierSyncRequests: new Map(),
     carrierCapacityPreview: null,
     capacityUiRefresh: null,
     aiSummaryBusy: false,
@@ -9236,15 +9240,23 @@ ${dialogueText}`;
       `https://crack-api.wrtn.ai/crack-gen/v3/chats/${chatId}/messages/${messageId}`,
     ];
     let lastErr = null;
+    const requestChars = String(nextText || '').length;
+    const requestBytes = typeof TextEncoder === 'function' ? new TextEncoder().encode(String(nextText || '')).length : requestChars;
     for (const url of candidates) {
-      try {
-        await apiRequest('PATCH', url, { message: nextText });
-        return true;
-      } catch (e) {
-        lastErr = e;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          await apiRequest('PATCH', url, { message: nextText });
+          return true;
+        } catch (e) {
+          lastErr = e;
+          const retryable = /(?:API 오류\s+(?:500|502|503|504)|API 요청 시간 초과|네트워크 오류)/i.test(String(e?.message || e));
+          if (!retryable || attempt > 0) break;
+          // 같은 본문을 다시 보내는 PATCH는 멱등이므로 일시적인 5xx에 한 번만 재시도합니다.
+          await sleep(350);
+        }
       }
     }
-    throw lastErr || new Error('메시지 PATCH 실패');
+    throw new Error(`${lastErr?.message || '메시지 PATCH 실패'} · 전송 ${formatCount(requestChars)}자 / UTF-8 ${formatCount(requestBytes)}바이트`);
   }
 
   async function fetchRoomMeta(chatId) {
@@ -11685,7 +11697,7 @@ ${dialogueText}`;
     throw new Error(`이전 리롤의 주입 이동이 아직 끝나지 않았습니다.${lastError?.message ? ` · ${lastError.message}` : ''}`);
   }
 
-  async function prepareRerollBridge(room) {
+  async function prepareRerollBridgeNow(room) {
     const p = room?.pending;
     if (!p) return { prepared: false, reason: 'inactive' };
     if (p.reroll) throw new Error('이전 리롤을 처리 중입니다. 잠시 뒤 다시 눌러 주세요.');
@@ -11772,6 +11784,7 @@ ${dialogueText}`;
       };
       // 예산에 맞춰 임시 carrier에 들어간 항목만 유지합니다. 유지 횟수 값은 그대로입니다.
       nextPending.items = clonePendingItems(bridgeItems);
+      stampVerifiedPendingSnapshot(nextPending, bridgeItems, contextBlock);
       room.pending = nextPending;
       savePendingBackup(room.chatId, nextPending);
       await saveRoom(room);
@@ -11795,6 +11808,10 @@ ${dialogueText}`;
       if (room.chatId === state.currentChatId) state.currentRoom = room;
       throw error;
     }
+  }
+
+  function prepareRerollBridge(room) {
+    return queuePendingCarrierOperation(room, () => prepareRerollBridgeNow(room));
   }
 
   function bindRerollBridge() {
@@ -11943,6 +11960,52 @@ ${dialogueText}`;
     return (Array.isArray(items) ? items : []).map(i => ({ ...i }));
   }
 
+  function pendingCarrierSyncKey(room) {
+    return String(room?.chatId || room?.apiChatId || 'unknown-room');
+  }
+
+  function ensureVerifiedPendingSnapshot(pending) {
+    if (!pending) return;
+    if (!Array.isArray(pending.lastVerifiedItems)) pending.lastVerifiedItems = clonePendingItems(pending.items);
+    if (typeof pending.lastVerifiedContextBlock !== 'string') pending.lastVerifiedContextBlock = String(pending.contextBlock || '');
+  }
+
+  function stampVerifiedPendingSnapshot(pending, items, contextBlock) {
+    if (!pending) return pending;
+    pending.lastVerifiedItems = clonePendingItems(items);
+    pending.lastVerifiedContextBlock = String(contextBlock || '');
+    return pending;
+  }
+
+  async function rollbackPendingCarrierUpdate(room, pending, previousInjectedText) {
+    let rollbackVerified = false;
+    try {
+      await patchMessage(apiChatIdOf(room), pending.messageId, previousInjectedText);
+      const rollback = await verifyInjectedCarrier(room, pending, previousInjectedText, 3);
+      rollbackVerified = !!rollback.verified;
+    } catch (_) {}
+    if (!rollbackVerified) return false;
+
+    const rollbackItems = clonePendingItems(pending.lastVerifiedItems);
+    const rollbackBlock = String(pending.lastVerifiedContextBlock || pending.contextBlock || '');
+    const restoredItems = rollbackItems.length ? rollbackItems : clonePendingItems(pending.items);
+    const restored = stampVerifiedPendingSnapshot({
+      ...pending,
+      items: restoredItems,
+      contextBlock: rollbackBlock,
+      injectedChars: rollbackBlock.length,
+      carrierChars: previousInjectedText.length,
+      serverChars: previousInjectedText.length,
+      verified: true,
+      verifiedAt: Date.now(),
+    }, restoredItems, rollbackBlock);
+    room.pending = restored;
+    savePendingBackup(room.chatId, restored);
+    await saveRoom(room);
+    if (room.chatId === state.currentChatId) state.currentRoom = room;
+    return true;
+  }
+
   function slotToPendingItem(slot) {
     return {
       slotId: slot.id,
@@ -11988,9 +12051,10 @@ ${dialogueText}`;
     return { added };
   }
 
-  async function syncPendingCarrier(room, reason = 'update') {
+  async function syncPendingCarrierNow(room, reason = 'update') {
     const p = room.pending;
     if (!p) return { active: 0, cleared: false };
+    ensureVerifiedPendingSnapshot(p);
     // 다른 확프(예: Lore Refiner)가 carrier의 가시 본문을 수정했다면 그 최신값을 기준으로
     // 숨김 블록을 다시 붙입니다. 과거 p.originalText로 교정 결과를 덮어쓰지 않습니다.
     const live = await carrierOriginalFromServer(room, p);
@@ -12025,20 +12089,70 @@ ${dialogueText}`;
     const maxChars = Number(room.maxChars) || APP.defaultMaxChars;
     if (injectedText.length > maxChars) throw new Error(`변경 후 carrier 총 길이가 ${formatCount(injectedText.length)}자로 주입 한도 ${formatCount(maxChars)}자를 넘습니다.`);
     const previousInjectedText = buildInjectedMessage(p.originalText, p.contextBlock || buildContextBlockFromItems(activePendingItems(p)));
-    await patchMessage(apiChatIdOf(room), p.messageId, injectedText);
+    const requestChars = injectedText.length;
+    const requestBytes = typeof TextEncoder === 'function' ? new TextEncoder().encode(injectedText).length : requestChars;
+    try {
+      await patchMessage(apiChatIdOf(room), p.messageId, injectedText);
+    } catch (patchError) {
+      const rollbackVerified = await rollbackPendingCarrierUpdate(room, p, previousInjectedText);
+      throw new Error(`주입 내용 서버 갱신 실패: ${patchError.message}. ${rollbackVerified ? '직전 정상 주입본으로 복원했으며 저장된 로그 원문은 유지됩니다.' : '복원 확인 전이므로 주입 백업을 유지했습니다.'}`);
+    }
     const next = { ...p, contextBlock, injectedChars: contextBlock.length, carrierChars: injectedText.length, verified: false, verifiedAt: null };
     const verification = await verifyInjectedCarrier(room, next, injectedText);
     if (!verification.verified) {
-      try { await patchMessage(apiChatIdOf(room), p.messageId, previousInjectedText); } catch (_) {}
-      throw new Error('변경된 컨텍스트의 서버 재검증에 실패했습니다. 이전 주입 상태 복원을 시도했습니다.');
+      const rollbackVerified = await rollbackPendingCarrierUpdate(room, p, previousInjectedText);
+      throw new Error(`변경된 주입문의 서버 확인에 실패했습니다. ${rollbackVerified ? '직전 정상 주입본으로 복원했으며 저장된 로그 원문은 유지됩니다.' : '복원 확인 전이므로 주입 백업을 유지했습니다.'} 전송 ${formatCount(requestChars)}자 · UTF-8 ${formatCount(requestBytes)}바이트`);
     }
     next.verified = true; next.verifiedAt = Date.now(); next.serverChars = verification.serverChars;
+    stampVerifiedPendingSnapshot(next, active, contextBlock);
     room.pending = next;
     savePendingBackup(room.chatId, next);
     await saveRoom(room);
     if (room.chatId === state.currentChatId) state.currentRoom = room;
     sanitizeRenderedContextSoon();
     return { active: active.length, cleared: false, reason };
+  }
+
+  function queuePendingCarrierOperation(room, operation) {
+    const key = pendingCarrierSyncKey(room);
+    const previous = state.pendingCarrierSyncQueues.get(key) || Promise.resolve();
+    // 앞 작업이 실패해도 다음 작업은 서버의 최신 상태를 다시 확인한 뒤 실행합니다.
+    const task = previous.catch(() => {}).then(operation);
+    state.pendingCarrierSyncQueues.set(key, task);
+    return task.finally(() => {
+      if (state.pendingCarrierSyncQueues.get(key) === task) state.pendingCarrierSyncQueues.delete(key);
+    });
+  }
+
+  function syncPendingCarrier(room, reason = 'update') {
+    if (!room?.pending) return Promise.resolve({ active: 0, cleared: false });
+    const key = pendingCarrierSyncKey(room);
+    const existing = state.pendingCarrierSyncRequests.get(key);
+    if (existing) {
+      // 진행 중 새 편집이 들어오면 오래된 요청을 계속 쌓지 않고 마지막 상태만 한 번 더 반영합니다.
+      existing.requested = true;
+      existing.reason = reason;
+      return existing.promise;
+    }
+
+    const request = { requested:true, reason, promise:null };
+    request.promise = queuePendingCarrierOperation(room, async () => {
+      let result = { active:0, cleared:false };
+      while (request.requested && room.pending) {
+        request.requested = false;
+        try {
+          result = await syncPendingCarrierNow(room, request.reason);
+        } catch (error) {
+          // 실패하는 동안 더 최신 편집이 예약됐다면 그 최신 상태로 한 번 다시 시도합니다.
+          if (!request.requested) throw error;
+        }
+      }
+      return result;
+    }).finally(() => {
+      if (state.pendingCarrierSyncRequests.get(key) === request) state.pendingCarrierSyncRequests.delete(key);
+    });
+    state.pendingCarrierSyncRequests.set(key, request);
+    return request.promise;
   }
 
   function replacePendingLogItems(room) {
@@ -12076,6 +12190,9 @@ ${dialogueText}`;
 
   async function syncEditedSlotIntoPending(room, slot, reason = 'slot-content-edit') {
     if (!room?.pending || !slot) return false;
+    // 편집으로 pending.items가 바뀌기 전에 직전 서버 검증 상태를 확보합니다.
+    // 실패 시 편집한 저장 원문은 유지하면서 carrier만 이 상태로 되돌립니다.
+    ensureVerifiedPendingSnapshot(room.pending);
     if (slot.id === 'logSummary') {
       await rebuildPendingLogItems(room, reason === 'slot-content-edit' ? 'log-content-edit' : reason);
       return true;
@@ -13011,6 +13128,7 @@ ${dialogueText}`;
       logRecallRevision: APP.logRecallRevision,
       contextBlock, items,
     };
+    stampVerifiedPendingSnapshot(pending, items, contextBlock);
 
     savePendingBackup(room.chatId, pending);
     await patchMessage(apiChatIdOf(room), targetId, injectedText);
@@ -13029,6 +13147,7 @@ ${dialogueText}`;
       throw new Error('서버 재확인에서 숨김 컨텍스트를 확인하지 못해 AI 원문으로 안전 복원했습니다. 주입 해제 후 다시 주입해 주세요.');
     }
     pending.verified = true; pending.verifiedAt = Date.now(); pending.serverChars = verification.serverChars;
+    stampVerifiedPendingSnapshot(pending, items, contextBlock);
     savePendingBackup(room.chatId, pending);
     room.pending = pending; await saveRoom(room);
     if (room.chatId === state.currentChatId) state.currentRoom = room;
@@ -13038,7 +13157,7 @@ ${dialogueText}`;
     renderModalIfOpen();
   }
 
-  async function restorePending(room, reason = 'manual') {
+  async function restorePendingNow(room, reason = 'manual') {
     const p = room.pending;
     if (!p) return { restored: false, reason: 'none' };
 
@@ -13059,7 +13178,11 @@ ${dialogueText}`;
     return result;
   }
 
-  async function reanchorAfterResponse(room, latestAssistant, options = {}) {
+  function restorePending(room, reason = 'manual') {
+    return queuePendingCarrierOperation(room, () => restorePendingNow(room, reason));
+  }
+
+  async function reanchorAfterResponseNow(room, latestAssistant, options = {}) {
     const p = room.pending;
     if (!p) return;
     const countTurn = options.countTurn !== false;
@@ -13132,6 +13255,7 @@ ${dialogueText}`;
     const nextPending = { ...p, messageId: newId, originalText: newOriginal, baselineAssistantId: newId,
       armedAt: Date.now(), carrierArmedAt: Date.now(), originalChars: newOriginal.length, carrierChars: nextInjected.length,
       verified: false, verifiedAt: null, serverChars: 0, logRecallRevision: APP.logRecallRevision, contextBlock, injectedChars: contextBlock.length, items: p.items };
+    stampVerifiedPendingSnapshot(nextPending, active, contextBlock);
     if (rerollMove) delete nextPending.reroll;
 
     await patchMessage(apiChatIdOf(room), newId, nextInjected);
@@ -13151,6 +13275,7 @@ ${dialogueText}`;
       throw new Error('새 carrier 서버 검증에 실패해 새 AI 원문으로 안전 복원하고 자동 유지를 종료했습니다.');
     }
     nextPending.verified = true; nextPending.verifiedAt = Date.now(); nextPending.serverChars = verification.serverChars;
+    stampVerifiedPendingSnapshot(nextPending, active, contextBlock);
     room.pending = nextPending; savePendingBackup(room.chatId, nextPending); await saveRoom(room);
     if (room.chatId === state.currentChatId) {
       state.currentRoom = room;
@@ -13161,6 +13286,10 @@ ${dialogueText}`;
       notify(`${rerollMove ? '리롤 컨텍스트 유지 완료' : '컨텍스트 자동 이동 완료'} ✓ · ${active.length}개 항목 유지 중${autoBits.length ? ` · 자동호출 ${autoBits.join(' / ')}` : ''}`, 'success', autoBits.length ? 4800 : 3200);
       renderModalIfOpen();
     }
+  }
+
+  function reanchorAfterResponse(room, latestAssistant, options = {}) {
+    return queuePendingCarrierOperation(room, () => reanchorAfterResponseNow(room, latestAssistant, options));
   }
 
   async function checkPendingRoom(room) {
@@ -16213,7 +16342,8 @@ ${dialogueText}`;
         } catch (e) {
           notify(`현재 주입 내용 갱신 실패: ${e.message}`, 'error', 6500);
         }
-      }, mobileEditing ? 1800 : 700);
+      // 대용량 붙여넣기 직후 이어지는 입력을 한 번으로 묶어 불필요한 PATCH를 줄입니다.
+      }, slot.id === 'logSummary' ? (mobileEditing ? 2800 : 1800) : (mobileEditing ? 1800 : 700));
       ta.oninput = () => {
         slot.content = ta.value;
         count.textContent = `${formatCount(ta.value.length)}자`;
