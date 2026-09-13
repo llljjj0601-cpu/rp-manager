@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🪽위시 RP Manager
 // @namespace    local.rp.context.manager
-// @version      0.12.60
+// @version      0.12.61
 // @description  장기 RP용 현재상태·날짜로그·연속성 타임라인·캐릭터 설정을 관리하고, 검수형 AI 생성과 필요한 컨텍스트 자동 주입을 지원합니다.
 // @author       User
 // @license      All Rights Reserved
@@ -42,13 +42,13 @@
   // 버전별 키를 쓰면 구버전과 신버전이 동시에 설치됐을 때 둘 다 실행될 수 있습니다.
   // 모든 버전이 공유하는 고정 키로 중복 실행을 막습니다.
   if (window.__WISH_RP_MANAGER_LOADED__) return;
-  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.12.60', loadedAt: Date.now() };
+  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.12.61', loadedAt: Date.now() };
   // 같은 페이지에 남아 있는 v0.8.10 복사본이 뒤늦게 시작되는 경우도 차단합니다.
   window.__RP_MANAGER_0810_LOADED__ = true;
 
   const APP = {
     name: '🪽위시 RP Manager',
-    version: '0.12.60',
+    version: '0.12.61',
     dbName: 'RPContextManagerDB',
     dbVersion: 2,
     storeName: 'rooms',
@@ -4776,15 +4776,25 @@ try {
   function aiOpenAiChatPayload(model, systemInstruction, prompt, maxOutputTokens = 8192, options = {}) {
     const tokenLimit = Math.max(128, Number(maxOutputTokens) || 8192);
     const modern = isModernOpenAiChatModel(model);
+    const tokenField = options.openAiTokenField === 'max_tokens' || options.openAiTokenField === 'max_completion_tokens'
+      ? options.openAiTokenField
+      : (modern ? 'max_completion_tokens' : 'max_tokens');
     return {
       model,
       messages:[
         { role:'system', content:String(systemInstruction || '') },
         { role:'user', content:String(prompt || '') },
       ],
-      ...(modern ? { max_completion_tokens:tokenLimit } : { temperature:0.2, max_tokens:tokenLimit }),
+      ...(tokenField === 'max_completion_tokens' ? { max_completion_tokens:tokenLimit } : { max_tokens:tokenLimit }),
+      ...(!options.omitOpenAiTemperature && tokenField === 'max_tokens' ? { temperature:0.2 } : {}),
       ...(options.responseJsonSchema ? { response_format:{ type:'json_object' } } : {}),
     };
+  }
+
+  function shouldRetryOpenAiTokenField(response) {
+    if (!response || response.ok || ![400, 422].includes(Number(response.status))) return false;
+    const detail = String(response.text || '').toLowerCase();
+    return /max[_ -]?(?:completion[_ -]?)?tokens|unsupported (?:parameter|field)|unknown (?:parameter|field)|not supported|not permitted|temperature/.test(detail);
   }
 
   function aiUsageFromGemini(data) {
@@ -4859,10 +4869,24 @@ try {
       const url = provider === 'deepseek' ? 'https://api.deepseek.com/v1/chat/completions' : normalizeOpenAiEndpoint(settings.openaiBaseUrl);
       const headers = { 'Content-Type':'application/json' };
       if (secret.trim()) headers.Authorization = `Bearer ${secret.trim()}`;
-      const response = await aiHttpRequest(url, {
+      const officialOpenAi = provider === 'openai' && isOfficialOpenAiBaseUrl(settings.openaiBaseUrl);
+      const preferredTokenField = provider === 'openai' && !officialOpenAi
+        ? 'max_tokens'
+        : (isModernOpenAiChatModel(model) ? 'max_completion_tokens' : 'max_tokens');
+      const requestOpenAi = tokenField => aiHttpRequest(url, {
         headers,
-        body:JSON.stringify(aiOpenAiChatPayload(model, systemInstruction, prompt, maxOutputTokens, options)),
+        body:JSON.stringify(aiOpenAiChatPayload(model, systemInstruction, prompt, maxOutputTokens, {
+          ...options,
+          openAiTokenField:tokenField,
+          // 호환 서버는 모델명이 GPT-5/6 형식이어도 temperature를 지원하지 않을 수 있습니다.
+          omitOpenAiTemperature:provider === 'openai' && !officialOpenAi,
+        })),
       });
+      let response = await requestOpenAi(preferredTokenField);
+      if (provider === 'openai' && shouldRetryOpenAiTokenField(response)) {
+        const fallbackTokenField = preferredTokenField === 'max_completion_tokens' ? 'max_tokens' : 'max_completion_tokens';
+        response = await requestOpenAi(fallbackTokenField);
+      }
       const data = parseAiJsonResponse(response, provider === 'deepseek' ? 'DeepSeek' : 'OpenAI 호환 API');
       text = String(data?.choices?.[0]?.message?.content || '');
       finishReason = String(data?.choices?.[0]?.finish_reason || '');
@@ -13872,7 +13896,7 @@ ${dialogueText}`;
       .rpcm-ai-new-blocks{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:8px 9px;border:1px solid #405b4c;border-radius:8px;background:#17231d;color:#aee8c7;font-size:10px}.rpcm-ai-new-blocks[hidden]{display:none!important}.rpcm-ai-new-blocks strong{color:#d8f8e4}.rpcm-ai-new-block-chip{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:4px 7px;border:1px solid #39704f;border-radius:999px;background:#1d3025;color:#bcebcf}
       .rpcm-ai-view-tabs{gap:5px}.rpcm-ai-view-tab{padding:5px 8px;font-size:10px}.rpcm-ai-diff{border-radius:8px;overflow:visible}.rpcm-ai-diff-summary{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;gap:8px;padding:8px 10px;font-size:10px}.rpcm-ai-diff-metrics{display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-width:0}.rpcm-ai-diff-metrics strong{color:#ddd}.rpcm-ai-diff-sections{position:relative}.rpcm-ai-diff-sections summary{cursor:pointer;color:#c59aae}.rpcm-ai-diff-sections div{margin-top:5px;color:#888;line-height:1.45}.rpcm-ai-diff-hide{display:flex;align-items:center;gap:4px;white-space:nowrap;color:#aaa}.rpcm-ai-diff-head{font-size:10px}.rpcm-ai-diff-head>div,.rpcm-ai-diff-cell{padding:7px 9px}.rpcm-ai-diff-body{max-height:none;overflow:visible;font-size:10px;line-height:1.45}
       .rpcm-ai-foot{min-height:48px;padding:8px 12px;gap:7px;flex-wrap:nowrap}.rpcm-ai-foot .rpcm-ai-usage{flex:1;min-width:0;margin-right:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:9px}.rpcm-ai-foot .rpcm-ai-btn{flex:0 0 auto}
-      .rpcm-unified-api-backdrop{position:fixed;inset:0;z-index:2147483647;background:rgba(0,0,0,.74);display:flex;align-items:center;justify-content:center;padding:3vh 3vw;box-sizing:border-box;font-family:-apple-system,BlinkMacSystemFont,"Pretendard",sans-serif;color:#eee}.rpcm-unified-api-dialog{width:min(820px,94vw);height:auto;max-height:94vh}.rpcm-api-feature-list{display:grid;gap:0;border:1px solid #343434;border-radius:10px;overflow:hidden}.rpcm-api-feature-row{display:grid;grid-template-columns:minmax(180px,.85fr) minmax(220px,1fr) minmax(130px,.65fr);gap:12px;align-items:center;padding:12px;border-bottom:1px solid #343434}.rpcm-api-feature-row:last-child{border-bottom:0}.rpcm-api-feature-row>div{display:grid;gap:3px}.rpcm-api-feature-row strong{font-size:12px}.rpcm-api-feature-row small{color:#888;font-size:10px;line-height:1.45}.rpcm-api-feature-row select,.rpcm-api-feature-row input{min-width:0;width:100%;box-sizing:border-box;border:1px solid #424242;border-radius:8px;background:#101010;color:#eee;padding:8px 9px;font-size:12px}.rpcm-api-feature-status{display:grid;gap:2px}.rpcm-api-state{font-size:11px;font-weight:800}.rpcm-api-state.ok{color:#61d795}.rpcm-api-state.error{color:#ff8998}.rpcm-api-state.off,.rpcm-api-state.idle{color:#929292}.rpcm-api-context-toggle{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px;border:1px solid #493643;border-radius:10px;background:#211a1e}.rpcm-api-context-toggle>span{display:grid;gap:4px}.rpcm-api-context-toggle strong{font-size:12px}.rpcm-api-context-toggle small{color:#a98d9b;font-size:10px}.rpcm-api-context-toggle input{width:20px;height:20px;accent-color:#dc4f94}.rpcm-main-api-button{font-size:15px!important;color:#e1a7c3!important}
+      .rpcm-unified-api-backdrop{position:fixed;inset:0;z-index:2147483647;background:rgba(0,0,0,.74);display:flex;align-items:center;justify-content:center;padding:3vh 3vw;box-sizing:border-box;font-family:-apple-system,BlinkMacSystemFont,"Pretendard",sans-serif;color:#eee}.rpcm-unified-api-dialog{width:min(820px,94vw);height:auto;max-height:94vh}.rpcm-api-feature-list{display:grid;gap:0;border:1px solid #343434;border-radius:10px;overflow:hidden}.rpcm-api-feature-row{display:grid;grid-template-columns:minmax(180px,.85fr) minmax(220px,1fr) minmax(130px,.65fr);gap:12px;align-items:center;padding:12px;border-bottom:1px solid #343434}.rpcm-api-feature-row:last-child{border-bottom:0}.rpcm-api-feature-row>div{display:grid;gap:3px}.rpcm-api-feature-row strong{font-size:12px}.rpcm-api-feature-row small{color:#888;font-size:10px;line-height:1.45}.rpcm-api-feature-row select,.rpcm-api-feature-row input{min-width:0;width:100%;box-sizing:border-box;border:1px solid #424242;border-radius:8px;background:#101010;color:#eee;padding:8px 9px;font-size:12px}.rpcm-api-feature-status{display:grid;gap:2px}.rpcm-api-feature-status small{overflow-wrap:anywhere;white-space:normal}.rpcm-api-error-detail{color:#c9a2ae!important;max-height:4.5em;overflow:auto}.rpcm-api-state{font-size:11px;font-weight:800}.rpcm-api-state.ok{color:#61d795}.rpcm-api-state.error{color:#ff8998}.rpcm-api-state.off,.rpcm-api-state.idle{color:#929292}.rpcm-api-context-toggle{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px;border:1px solid #493643;border-radius:10px;background:#211a1e}.rpcm-api-context-toggle>span{display:grid;gap:4px}.rpcm-api-context-toggle strong{font-size:12px}.rpcm-api-context-toggle small{color:#a98d9b;font-size:10px}.rpcm-api-context-toggle input{width:20px;height:20px;accent-color:#dc4f94}.rpcm-main-api-button{font-size:15px!important;color:#e1a7c3!important}
       .rpcm-api-room-usage{gap:10px}.rpcm-api-usage-list{display:grid;border:1px solid #373737;border-radius:10px;overflow:hidden}.rpcm-api-usage-row{display:grid;grid-template-columns:minmax(120px,.65fr) minmax(0,1.6fr) auto;gap:10px;align-items:center;padding:10px 11px;border-bottom:1px solid #303030;background:#191919}.rpcm-api-usage-row:last-child{border-bottom:0}.rpcm-api-usage-row strong{font-size:11px;color:#eee}.rpcm-api-usage-row span{font-size:10px;color:#989898;line-height:1.45}.rpcm-api-usage-row b{font-size:10px;color:#efc9dc;text-align:right}.rpcm-api-usage-total{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 12px;align-items:center;padding:11px 12px;border:1px solid #573c4a;border-radius:10px;background:#211a1e}.rpcm-api-usage-total span{font-size:10px;color:#b5a8ae;line-height:1.55}.rpcm-api-usage-total strong{font-size:13px;color:#f3d7e4}.rpcm-api-usage-total small{grid-column:1/-1;color:#8f7e87;font-size:9px}.rpcm-api-usage-total small:empty{display:none}.rpcm-api-usage-details{border:1px solid #353535;border-radius:9px;background:#181818;overflow:hidden}.rpcm-api-usage-details>summary{display:flex;align-items:center;gap:8px;padding:9px 11px;cursor:pointer;list-style:none;color:#bbb;font-size:10px;font-weight:750}.rpcm-api-usage-details>summary::-webkit-details-marker{display:none}.rpcm-api-usage-details>summary span{margin-left:auto;color:#777}.rpcm-api-usage-details>div{max-height:250px;overflow:auto;border-top:1px solid #303030}.rpcm-api-usage-call{display:grid;grid-template-columns:135px 100px minmax(120px,1fr) minmax(170px,1fr) auto;gap:8px;align-items:center;padding:8px 10px;border-bottom:1px solid #292929;font-size:9px}.rpcm-api-usage-call:last-child{border-bottom:0}.rpcm-api-usage-call span{color:#8d8d8d;overflow-wrap:anywhere}.rpcm-api-usage-call strong{color:#d8c3cd}.rpcm-api-usage-call b{color:#eabfd4;text-align:right}.rpcm-api-usage-empty{padding:18px;text-align:center;color:#777;font-size:10px}
       @media(max-width:680px),(pointer:coarse) and (max-width:1024px){.rpcm-api-feature-row input{font-size:16px}#rpcm-ai-backdrop{padding:0}.rpcm-ai-dialog{width:100vw;height:100%;max-height:none;border-radius:0}.rpcm-ai-head{padding:9px 11px}.rpcm-ai-head p{display:none}.rpcm-ai-body{padding:9px;gap:8px}.rpcm-ai-grid,.rpcm-ai-range-primary{grid-template-columns:1fr}.rpcm-ai-field input:not([type=checkbox]),.rpcm-ai-field select,.rpcm-ai-field textarea,.rpcm-ai-guide-body textarea,.rpcm-ai-history-toolbar select{font-size:16px}.rpcm-ai-result textarea,.rpcm-ai-history-text{min-height:48vh;font-size:14px!important}#rpcm-ai-generate{justify-self:stretch;width:100%}.rpcm-ai-range-card{padding:10px}.rpcm-ai-range-resume{grid-template-columns:1fr}.rpcm-ai-range-resume .rpcm-ai-help{text-align:left}.rpcm-ai-range-resume .rpcm-ai-resume-mark{justify-self:start}.rpcm-ai-generate-row{display:grid}.rpcm-ai-generate-row .rpcm-ai-status{order:2}.rpcm-ai-connection-actions{align-items:stretch}.rpcm-ai-auth-note{flex-basis:100%;margin-right:0}.rpcm-ai-connection-actions .rpcm-ai-btn{flex:1}.rpcm-ai-foot{padding:7px 9px calc(7px + env(safe-area-inset-bottom,0px));gap:5px;flex-wrap:wrap}.rpcm-ai-foot .rpcm-ai-usage{width:100%;order:-1}.rpcm-ai-foot .rpcm-ai-btn{flex:1 1 auto;padding-inline:7px}.rpcm-ai-diff-summary{grid-template-columns:1fr}.rpcm-ai-diff-hide{justify-self:start}.rpcm-ai-diff-head,.rpcm-ai-diff-row{grid-template-columns:1fr}.rpcm-ai-guide-editor>summary span{display:none}}
       @media(max-width:680px){.rpcm-unified-api-backdrop{padding:0;align-items:stretch}.rpcm-unified-api-dialog{width:100vw;height:100%;max-height:none;border-radius:0}.rpcm-api-feature-row{grid-template-columns:1fr;gap:7px}.rpcm-api-feature-row select{font-size:16px}.rpcm-api-usage-row{grid-template-columns:1fr}.rpcm-api-usage-row b{text-align:left}.rpcm-api-usage-call{grid-template-columns:1fr 1fr}.rpcm-api-usage-call span:nth-of-type(3){grid-column:1/-1}.rpcm-api-usage-total{grid-template-columns:1fr}.rpcm-api-usage-total small{grid-column:1}}
@@ -13892,7 +13916,8 @@ ${dialogueText}`;
       const statusText = status => {
         if (!status) return '<span class="rpcm-api-state idle">● 확인 전</span>';
         const label = status.state === 'ok' ? '● 정상' : status.state === 'off' ? '● OFF' : '● 오류';
-        return `<span class="rpcm-api-state ${esc(status.state || 'idle')}">${label}</span>${status.message ? `<small>${esc(status.message)}</small>` : ''}`;
+        const detail = String(status.detail || '');
+        return `<span class="rpcm-api-state ${esc(status.state || 'idle')}">${label}</span>${status.message ? `<small>${esc(status.message)}</small>` : ''}${status.state === 'error' && detail ? `<small class="rpcm-api-error-detail" title="${esc(detail)}">${esc(detail.slice(0, 600))}</small>` : ''}`;
       };
       const rememberForm = () => {
         const providerEl = backdrop.querySelector('#rpcm-api-provider');
@@ -13940,18 +13965,23 @@ ${dialogueText}`;
             ? String(featureSetting.model || '')
             : String(settings.models?.[provider] || AI_SUMMARY_PROVIDER_DEFAULTS[provider]?.model || models[0]?.value || '');
           const status = settings.featureStatus?.[feature];
-          const modelControl = `<select data-api-feature-model="${feature}">${modelOptions(selected)}</select>`;
+          const modelControl = provider === 'openai'
+            ? `<input data-api-feature-model="${feature}" list="rpcm-openai-model-list" value="${esc(selected)}" placeholder="모델 ID 직접 입력">`
+            : `<select data-api-feature-model="${feature}">${modelOptions(selected)}</select>`;
           return `<div class="rpcm-api-feature-row"><div><strong>${esc(aiFeatureStatusLabel(feature))}</strong><small>${esc(description)}</small></div>${modelControl}<div class="rpcm-api-feature-status">${statusText(feature === 'context' && !room.aiContextLogRerankEnabled ? { state:'off' } : status)}</div></div>`;
         };
+        const openAiModelList = provider === 'openai'
+          ? `<datalist id="rpcm-openai-model-list">${models.map(item => `<option value="${esc(item.value)}">${esc(item.label)}</option>`).join('')}</datalist>`
+          : '';
         const openAiModelHelp = provider === 'openai'
-          ? `<p class="rpcm-ai-help">OpenAI 모델은 목록에서 선택합니다. 공식 OpenAI 주소는 https://api.openai.com/v1 입니다.</p>`
+          ? `<p class="rpcm-ai-help">목록에 없는 OpenAI 호환 모델 ID도 직접 입력할 수 있습니다. 주소는 /v1 또는 /chat/completions까지 입력해도 자동 처리합니다.</p>`
           : '';
         const providerOptions = AI_SUMMARY_PROVIDERS.map(id => `<option value="${id}" ${id === provider ? 'selected' : ''}>${esc(AI_SUMMARY_PROVIDER_DEFAULTS[id].label)}</option>`).join('');
         const secretLabel = provider === 'firebase' ? 'Firebase 설정 코드' : provider === 'vertex' ? 'Vertex 서비스 계정 JSON' : 'API 키';
         const secretInput = provider === 'firebase' || provider === 'vertex'
           ? `<textarea id="rpcm-api-secret" spellcheck="false" placeholder="${esc(secretLabel)}">${esc(draftSecrets.get(provider) || '')}</textarea>`
           : `<input id="rpcm-api-secret" type="password" autocomplete="new-password" value="${esc(draftSecrets.get(provider) || '')}" placeholder="${esc(secretLabel)}">`;
-        backdrop.innerHTML = `<div class="rpcm-ai-dialog rpcm-unified-api-dialog"><div class="rpcm-ai-head"><div><h2>⚙ API 설정</h2><p>AI 요약·연속성 타임라인·AI 맥락 검토를 한곳에서 관리합니다.</p></div><div class="rpcm-ai-spacer"></div><button type="button" class="rpcm-ai-close" data-api-act="close">✕</button></div><div class="rpcm-ai-body"><section class="rpcm-ai-card"><h3>공통 연결</h3><div class="rpcm-ai-grid"><label class="rpcm-ai-field"><span>연결 방식</span><select id="rpcm-api-provider">${providerOptions}</select></label>${provider === 'openai' ? `<label class="rpcm-ai-field"><span>OpenAI / 호환 API 주소</span><input id="rpcm-api-openai-url" value="${esc(settings.openaiBaseUrl || '')}" placeholder="https://api.openai.com/v1"></label>` : ''}${provider === 'vertex' ? `<label class="rpcm-ai-field"><span>Vertex 위치</span><input id="rpcm-api-vertex-location" value="${esc(settings.vertexLocation || 'global')}"></label><label class="rpcm-ai-field"><span>프로젝트 ID</span><input id="rpcm-api-vertex-project" value="${esc(settings.vertexProjectId || '')}"></label>` : ''}<label class="rpcm-ai-field rpcm-ai-secret" style="grid-column:1/-1"><span>${secretLabel}</span>${secretInput}</label></div><p class="rpcm-ai-help">인증 정보는 이 브라우저에만 저장되며 전체 백업에는 포함되지 않습니다.</p></section><section class="rpcm-ai-card"><h3>기능별 모델과 상태</h3><div class="rpcm-api-feature-list">${featureRow('summary','날짜요약·현재상태 생성')}${featureRow('timeline','전체 타임라인 초안 생성')}${featureRow('context','관련 날짜로그 후보 검토')}</div>${openAiModelHelp}<label class="rpcm-api-context-toggle"><span><strong>AI 맥락 검토 사용</strong><small>실패하면 기본 키워드 방식으로 자동 대체합니다.</small></span><input id="rpcm-api-context-enabled" type="checkbox" ${room.aiContextLogRerankEnabled ? 'checked' : ''}></label></section>${renderRoomAiUsageHtml(room)}<div class="rpcm-ai-status" id="rpcm-api-settings-status"></div></div><div class="rpcm-ai-foot"><button type="button" class="rpcm-ai-btn" data-api-act="test">기능별 연결 테스트</button><button type="button" class="rpcm-ai-btn" data-api-act="close">취소</button><button type="button" class="rpcm-ai-btn primary" data-api-act="save">설정 저장</button></div></div>`;
+        backdrop.innerHTML = `<div class="rpcm-ai-dialog rpcm-unified-api-dialog"><div class="rpcm-ai-head"><div><h2>⚙ API 설정</h2><p>AI 요약·연속성 타임라인·AI 맥락 검토를 한곳에서 관리합니다.</p></div><div class="rpcm-ai-spacer"></div><button type="button" class="rpcm-ai-close" data-api-act="close">✕</button></div><div class="rpcm-ai-body"><section class="rpcm-ai-card"><h3>공통 연결</h3><div class="rpcm-ai-grid"><label class="rpcm-ai-field"><span>연결 방식</span><select id="rpcm-api-provider">${providerOptions}</select></label>${provider === 'openai' ? `<label class="rpcm-ai-field"><span>OpenAI / 호환 API 주소</span><input id="rpcm-api-openai-url" value="${esc(settings.openaiBaseUrl || '')}" placeholder="https://api.openai.com/v1"></label>` : ''}${provider === 'vertex' ? `<label class="rpcm-ai-field"><span>Vertex 위치</span><input id="rpcm-api-vertex-location" value="${esc(settings.vertexLocation || 'global')}"></label><label class="rpcm-ai-field"><span>프로젝트 ID</span><input id="rpcm-api-vertex-project" value="${esc(settings.vertexProjectId || '')}"></label>` : ''}<label class="rpcm-ai-field rpcm-ai-secret" style="grid-column:1/-1"><span>${secretLabel}</span>${secretInput}</label></div><p class="rpcm-ai-help">인증 정보는 이 브라우저에만 저장되며 전체 백업에는 포함되지 않습니다.</p></section><section class="rpcm-ai-card"><h3>기능별 모델과 상태</h3><div class="rpcm-api-feature-list">${featureRow('summary','날짜요약·현재상태 생성')}${featureRow('timeline','전체 타임라인 초안 생성')}${featureRow('context','관련 날짜로그 후보 검토')}</div>${openAiModelList}${openAiModelHelp}<label class="rpcm-api-context-toggle"><span><strong>AI 맥락 검토 사용</strong><small>실패하면 기본 키워드 방식으로 자동 대체합니다.</small></span><input id="rpcm-api-context-enabled" type="checkbox" ${room.aiContextLogRerankEnabled ? 'checked' : ''}></label></section>${renderRoomAiUsageHtml(room)}<div class="rpcm-ai-status" id="rpcm-api-settings-status"></div></div><div class="rpcm-ai-foot"><button type="button" class="rpcm-ai-btn" data-api-act="test">기능별 연결 테스트</button><button type="button" class="rpcm-ai-btn" data-api-act="close">취소</button><button type="button" class="rpcm-ai-btn primary" data-api-act="save">설정 저장</button></div></div>`;
         backdrop.querySelector('#rpcm-api-provider').onchange = event => { rememberForm(); provider = event.target.value; settings.provider = provider; render(); };
       };
       const finish = value => { backdrop.remove(); resolve(value); };
@@ -14320,10 +14350,11 @@ ${dialogueText}`;
       currentProvider = provider;
       const presets = AI_SUMMARY_PROVIDER_MODELS[provider] || [];
       const requested = settings.models[provider] || AI_SUMMARY_PROVIDER_DEFAULTS[provider].model || presets[0]?.value || '';
-      const selected = presets.some(item => item.value === requested)
+      const allowCustomModel = provider === 'openai' && requested && !presets.some(item => item.value === requested);
+      const selected = allowCustomModel || presets.some(item => item.value === requested)
         ? requested
         : (AI_SUMMARY_PROVIDER_DEFAULTS[provider].model || presets[0]?.value || '');
-      modelEl.innerHTML = presets.map(item => `<option value="${esc(item.value)}">${esc(item.label)}</option>`).join('');
+      modelEl.innerHTML = `${allowCustomModel ? `<option value="${esc(requested)}">${esc(requested)} · 사용자 지정</option>` : ''}${presets.map(item => `<option value="${esc(item.value)}">${esc(item.label)}</option>`).join('')}`;
       modelEl.value = selected;
       settings.models[provider] = selected;
       backdrop.querySelectorAll('.rpcm-ai-openai').forEach(el => { el.hidden = provider !== 'openai'; });
