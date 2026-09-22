@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🪽위시 RP Manager
 // @namespace    local.rp.context.manager
-// @version      0.12.63
+// @version      0.13.7
 // @description  장기 RP용 현재상태·날짜로그·연속성 타임라인·캐릭터 설정을 관리하고, 검수형 AI 생성과 필요한 컨텍스트 자동 주입을 지원합니다.
 // @author       User
 // @license      All Rights Reserved
@@ -42,13 +42,13 @@
   // 버전별 키를 쓰면 구버전과 신버전이 동시에 설치됐을 때 둘 다 실행될 수 있습니다.
   // 모든 버전이 공유하는 고정 키로 중복 실행을 막습니다.
   if (window.__WISH_RP_MANAGER_LOADED__) return;
-  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.12.63', loadedAt: Date.now() };
+  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.13.7', loadedAt: Date.now() };
   // 같은 페이지에 남아 있는 v0.8.10 복사본이 뒤늦게 시작되는 경우도 차단합니다.
   window.__RP_MANAGER_0810_LOADED__ = true;
 
   const APP = {
     name: '🪽위시 RP Manager',
-    version: '0.12.63',
+    version: '0.13.7',
     dbName: 'RPContextManagerDB',
     dbVersion: 2,
     storeName: 'rooms',
@@ -82,6 +82,12 @@
     uiPrefsKey: 'RPCM_ui_preferences_v1',
     logRecallRevision: 9, // v0.12.59: 기존 활성 주입도 UTF-8 요청 안전선으로 로그를 다시 선정
   };
+
+  // Wish AI Manager가 Crack 탭으로 전달하는 외부 결과 브리지입니다.
+  const WISH_RP_BRIDGE_NAME = 'WISH_RP_BRIDGE_V1';
+  const WISH_RP_BRIDGE_EVENT = 'wish-rp-bridge-v1';
+  const WISH_RP_BRIDGE_STATUS_EVENT = 'wish-rp-bridge-v1-status';
+  const AI_REVIEW_INBOX_LIMIT = 60;
 
   const STORY_TIMELINE_GUIDE_V15 = String.raw`연속성 타임라인 생성·갱신 지침 v1.5 범용
 
@@ -3659,6 +3665,10 @@ USER에 관한 각 문장은 다음 중 하나에 해당할 때만 작성한다.
     capacityUiRefresh: null,
     aiSummaryBusy: false,
     aiSummaryDialog: null,
+    wishBridgeBound: false,
+    wishBridgeAvailable: false,
+    wishBridgeQueue: Promise.resolve(),
+    wishBridgeReplayTimers: [],
   };
 
   function upgradeCurrentStateGuideV3(value) {
@@ -3901,13 +3911,14 @@ USER에 관한 각 문장은 다음 중 하나에 해당할 때만 작성한다.
   }
 
   function loadUiPrefs() {
-    const fallback = { density: 'comfortable', editorHeights: {} };
+    const fallback = { density: 'comfortable', editorHeights: {}, desktopQuickTriggerVisible: true };
     try {
       const parsed = JSON.parse(localStorage.getItem(APP.uiPrefsKey) || 'null');
       if (!parsed || typeof parsed !== 'object') return fallback;
       return {
         density: parsed.density === 'compact' ? 'compact' : 'comfortable',
         editorHeights: parsed.editorHeights && typeof parsed.editorHeights === 'object' ? parsed.editorHeights : {},
+        desktopQuickTriggerVisible: parsed.desktopQuickTriggerVisible !== false,
       };
     } catch (_) { return fallback; }
   }
@@ -3946,6 +3957,428 @@ USER에 관한 각 문장은 다음 중 하나에 해당할 때만 작성한다.
     const fenced = text.match(/^\s*```(?:text|txt|markdown|md)?\s*\n([\s\S]*?)\n```\s*$/i);
     if (fenced) text = fenced[1];
     return text.split('\n').map(line => line.replace(/[\t ]+$/g, '')).join('\n').replace(/\n{4,}/g, '\n\n\n').trim();
+  }
+
+  function normalizeAiReviewInbox(room) {
+    if (!room || typeof room !== 'object') return [];
+    const normalizeDate = value => {
+      const numeric = Number(value);
+      if (Number.isFinite(numeric) && numeric > 0) return new Date(numeric).toISOString();
+      const parsed = Date.parse(String(value || ''));
+      return Number.isFinite(parsed) ? new Date(parsed).toISOString() : nowIso();
+    };
+    const seen = new Set();
+    room.aiReviewInbox = (Array.isArray(room.aiReviewInbox) ? room.aiReviewInbox : [])
+      .filter(item => item && typeof item === 'object' && String(item.jobId || '').trim() && String(item.result || '').trim())
+      .map(item => {
+        const result = String(item.result || '').trim();
+        const resultHash = String(item.resultHash || simpleHash(result));
+        const status = ['pending','applied','dismissed'].includes(String(item.status)) ? String(item.status) : 'pending';
+        return {
+          version:1,
+          bridge:WISH_RP_BRIDGE_NAME,
+          jobId:String(item.jobId || ''),
+          roomId:String(item.roomId || room.chatId || ''),
+          storyId:String(item.storyId || ''),
+          episodeId:String(item.episodeId || room.apiChatId || ''),
+          taskType:String(item.taskType || 'result'),
+          taskLabel:String(item.taskLabel || item.taskType || 'AI 결과'),
+          sourceCheckpoint:String(item.sourceCheckpoint || ''),
+          createdAt:normalizeDate(item.createdAt || item.receivedAt || nowIso()),
+          receivedAt:normalizeDate(item.receivedAt || item.createdAt || nowIso()),
+          result,
+          resultHash,
+          autoApply:!!item.autoApply,
+          destination:String(item.destination || 'review'),
+          conversationUrl:String(item.conversationUrl || ''),
+          status,
+          appliedAt:String(item.appliedAt || ''),
+          dismissedAt:String(item.dismissedAt || ''),
+          editedAt:String(item.editedAt || ''),
+        };
+      })
+      .sort((a, b) => String(b.receivedAt).localeCompare(String(a.receivedAt)))
+      .filter(item => {
+        const key = `${item.jobId}:${item.resultHash}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .slice(0, AI_REVIEW_INBOX_LIMIT);
+    return room.aiReviewInbox;
+  }
+
+  function aiReviewPendingCount(room) {
+    return normalizeAiReviewInbox(room).filter(item => item.status === 'pending').length;
+  }
+
+  function dispatchWishBridgeStatus(detail) {
+    try {
+      document.dispatchEvent(new CustomEvent(WISH_RP_BRIDGE_STATUS_EVENT, { detail:JSON.stringify(detail || {}) }));
+    } catch (error) {
+      console.warn('[위시RPManager] AI 브리지 상태 전송 실패', error);
+    }
+  }
+
+  function requestWishBridgeReplay() {
+    dispatchWishBridgeStatus({ status:'request-replay', requestedAt:Date.now(), managerVersion:APP.version });
+  }
+
+  function parseWishBridgePayload(raw) {
+    let payload = raw;
+    if (typeof payload === 'string') payload = JSON.parse(payload);
+    if (!payload || typeof payload !== 'object') throw new Error('결과 데이터가 비어 있습니다.');
+    if (Number(payload.version) !== 1 || String(payload.bridge || '') !== WISH_RP_BRIDGE_NAME) throw new Error('지원하지 않는 브리지 형식입니다.');
+    const jobId = String(payload.jobId || '').trim();
+    const result = cleanedPastedText(payload.result);
+    const taskType = String(payload.taskType || 'result').trim();
+    if (!jobId || !result) throw new Error('작업 ID 또는 결과 본문이 없습니다.');
+    if (['memory1','memory2'].includes(taskType) || String(payload.destination || '') === 'none') return null;
+    const createdAtNumber = Number(payload.createdAt);
+    const createdAtParsed = Date.parse(String(payload.createdAt || ''));
+    const createdAt = Number.isFinite(createdAtNumber) && createdAtNumber > 0
+      ? new Date(createdAtNumber).toISOString()
+      : Number.isFinite(createdAtParsed) ? new Date(createdAtParsed).toISOString() : nowIso();
+    return {
+      version:1,
+      bridge:WISH_RP_BRIDGE_NAME,
+      jobId,
+      roomId:String(payload.roomId || payload.episodeId || ''),
+      storyId:String(payload.storyId || ''),
+      episodeId:String(payload.episodeId || ''),
+      taskType,
+      taskLabel:String(payload.taskLabel || taskType || 'AI 결과'),
+      sourceCheckpoint:String(payload.sourceCheckpoint || ''),
+      createdAt,
+      receivedAt:nowIso(),
+      result,
+      resultHash:String(payload.resultHash || simpleHash(result)),
+      autoApply:!!payload.autoApply,
+      destination:String(payload.destination || 'review'),
+      conversationUrl:String(payload.conversationUrl || ''),
+      status:'pending',
+      appliedAt:'',
+      dismissedAt:'',
+    };
+  }
+
+  async function receiveWishBridgePayload(raw) {
+    const incoming = parseWishBridgePayload(raw);
+    if (!incoming) return;
+    state.wishBridgeAvailable = true;
+    const targetKey = String(incoming.roomId || incoming.episodeId || state.currentChatId || '');
+    if (!targetKey) throw new Error('결과를 저장할 RP 방 ID가 없습니다.');
+    const currentApiId = state.currentRoom ? String(apiChatIdOf(state.currentRoom) || '') : '';
+    const exactCurrent = state.currentRoom && (String(state.currentRoom.chatId) === targetKey || currentApiId === targetKey || (incoming.episodeId && currentApiId === String(incoming.episodeId)));
+    const room = exactCurrent ? state.currentRoom : await getRoom(targetKey, incoming.episodeId || targetKey.split('::')[0]);
+    const inbox = normalizeAiReviewInbox(room);
+    const sameJobIndex = inbox.findIndex(item => item.jobId === incoming.jobId);
+    let isNew = true;
+    if (sameJobIndex >= 0) {
+      const previous = inbox[sameJobIndex];
+      if (previous.resultHash === incoming.resultHash) {
+        Object.assign(previous, incoming, {
+          result:previous.editedAt ? previous.result : incoming.result,
+          status:previous.status,
+          appliedAt:previous.appliedAt,
+          dismissedAt:previous.dismissedAt,
+          editedAt:previous.editedAt,
+          receivedAt:previous.receivedAt || incoming.receivedAt,
+        });
+        isNew = false;
+      } else {
+        inbox.splice(sameJobIndex, 1, incoming);
+      }
+    } else {
+      inbox.unshift(incoming);
+    }
+    normalizeAiReviewInbox(room);
+    await saveRoom(room);
+    if (isNew) dispatchWishBridgeStatus({ jobId:incoming.jobId, resultHash:incoming.resultHash, status:'received', receivedAt:Date.now(), roomId:room.chatId });
+    if (String(room.chatId) === String(state.currentChatId)) {
+      state.currentRoom = room;
+      renderModalIfOpen();
+      if (isNew) notify(`AI 검토함에 “${incoming.taskLabel}” 결과가 도착했습니다.`, 'success', 4800);
+    }
+  }
+
+  function bindWishAiBridge() {
+    if (state.wishBridgeBound) return;
+    state.wishBridgeBound = true;
+    document.addEventListener(WISH_RP_BRIDGE_STATUS_EVENT, event => {
+      let status = null;
+      try { status = JSON.parse(String(event.detail || '')); } catch (_) { return; }
+      if (status?.status !== 'bridge-ready' || String(status.bridge || '') !== WISH_RP_BRIDGE_NAME) return;
+      if (state.wishBridgeAvailable) return;
+      state.wishBridgeAvailable = true;
+      renderModalIfOpen();
+    });
+    document.addEventListener(WISH_RP_BRIDGE_EVENT, event => {
+      state.wishBridgeQueue = state.wishBridgeQueue
+        .then(() => receiveWishBridgePayload(event.detail))
+        .catch(error => {
+          console.warn('[위시RPManager] AI 브리지 결과 수신 실패', error);
+          notify(`AI 검토함 수신 실패: ${error.message}`, 'error', 6500);
+        });
+    });
+    const replayDelays = [0, 900, 3200, 10000];
+    state.wishBridgeReplayTimers = replayDelays.map(delay => setTimeout(requestWishBridgeReplay, delay));
+    window.addEventListener('pageshow', requestWishBridgeReplay);
+  }
+
+  function aiReviewTarget(item) {
+    const destination = String(item?.destination || '');
+    if (destination === 'rp:currentState') return 'currentState';
+    if (destination === 'rp:logSummary') return 'logSummary';
+    if (destination === 'rp:timeline') return 'timeline';
+    return String(item?.taskType || '');
+  }
+
+  function aiReviewTaskCanApply(item) {
+    return ['currentState','logSummary'].includes(aiReviewTarget(item));
+  }
+
+  async function applyAiReviewInboxItem(room, item) {
+    const taskType = aiReviewTarget(item);
+    const text = cleanedPastedText(item?.result);
+    const cursor = aiSummaryCursorSnapshot(room);
+    room.aiSummaryUndo = {
+      logSummary:String(aiFixedSlot(room, 'logSummary')?.content || ''),
+      currentState:String(aiFixedSlot(room, 'currentState')?.content || ''),
+      cursorKey:String(cursor.cursorKey || ''),
+      cursorAt:String(cursor.cursorAt || ''),
+      cursorKeys:{ ...(cursor.cursorKeys || {}) },
+      cursorAts:{ ...(cursor.cursorAts || {}) },
+      savedAt:nowIso(),
+    };
+    if (taskType === 'currentState') {
+      const checked = validateGeneratedCurrentState(text);
+      if (checked.errors.length) throw new Error(checked.errors.join('\n'));
+      const slot = aiFixedSlot(room, 'currentState');
+      if (!slot) throw new Error('현재상태 저장칸을 찾지 못했습니다.');
+      slot.content = checked.text;
+      if (room.pending) await syncEditedSlotIntoPending(room, slot, 'ai-review-inbox-current-state');
+    } else if (taskType === 'logSummary') {
+      const slot = aiFixedSlot(room, 'logSummary');
+      const merged = mergeGeneratedLogText(room, text);
+      slot.content = merged.text;
+      remapLogSelectionKeys(room, merged.byOldKey, merged.newBlocks);
+      if (room.pending) await syncEditedSlotIntoPending(room, slot, 'ai-review-inbox-log-summary');
+    } else {
+      throw new Error('이 작업 종류는 자동 적용하지 않습니다. 결과를 복사해 필요한 화면에서 확인해 주세요.');
+    }
+    item.status = 'applied';
+    item.appliedAt = nowIso();
+    item.dismissedAt = '';
+    await saveRoom(room);
+    dispatchWishBridgeStatus({ jobId:item.jobId, resultHash:item.resultHash, status:'applied', appliedAt:Date.now(), roomId:room.chatId });
+    renderModalIfOpen();
+  }
+
+  function compactAiReviewListSpacing(value) {
+    const lines = String(value == null ? '' : value).replace(/\r\n?/g, '\n').split('\n');
+    const isListLine = line => /^\s*(?:[-*+•‣▪▫◦]\s+\S|\d+[.)]\s+\S)/.test(String(line || ''));
+    const result = [];
+    for (let index = 0; index < lines.length; index++) {
+      if (lines[index].trim()) {
+        result.push(lines[index]);
+        continue;
+      }
+      let nextIndex = index;
+      while (nextIndex < lines.length && !lines[nextIndex].trim()) nextIndex++;
+      const previous = [...result].reverse().find(line => String(line || '').trim()) || '';
+      const next = lines[nextIndex] || '';
+      if (isListLine(previous) && isListLine(next)) {
+        index = nextIndex - 1;
+        continue;
+      }
+      result.push(lines[index]);
+    }
+    return result.join('\n');
+  }
+
+  function openAiReviewInboxDialog(room, preferredJobId = '') {
+    document.querySelector('#rpcm-ai-review-backdrop')?.remove();
+    normalizeAiReviewInbox(room);
+    let selectedId = preferredJobId || room.aiReviewInbox.find(item => item.status === 'pending')?.jobId || room.aiReviewInbox[0]?.jobId || '';
+    const backdrop = document.createElement('div');
+    backdrop.id = 'rpcm-ai-review-backdrop';
+    const editorDrafts = new Map();
+    let editorSaveTimer = null;
+
+    const selectedItem = () => normalizeAiReviewInbox(room).find(item => item.jobId === selectedId) || room.aiReviewInbox[0] || null;
+    const dateLabel = value => {
+      try { return new Date(value).toLocaleString('ko-KR'); } catch (_) { return String(value || ''); }
+    };
+    const statusLabel = status => status === 'applied' ? '적용됨' : status === 'dismissed' ? '검토 완료' : '검토 대기';
+    const setEditorStatus = (text, tone = '') => {
+      const status = backdrop.querySelector('[data-review-edit-status]');
+      if (!status) return;
+      status.textContent = text;
+      status.dataset.tone = tone;
+    };
+    const editorValueFor = item => {
+      if (!item) return '';
+      const editor = backdrop.querySelector('[data-review-editor]');
+      if (editor && String(editor.dataset.reviewEditorJob || '') === String(item.jobId || '')) return editor.value;
+      if (editorDrafts.has(item.jobId)) return editorDrafts.get(item.jobId);
+      return String(item.result || '');
+    };
+    const saveEditorValue = async (jobId, value, announce = false) => {
+      clearTimeout(editorSaveTimer);
+      editorSaveTimer = null;
+      const item = normalizeAiReviewInbox(room).find(row => String(row.jobId) === String(jobId));
+      if (!item) return false;
+      const cleaned = cleanedPastedText(value);
+      if (!cleaned) {
+        setEditorStatus('내용은 비워둘 수 없습니다.', 'error');
+        if (announce) notify('결과 내용은 비워둘 수 없습니다.', 'warn');
+        return false;
+      }
+      if (cleaned !== item.result) {
+        item.result = cleaned;
+        item.editedAt = nowIso();
+        await saveRoom(room);
+        renderModalIfOpen();
+      }
+      editorDrafts.delete(item.jobId);
+      setEditorStatus('편집 내용 저장됨', 'saved');
+      if (announce) notify('편집한 결과를 검토함에 저장했습니다.', 'success', 3000);
+      return true;
+    };
+    const flushSelectedEditor = async (announce = false) => {
+      const item = selectedItem();
+      if (!item) return true;
+      return saveEditorValue(item.jobId, editorValueFor(item), announce);
+    };
+    const render = () => {
+      const items = normalizeAiReviewInbox(room);
+      const current = selectedItem();
+      const pendingCount = items.filter(item => item.status === 'pending').length;
+      backdrop.innerHTML = `
+        <div class="rpcm-ai-review-dialog" role="dialog" aria-modal="true" aria-label="AI 검토함">
+          <header><div><h2>📥 AI 검토함</h2><p>Wish AI Manager에서 전송한 이 방의 결과입니다. 같은 작업의 재전송은 한 건으로 합쳐집니다.</p></div><button type="button" data-review-action="close" aria-label="닫기">×</button></header>
+          <div class="rpcm-ai-review-summary"><strong>검토 대기 ${pendingCount}건</strong><span>전체 ${items.length}건 · 방별 로컬 보관</span><button type="button" data-review-action="replay">누락 결과 다시 받기</button></div>
+          <div class="rpcm-ai-review-layout">
+            <aside>${items.length ? items.map(item => `<button type="button" class="rpcm-ai-review-row${item.jobId === current?.jobId ? ' active' : ''}" data-review-job="${esc(item.jobId)}"><span class="status-${esc(item.status)}">${esc(statusLabel(item.status))}</span><strong>${esc(item.taskLabel)}</strong><small>${esc(dateLabel(item.createdAt))} · ${formatCount(item.result.length)}자</small></button>`).join('') : '<div class="rpcm-ai-review-empty">아직 받은 결과가 없습니다.<br>‘누락 결과 다시 받기’를 눌러 재전송을 요청할 수 있습니다.</div>'}</aside>
+            <main>${current ? `
+              <div class="rpcm-ai-review-meta"><div><b>${esc(current.taskLabel)}</b><span>${esc(current.taskType)} · ${esc(dateLabel(current.receivedAt))}${current.autoApply ? ' · 자동 적용 요청됨' : ''}${current.editedAt ? ` · 직접 수정 ${esc(dateLabel(current.editedAt))}` : ''}</span></div><span class="status-${esc(current.status)}">${esc(statusLabel(current.status))}</span></div>
+              <textarea data-review-editor data-review-editor-job="${esc(current.jobId)}" spellcheck="false">${esc(editorDrafts.has(current.jobId) ? editorDrafts.get(current.jobId) : current.result)}</textarea>
+              <div class="rpcm-ai-review-edit-note"><span data-review-edit-status>직접 편집 가능 · 변경 내용 자동 저장</span><small>‘목록 빈 줄 정리’는 목록 항목 사이의 빈 줄만 제거합니다.</small></div>
+              <div class="rpcm-ai-review-actions">
+                <button type="button" data-review-action="compact-list">목록 빈 줄 정리</button>
+                <button type="button" data-review-action="save-edit">편집 저장</button>
+                <button type="button" data-review-action="copy">내용 복사</button>
+                ${aiReviewTarget(current) === 'timeline' ? '<button type="button" data-review-action="timeline">타임라인으로 가져오기</button>' : ''}
+                ${aiReviewTaskCanApply(current) ? `<button type="button" class="primary" data-review-action="apply">${current.status === 'applied' ? '수정본 다시 적용' : '이 방에 적용'}</button>` : ''}
+                ${current.status === 'pending' ? '<button type="button" data-review-action="dismiss">검토 완료</button>' : current.status === 'dismissed' ? '<button type="button" data-review-action="restore">대기로 되돌리기</button>' : ''}
+                <button type="button" class="danger" data-review-action="delete">삭제</button>
+              </div>` : '<div class="rpcm-ai-review-detail-empty">왼쪽에서 결과를 선택해 주세요.</div>'}</main>
+          </div>
+        </div>`;
+      const editor = backdrop.querySelector('[data-review-editor]');
+      if (editor && current) editor.addEventListener('input', () => {
+        const jobId = String(editor.dataset.reviewEditorJob || current.jobId || '');
+        editorDrafts.set(jobId, editor.value);
+        setEditorStatus('편집 내용 저장 대기…');
+        clearTimeout(editorSaveTimer);
+        editorSaveTimer = setTimeout(() => {
+          void saveEditorValue(jobId, editor.value).catch(error => {
+            setEditorStatus(`저장 실패 · ${error.message}`, 'error');
+          });
+        }, 650);
+      });
+    };
+
+    const close = async () => {
+      if (!await flushSelectedEditor()) return false;
+      clearTimeout(editorSaveTimer);
+      editorSaveTimer = null;
+      backdrop.remove();
+      return true;
+    };
+    backdrop.addEventListener('click', async event => {
+      const row = event.target.closest('[data-review-job]');
+      if (row) {
+        if (!await flushSelectedEditor()) return;
+        selectedId = String(row.dataset.reviewJob || '');
+        render();
+        return;
+      }
+      const action = event.target.closest('[data-review-action]')?.dataset.reviewAction;
+      if (!action) { if (event.target === backdrop) await close(); return; }
+      if (action === 'close') { await close(); return; }
+      if (action === 'replay') { requestWishBridgeReplay(); notify('AI Manager에 보관된 결과 재전송을 요청했습니다.', 'info'); return; }
+      const item = selectedItem();
+      if (!item) return;
+      if (action === 'compact-list') {
+        const editor = backdrop.querySelector('[data-review-editor]');
+        if (!editor) return;
+        const before = editor.value;
+        const after = compactAiReviewListSpacing(before);
+        if (after === before) {
+          notify('정리할 목록 사이 빈 줄이 없습니다.', 'info', 3000);
+          return;
+        }
+        editor.value = after;
+        editorDrafts.set(item.jobId, after);
+        await saveEditorValue(item.jobId, after);
+        notify(`목록 사이 빈 줄 ${Math.max(1, before.split('\n').length - after.split('\n').length)}개를 정리했습니다.`, 'success', 3200);
+        return;
+      }
+      if (action === 'save-edit') {
+        await flushSelectedEditor(true);
+        return;
+      }
+      if (action === 'copy') {
+        const copied = await copyPlainText(editorValueFor(item));
+        notify(copied ? '결과 내용을 복사했습니다.' : '복사하지 못했습니다.', copied ? 'success' : 'error');
+        return;
+      }
+      if (action === 'timeline') {
+        if (!await flushSelectedEditor()) return;
+        const liveItem = selectedItem() || item;
+        if (!await close()) return;
+        await openStoryTimelineManagerDialogV35(room, { initialMode:'api-update', resultText:liveItem.result });
+        openAiReviewInboxDialog(room, liveItem.jobId);
+        return;
+      }
+      if (action === 'apply') {
+        try {
+          event.target.disabled = true;
+          if (!await flushSelectedEditor()) { event.target.disabled = false; return; }
+          const liveItem = selectedItem() || item;
+          await applyAiReviewInboxItem(room, liveItem);
+          notify(`“${liveItem.taskLabel}” 결과를 적용했습니다.`, 'success');
+          render();
+        } catch (error) {
+          notify(`결과 적용 실패: ${error.message}`, 'error', 7000);
+          event.target.disabled = false;
+        }
+        return;
+      }
+      if (action === 'dismiss' || action === 'restore') {
+        if (!await flushSelectedEditor()) return;
+        const liveItem = selectedItem() || item;
+        liveItem.status = action === 'dismiss' ? 'dismissed' : 'pending';
+        liveItem.dismissedAt = action === 'dismiss' ? nowIso() : '';
+        await saveRoom(room);
+        renderModalIfOpen(); render(); return;
+      }
+      if (action === 'delete') {
+        if (!confirm('이 결과를 검토함에서 삭제할까요?')) return;
+        editorDrafts.delete(item.jobId);
+        room.aiReviewInbox = normalizeAiReviewInbox(room).filter(rowItem => rowItem.jobId !== item.jobId);
+        selectedId = room.aiReviewInbox[0]?.jobId || '';
+        await saveRoom(room);
+        renderModalIfOpen(); render();
+      }
+    });
+    backdrop.addEventListener('keydown', event => {
+      if (event.key === 'Escape') void close().catch(error => notify(`편집 내용 저장 실패: ${error.message}`, 'error', 5000));
+    });
+    document.body.appendChild(backdrop);
+    render();
   }
 
   async function copyPlainText(value) {
@@ -5736,6 +6169,7 @@ ${dialogueText}`;
     room.autoLogExcludedKeys = Array.isArray(room.autoLogExcludedKeys) ? [...new Set(room.autoLogExcludedKeys.map(String))] : [];
     room.manualLogSelectedKeys = Array.isArray(room.manualLogSelectedKeys) ? [...new Set(room.manualLogSelectedKeys.map(String))] : [];
     room.favoriteLogKeys = Array.isArray(room.favoriteLogKeys) ? [...new Set(room.favoriteLogKeys.map(String))] : [];
+    room.acceptedUnknownLogKeys = Array.isArray(room.acceptedUnknownLogKeys) ? [...new Set(room.acceptedUnknownLogKeys.map(String))] : [];
     room.aiContextLogRerankEnabled = !!room.aiContextLogRerankEnabled;
     room.aiContextReviewReport = room.aiContextReviewReport && typeof room.aiContextReviewReport === 'object'
       ? room.aiContextReviewReport
@@ -7415,14 +7849,16 @@ ${dialogueText}`;
   }
 
   function compareLogBlocksChronologically(a, b) {
-    const rank = block => block?.isUnknown ? 2 : Number.isInteger(block?.sortYear) ? 0 : 1;
+    // 사용자가 날짜 미상으로 확정해 둔 사건은 시간상 가장 오래된 보관 구역에 둡니다.
+    // 실제 날짜를 창작하지 않으며, 미상 블록끼리는 원문 순서를 유지합니다.
+    const rank = block => block?.isUnknown ? 0 : Number.isInteger(block?.sortYear) ? 1 : 2;
     const rankDiff = rank(a) - rank(b);
     if (rankDiff) return rankDiff;
-    if (rank(a) === 0) {
+    if (rank(a) === 1) {
       const yearDiff = Number(a.sortYear) - Number(b.sortYear);
       if (yearDiff) return yearDiff;
     }
-    if (rank(a) < 2) {
+    if (rank(a) > 0) {
       const monthDiff = Number(a.month || 0) - Number(b.month || 0);
       if (monthDiff) return monthDiff;
       const dayDiff = Number(a.day || 0) - Number(b.day || 0);
@@ -7501,6 +7937,7 @@ ${dialogueText}`;
     room.autoLogExcludedKeys = remap(room.autoLogExcludedKeys);
     room.manualLogSelectedKeys = remap(room.manualLogSelectedKeys);
     room.favoriteLogKeys = remap(room.favoriteLogKeys);
+    room.acceptedUnknownLogKeys = remap(room.acceptedUnknownLogKeys);
 
     const nextByKey = new Map(newBlocks.map(block => [String(block.key), block]));
 
@@ -7563,6 +8000,7 @@ ${dialogueText}`;
     room.autoLogExcludedKeys = (room.autoLogExcludedKeys || []).map(String).filter(k => valid.has(k));
     room.manualLogSelectedKeys = (room.manualLogSelectedKeys || []).map(String).filter(k => valid.has(k));
     room.favoriteLogKeys = (room.favoriteLogKeys || []).map(String).filter(k => valid.has(k));
+    room.acceptedUnknownLogKeys = (room.acceptedUnknownLogKeys || []).map(String).filter(k => valid.has(k));
   }
 
   // 기본 관련로그 검색은 로컬 키워드 점수화이며, 사용자가 옵션을 켠 경우에만
@@ -8001,6 +8439,7 @@ ${dialogueText}`;
     const active = items.filter(i => Number(i.totalTurns || 0) === 0 || Number(i.usedTurns || 0) < Number(i.totalTurns || 0));
     const persistentCount = active.filter(i => Number(i.totalTurns || 0) === 0).length;
     const preview = active.slice(0, 4).map(i => `${i.title}: ${remainingLabelForItem(i)}`).join(' · ');
+    if (p.reanchorRetry) return `자동 복구 대기 · ${active.length}개 항목 보존${persistentCount ? ` · 계속 유지 ${persistentCount}개` : ''}`;
     return `${active.length}개 항목 유지 중${persistentCount ? ` · 계속 유지 ${persistentCount}개` : ''}${preview ? ` · ${preview}` : ''}${active.length > 4 ? ' · …' : ''}`;
   }
 
@@ -8357,6 +8796,16 @@ ${dialogueText}`;
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
+  function daysInLogMonth(year, month) {
+    const normalizedYear = Number.isInteger(Number(year)) && Number(year) > 0 ? Number(year) : 2000;
+    const normalizedMonth = Number(month);
+    if (normalizedMonth === 2) {
+      const leap = normalizedYear % 4 === 0 && (normalizedYear % 100 !== 0 || normalizedYear % 400 === 0);
+      return leap ? 29 : 28;
+    }
+    return [4, 6, 9, 11].includes(normalizedMonth) ? 30 : 31;
+  }
+
   function openLogDateNormalizerDialog(room) {
     return new Promise(resolve => {
       const log = (room.slots || []).find(s => s.id === 'logSummary');
@@ -8371,6 +8820,7 @@ ${dialogueText}`;
       const dated = blocks.filter(b => !b.isUnknown && !b.isSpecialDate);
       const special = blocks.filter(b => b.isSpecialDate);
       const unknown = blocks.filter(b => b.isUnknown);
+      const acceptedUnknown = new Set((room.acceptedUnknownLogKeys || []).map(String));
       const old = document.getElementById('rpcm-log-dialog-backdrop');
       if (old) old.remove();
       const backdrop = document.createElement('div');
@@ -8379,12 +8829,17 @@ ${dialogueText}`;
       const datedHtml = dated.length ? `
         <details class="rpcm-log-year" open>
           <summary><strong>날짜가 있는 로그</strong><span>${dated.length}개</span></summary>
-          <div class="rpcm-log-help">이미 연도를 붙인 로그도 언제든 다시 수정할 수 있습니다. 여러 항목을 체크한 뒤 연도만 한꺼번에 바꾸거나, 각 행에서 연도·월·일을 직접 고칠 수 있습니다. 연도 칸을 비우면 다시 [M월 D일-...] 형식으로 되돌립니다.</div>
-          <div class="rpcm-log-groupbar">
+          <div class="rpcm-log-help">이미 정리한 날짜도 언제든 다시 수정할 수 있습니다. 여러 항목을 체크한 뒤 연·월·일 중 필요한 값만 한꺼번에 바꿀 수 있습니다. 일괄 수정에서 비워 둔 값은 기존 날짜를 유지합니다.</div>
+          <div class="rpcm-log-groupbar rpcm-date-bulkbar">
             <button type="button" class="rpcm-lib-small" id="rpcm-date-select-all">전체 선택</button>
             <button type="button" class="rpcm-lib-small" id="rpcm-date-select-none">전체 해제</button>
-            <label>선택 연도 <input id="rpcm-date-bulk-year" type="number" min="1" max="999999" step="1" placeholder="714 / 2025" style="width:96px"></label>
-            <button type="button" class="rpcm-lib-small" id="rpcm-date-apply-year">선택에 연도 적용</button>
+            <strong id="rpcm-date-selected-count">선택 0개</strong>
+            <span class="rpcm-date-bulk-fields">
+              <label>연 <input id="rpcm-date-bulk-year" type="number" min="1" max="999999" step="1" placeholder="유지"></label>
+              <label>월 <input id="rpcm-date-bulk-month" type="number" min="1" max="12" step="1" placeholder="유지"></label>
+              <label>일 <input id="rpcm-date-bulk-day" type="number" min="1" max="31" step="1" placeholder="유지"></label>
+            </span>
+            <button type="button" class="rpcm-lib-small" id="rpcm-date-apply-bulk">선택 날짜 일괄 적용</button>
             <button type="button" class="rpcm-lib-small" id="rpcm-date-clear-year">선택 연도 비우기</button>
           </div>
           ${dated.map(b => `<div class="rpcm-log-row rpcm-date-row" data-log-index="${b.index}"><div class="rpcm-log-row-head"><label style="display:flex;align-items:center;gap:7px;flex:1;min-width:0"><input type="checkbox" class="rpcm-date-select"><strong>${esc(b.titleText)}</strong></label><div style="display:flex;align-items:center;gap:4px;flex-wrap:nowrap"><input class="rpcm-date-year" type="number" min="1" max="999999" step="1" value="${b.year || ''}" placeholder="연도" style="width:86px" title="비우면 연도 없는 날짜로 변경"><span style="font-size:10px;color:#777">년</span><input class="rpcm-date-month" type="number" min="1" max="12" step="1" value="${b.month}" style="width:48px"><span style="font-size:10px;color:#777">월</span><input class="rpcm-date-day" type="number" min="1" max="31" step="1" value="${b.day}" style="width:48px"><span style="font-size:10px;color:#777">일</span></div></div><div class="rpcm-log-row-reason">원문: ${esc(b.heading)}</div></div>`).join('')}
@@ -8393,8 +8848,9 @@ ${dialogueText}`;
       const unknownHtml = unknown.length ? `
         <details class="rpcm-log-year" open>
           <summary><strong>날짜 미상</strong><span>${unknown.length}개</span></summary>
-          <div class="rpcm-log-help">날짜 미상은 정상적인 로그 상태로 그대로 둘 수 있습니다. 실제 날짜를 알게 된 항목만 오른쪽에 날짜를 지정하세요. 비워두면 계속 ‘날짜 미상’으로 유지됩니다.</div>
-          ${unknown.map(b => `<div class="rpcm-log-row rpcm-date-unknown-row" data-log-index="${b.index}"><div class="rpcm-log-row-head"><strong>${esc(b.titleText)}</strong><input class="rpcm-date-full" type="date" title="비워두면 날짜 미상 유지" style="width:145px"></div><div class="rpcm-log-row-reason">원문: ${esc(b.heading)}</div></div>`).join('')}
+          <div class="rpcm-log-help">날짜를 모르는 사건은 가장 과거의 ‘날짜 미상’ 구역에 그대로 보관합니다. <b>날짜 미상으로 계속 유지</b>를 체크하면 메인 화면의 노란 안내가 사라집니다. 각 항목의 제목과 본문을 직접 고치거나 삭제할 수도 있습니다.</div>
+          <div class="rpcm-log-groupbar"><button type="button" class="rpcm-lib-small" id="rpcm-unknown-accept-all">모두 날짜 미상으로 유지</button><button type="button" class="rpcm-lib-small" id="rpcm-unknown-accept-none">유지 확인 모두 해제</button></div>
+          ${unknown.map(b => `<div class="rpcm-log-row rpcm-date-unknown-row" data-log-index="${b.index}"><div class="rpcm-log-row-head"><strong>${esc(b.titleText)}</strong><input class="rpcm-date-full" type="date" title="실제 날짜를 알게 된 경우에만 지정" style="width:145px"></div><div class="rpcm-unknown-controls"><label><input type="checkbox" class="rpcm-unknown-accepted" ${acceptedUnknown.has(String(b.key)) ? 'checked' : ''}> 날짜 미상으로 계속 유지</label><button type="button" class="rpcm-lib-small rpcm-unknown-toggle">내용 보기·수정</button><button type="button" class="rpcm-lib-small rpcm-unknown-delete">삭제</button></div><div class="rpcm-unknown-editor" hidden><label><span>제목·키워드</span><input type="text" class="rpcm-unknown-events" value="${esc(b.events)}" placeholder="사건명·키워드" spellcheck="false"></label><label><span>본문</span><textarea class="rpcm-unknown-body" spellcheck="false">${esc(b.body)}</textarea></label></div><div class="rpcm-log-row-reason">원문: ${esc(b.heading)} · ${formatCount(b.body.length)}자</div></div>`).join('')}
         </details>` : '';
 
       const specialHtml = special.length ? `
@@ -8419,22 +8875,83 @@ ${dialogueText}`;
 
       const allBtn = backdrop.querySelector('#rpcm-date-select-all');
       const noneBtn = backdrop.querySelector('#rpcm-date-select-none');
-      const applyYearBtn = backdrop.querySelector('#rpcm-date-apply-year');
+      const applyBulkBtn = backdrop.querySelector('#rpcm-date-apply-bulk');
       const clearYearBtn = backdrop.querySelector('#rpcm-date-clear-year');
-      if (allBtn) allBtn.onclick = () => backdrop.querySelectorAll('.rpcm-date-select').forEach(cb => { cb.checked = true; });
-      if (noneBtn) noneBtn.onclick = () => backdrop.querySelectorAll('.rpcm-date-select').forEach(cb => { cb.checked = false; });
-      if (applyYearBtn) applyYearBtn.onclick = () => {
-        const year = Number(backdrop.querySelector('#rpcm-date-bulk-year')?.value || 0);
-        if (!Number.isInteger(year) || year < 1 || year > 999999) { notify('적용할 연도를 1~6자리 숫자로 입력해 주세요.', 'warn', 3800); return; }
-        const selected = [...backdrop.querySelectorAll('.rpcm-date-row')].filter(row => row.querySelector('.rpcm-date-select')?.checked);
-        if (!selected.length) { notify('연도를 적용할 날짜를 먼저 선택해 주세요.', 'warn', 3800); return; }
-        selected.forEach(row => { const input = row.querySelector('.rpcm-date-year'); if (input) input.value = String(year); });
+      const selectedDateRows = () => [...backdrop.querySelectorAll('.rpcm-date-row')].filter(row => row.querySelector('.rpcm-date-select')?.checked);
+      const updateSelectedDateCount = () => {
+        const selected = selectedDateRows();
+        const count = backdrop.querySelector('#rpcm-date-selected-count');
+        if (count) count.textContent = `선택 ${selected.length}개`;
+        backdrop.querySelectorAll('.rpcm-date-row').forEach(row => row.classList.toggle('is-selected', !!row.querySelector('.rpcm-date-select')?.checked));
+      };
+      backdrop.querySelectorAll('.rpcm-date-select').forEach(cb => cb.addEventListener('change', updateSelectedDateCount));
+      if (allBtn) allBtn.onclick = () => { backdrop.querySelectorAll('.rpcm-date-select').forEach(cb => { cb.checked = true; }); updateSelectedDateCount(); };
+      if (noneBtn) noneBtn.onclick = () => { backdrop.querySelectorAll('.rpcm-date-select').forEach(cb => { cb.checked = false; }); updateSelectedDateCount(); };
+      if (applyBulkBtn) applyBulkBtn.onclick = () => {
+        const selected = selectedDateRows();
+        if (!selected.length) { notify('일괄 수정할 날짜를 먼저 선택해 주세요.', 'warn', 3800); return; }
+        const values = {
+          year:String(backdrop.querySelector('#rpcm-date-bulk-year')?.value || '').trim(),
+          month:String(backdrop.querySelector('#rpcm-date-bulk-month')?.value || '').trim(),
+          day:String(backdrop.querySelector('#rpcm-date-bulk-day')?.value || '').trim(),
+        };
+        if (!values.year && !values.month && !values.day) { notify('바꿀 연·월·일 중 하나 이상을 입력해 주세요.', 'warn', 3800); return; }
+        const parsed = {
+          year:values.year ? Number(values.year) : null,
+          month:values.month ? Number(values.month) : null,
+          day:values.day ? Number(values.day) : null,
+        };
+        if (values.year && (!Number.isInteger(parsed.year) || parsed.year < 1 || parsed.year > 999999)) { notify('연도는 1~6자리 숫자로 입력해 주세요.', 'warn', 3800); return; }
+        if (values.month && (!Number.isInteger(parsed.month) || parsed.month < 1 || parsed.month > 12)) { notify('월은 1~12 사이로 입력해 주세요.', 'warn', 3800); return; }
+        if (values.day && (!Number.isInteger(parsed.day) || parsed.day < 1 || parsed.day > 31)) { notify('일은 1~31 사이로 입력해 주세요.', 'warn', 3800); return; }
+        const changes = [];
+        for (const row of selected) {
+          const currentYearText = String(row.querySelector('.rpcm-date-year')?.value || '').trim();
+          const year = values.year ? parsed.year : (currentYearText ? Number(currentYearText) : null);
+          const month = values.month ? parsed.month : Number(row.querySelector('.rpcm-date-month')?.value || 0);
+          const day = values.day ? parsed.day : Number(row.querySelector('.rpcm-date-day')?.value || 0);
+          const maxDay = daysInLogMonth(year, month);
+          if (!Number.isInteger(month) || month < 1 || month > 12 || !Number.isInteger(day) || day < 1 || day > maxDay) {
+            const title = row.querySelector('strong')?.textContent?.trim() || '선택한 날짜';
+            notify(`${title}: ${year ? `${year}년 ` : ''}${month}월 ${day}일은 올바른 날짜가 아닙니다.`, 'warn', 5200);
+            return;
+          }
+          changes.push({ row, year, month, day });
+        }
+        changes.forEach(({ row, year, month, day }) => {
+          if (values.year) row.querySelector('.rpcm-date-year').value = String(year);
+          if (values.month) row.querySelector('.rpcm-date-month').value = String(month);
+          if (values.day) row.querySelector('.rpcm-date-day').value = String(day);
+        });
+        notify(`선택한 날짜 ${changes.length}개의 입력값을 일괄 수정했습니다. 아래 ‘날짜 수정 적용’을 눌러 저장해 주세요.`, 'success', 4200);
       };
       if (clearYearBtn) clearYearBtn.onclick = () => {
-        const selected = [...backdrop.querySelectorAll('.rpcm-date-row')].filter(row => row.querySelector('.rpcm-date-select')?.checked);
+        const selected = selectedDateRows();
         if (!selected.length) { notify('연도를 비울 날짜를 먼저 선택해 주세요.', 'warn', 3800); return; }
         selected.forEach(row => { const input = row.querySelector('.rpcm-date-year'); if (input) input.value = ''; });
+        notify(`선택한 날짜 ${selected.length}개의 연도를 비웠습니다. 아래 ‘날짜 수정 적용’을 눌러 저장해 주세요.`, 'success', 4200);
       };
+      updateSelectedDateCount();
+      const acceptAllUnknownBtn = backdrop.querySelector('#rpcm-unknown-accept-all');
+      const clearAcceptedUnknownBtn = backdrop.querySelector('#rpcm-unknown-accept-none');
+      if (acceptAllUnknownBtn) acceptAllUnknownBtn.onclick = () => backdrop.querySelectorAll('.rpcm-unknown-accepted').forEach(cb => { cb.checked = true; });
+      if (clearAcceptedUnknownBtn) clearAcceptedUnknownBtn.onclick = () => backdrop.querySelectorAll('.rpcm-unknown-accepted').forEach(cb => { cb.checked = false; });
+      backdrop.querySelectorAll('.rpcm-unknown-toggle').forEach(button => button.onclick = () => {
+        const editor = button.closest('.rpcm-date-unknown-row')?.querySelector('.rpcm-unknown-editor');
+        if (!editor) return;
+        editor.hidden = !editor.hidden;
+        button.textContent = editor.hidden ? '내용 보기·수정' : '내용 닫기';
+      });
+      backdrop.querySelectorAll('.rpcm-unknown-delete').forEach(button => button.onclick = () => {
+        const row = button.closest('.rpcm-date-unknown-row');
+        if (!row) return;
+        const block = blocks[Number(row.dataset.logIndex)];
+        const deleting = !row.classList.contains('is-delete-pending');
+        if (deleting && !confirm(`‘${block?.titleText || '날짜 미상 로그'}’ 항목을 삭제할까요?\n아래 ‘적용’을 누르기 전에는 저장되지 않습니다.`)) return;
+        row.classList.toggle('is-delete-pending', deleting);
+        button.textContent = deleting ? '삭제 취소' : '삭제';
+        row.querySelectorAll('input,textarea').forEach(input => { input.disabled = deleting; });
+      });
 
       backdrop.querySelector('[data-act="confirm"]').onclick = () => {
         const replacements = [];
@@ -8453,8 +8970,7 @@ ${dialogueText}`;
           const day = Number(rawDay);
           if (year != null && (!Number.isInteger(year) || year < 1 || year > 999999)) { invalidMessage = `${block.titleText}: 연도를 1~6자리 숫자로 입력해 주세요.`; return; }
           if (!Number.isInteger(month) || month < 1 || month > 12) { invalidMessage = `${block.titleText}: 월은 1~12 사이여야 합니다.`; return; }
-          const checkYear = year || 2000;
-          const maxDay = new Date(checkYear, month, 0).getDate();
+          const maxDay = daysInLogMonth(year, month);
           if (!Number.isInteger(day) || day < 1 || day > maxDay) { invalidMessage = `${block.titleText}: ${month}월의 날짜가 올바르지 않습니다.`; return; }
           const changed = (year || null) !== (block.year || null) || month !== block.month || day !== block.day;
           if (!changed) return;
@@ -8463,25 +8979,54 @@ ${dialogueText}`;
 
         if (invalidMessage) { notify(invalidMessage, 'warn', 5200); return; }
 
+        const deletedIndexes = new Set();
+        const desiredAcceptedOldKeys = new Set();
         backdrop.querySelectorAll('.rpcm-date-unknown-row').forEach(row => {
           const idx = Number(row.dataset.logIndex);
           const block = blocks[idx];
+          if (!block) return;
+          if (row.classList.contains('is-delete-pending')) {
+            deletedIndexes.add(idx);
+            replacements.push({ start:block.sourceStart, end:block.sourceEnd, text:'' });
+            return;
+          }
           const value = String(row.querySelector('.rpcm-date-full')?.value || '').trim();
-          if (!block || !value) return; // blank = 날짜 미상 유지
-          const m = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-          if (!m) return;
-          replacements.push({ start:block.sourceStart, end:block.headingEnd, text:formatNormalizedLogHeading(block, Number(m[1]), Number(m[2]), Number(m[3])) });
+          const events = String(row.querySelector('.rpcm-unknown-events')?.value || '').trim();
+          const body = String(row.querySelector('.rpcm-unknown-body')?.value || '').trim();
+          if (!body) { invalidMessage = `${block.titleText}: 본문을 비울 수 없습니다. 필요 없는 항목은 삭제를 눌러 주세요.`; return; }
+          const editedBlock = { ...block, events };
+          let heading = formatNormalizedLogHeading(editedBlock);
+          if (value) {
+            const m = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+            if (!m) { invalidMessage = `${block.titleText}: 날짜 형식이 올바르지 않습니다.`; return; }
+            heading = formatNormalizedLogHeading(editedBlock, Number(m[1]), Number(m[2]), Number(m[3]));
+          } else if (row.querySelector('.rpcm-unknown-accepted')?.checked) {
+            desiredAcceptedOldKeys.add(String(block.key));
+          }
+          const nextRaw = `${heading}\n${body}`;
+          if (nextRaw !== block.raw) replacements.push({ start:block.sourceStart, end:block.sourceEnd, text:nextRaw });
         });
 
-        if (!replacements.length) { notify('변경된 날짜가 없습니다.', 'info', 3200); return; }
+        if (invalidMessage) { notify(invalidMessage, 'warn', 5200); return; }
+        const previousAccepted = [...new Set((room.acceptedUnknownLogKeys || []).map(String))].sort();
+        const desiredAcceptedBeforeRemap = [...desiredAcceptedOldKeys].sort();
+        const acceptanceChangedBeforeRemap = JSON.stringify(previousAccepted) !== JSON.stringify(desiredAcceptedBeforeRemap);
+        if (!replacements.length && !acceptanceChangedBeforeRemap) { notify('변경된 내용이 없습니다.', 'info', 3200); return; }
         let next = originalText;
         replacements.sort((a,b) => b.start - a.start).forEach(r => { next = next.slice(0, r.start) + r.text + next.slice(r.end); });
         const newBlocks = parseDatedLogBlocks(next);
-        if (newBlocks.length !== blocks.length) { notify('날짜 수정 후 블록 수가 달라져 적용을 중단했습니다.', 'error', 6200); return; }
+        const survivingBlocks = blocks.filter(block => !deletedIndexes.has(Number(block.index)));
+        if (newBlocks.length !== survivingBlocks.length) { notify('수정 후 로그 블록 수가 예상과 달라져 적용을 중단했습니다.', 'error', 6200); return; }
         const liveLog = (room.slots || []).find(s => s.id === 'logSummary');
         if (!liveLog) { notify('현재 로그요약 항목을 찾지 못해 적용을 중단했습니다.', 'error', 6200); return; }
         liveLog.content = next;
-        remapLogSelectionKeysByIndex(room, blocks, newBlocks);
+        const keyMap = new Map();
+        survivingBlocks.forEach((block, index) => { if (newBlocks[index]) keyMap.set(String(block.key), String(newBlocks[index].key)); });
+        remapLogSelectionKeys(room, keyMap, newBlocks);
+        const newByKey = new Map(newBlocks.map(block => [String(block.key), block]));
+        room.acceptedUnknownLogKeys = [...desiredAcceptedOldKeys]
+          .map(key => keyMap.get(String(key)) || String(key))
+          .filter(key => newByKey.get(String(key))?.isUnknown);
         finish(true);
       };
     });
@@ -8549,7 +9094,7 @@ ${dialogueText}`;
         }).join('');
         const special = specialBlocks.length ? `<details class="rpcm-log-year"><summary><strong>작품 고유 연호</strong><span>${specialBlocks.length}개</span></summary>${specialBlocks.map(rowHtml).join('')}</details>` : '';
         const unknown = unknownBlocks.length ? `<details class="rpcm-log-year"><summary><strong>날짜 미상</strong><span>${unknownBlocks.length}개</span></summary>${unknownBlocks.map(rowHtml).join('')}</details>` : '';
-        const bodyHtml = `${dated}${special}${unknown}${timelineBlocks.length ? '' : '<div class="rpcm-log-empty">아직 저장된 날짜 블록이 없습니다.</div>'}`;
+        const bodyHtml = `${unknown}${dated}${special}${timelineBlocks.length ? '' : '<div class="rpcm-log-empty">아직 저장된 날짜 블록이 없습니다.</div>'}`;
         if (!hasMultipleTimelines) return `<div class="rpcm-log-single-timeline">${bodyHtml}</div>`;
         const isActive = blockBelongsToTimeline({ timelineLabel:timelineLabel === DEFAULT_LOG_TIMELINE ? '' : timelineLabel }, activeTimeline);
         return `<details class="rpcm-log-timeline-folder" data-timeline-folder="${esc(timelineLabel)}" ${isActive ? 'open' : ''}><summary><strong>🗂️ ${esc(timelineLabel)}</strong><span>${isActive ? '다음 저장 · ' : ''}${timelineBlocks.length}개 블록 · ${formatCount(timelineBlocks.reduce((n,b)=>n+b.raw.length,0))}자</span></summary><div class="rpcm-log-timeline-body">${bodyHtml}</div></details>`;
@@ -8977,6 +9522,7 @@ ${dialogueText}`;
     if (room) {
       const needsStoryLogMigration = !room.storyLogReviewRevisionV1 || !room.storyTimelineGuideRevisionV15;
       normalizeRoomSlots(room);
+      normalizeAiReviewInbox(room);
       room.maxChars = APP.defaultMaxChars;
       room.apiChatId = room.apiChatId || apiChatId || String(chatId).split('::')[0];
       if (room.pending) {
@@ -9013,6 +9559,7 @@ ${dialogueText}`;
       autoLogExcludedKeys: [],
       manualLogSelectedKeys: [],
       favoriteLogKeys: [],
+      acceptedUnknownLogKeys: [],
       aiContextLogRerankEnabled: false,
       aiApiUsage: { version:1, features:{ summary:emptyRoomAiFeatureUsage(), timeline:emptyRoomAiFeatureUsage(), context:emptyRoomAiFeatureUsage() }, history:[] },
       logTimelines: [DEFAULT_LOG_TIMELINE],
@@ -9045,6 +9592,7 @@ ${dialogueText}`;
       aiSummaryUndo: null,
       aiSummaryDraft: null,
       aiSummaryHistory: [],
+      aiReviewInbox: [],
       createdAt: nowIso(),
       updatedAt: nowIso(),
     };
@@ -9835,13 +10383,16 @@ ${dialogueText}`;
     });
   }
 
-  function openStoryTimelineManagerDialogV35(room) {
+  function openStoryTimelineManagerDialogV35(room, options = {}) {
     return new Promise(resolve => {
       document.querySelector('#rpcm-story-view-backdrop')?.remove();
       normalizeRoomSlots(room);
-      let mode = 'view';
+      let mode = options.initialMode === 'api-update' ? 'api-update' : 'view';
       let preview = null;
-      let resultText = '';
+      // 미리보기 생성에 실제로 사용한 run을 보존합니다.
+      // API 초안 뒤에 외부 GPT 결과를 붙여넣었을 때 옛 apiDraft.run을 잘못 재사용하지 않도록 분리합니다.
+      let previewRun = null;
+      let resultText = String(options.resultText || '');
       let previewFilter = 'changed';
       let dirty = false;
       let reviewSnapshot = null;
@@ -9871,10 +10422,42 @@ ${dialogueText}`;
       const selectedUnreviewedLogs = () => allUnreviewedLogs().filter(item => selectedStoryLogIds.has(String(item.meta.logId)));
       const apiImportOptionsFor = value => {
         const result = String(value || '').trim();
-        if (apiDraft?.run && String(apiDraft.run.timelineLabel) === String(activeLabel) && (/^\s*\{/.test(result) || /\bREF\s*=\s*(?:C\d+|NEW)/i.test(result))) return { run:apiDraft.run, timelineLabel:activeLabel };
+        const isJson = /^\s*\{/.test(result);
+        const isManualRefResult = /\[CARD\]/i.test(result) && /\bREF\s*=\s*(?:C\d+|NEW)/i.test(result);
         const manualRun = room.storyTimelineManualRun;
-        if (manualRun?.runId && manualRun.kind !== 'audit' && String(manualRun.timelineLabel) === String(activeLabel) && (/^\s*\{/.test(result) || /\bREF\s*=\s*(?:C\d+|NEW)/i.test(result))) return { run:manualRun, timelineLabel:activeLabel };
-        return { timelineLabel:activeLabel };
+        const currentSignature = storyTimelineMasterSignature(snapshotStoryTimelineCardsForLabel(room, activeLabel));
+        const manualRunCurrent = !!(manualRun?.runId
+          && manualRun.kind !== 'audit'
+          && String(manualRun.timelineLabel) === String(activeLabel)
+          && String(manualRun.masterSignature || '') === currentSignature);
+
+        // JSON은 확장프로그램 API가 만든 구조화 결과이므로 apiDraft.run을 우선합니다.
+        if (isJson) {
+          if (apiDraft?.run && String(apiDraft.run.timelineLabel) === String(activeLabel)) return { run:apiDraft.run, timelineLabel:activeLabel, source:'api' };
+          if (manualRunCurrent) return { run:manualRun, timelineLabel:activeLabel, source:'manual' };
+          return { timelineLabel:activeLabel, source:'json-unmatched' };
+        }
+
+        // [TIMELINE][CARD] REF 결과는 외부 GPT용 결과입니다.
+        // API 초안이 남아 있어도 그 apiDraft.run을 재사용하지 않습니다.
+        if (isManualRefResult) {
+          if (manualRunCurrent) return { run:manualRun, timelineLabel:activeLabel, source:'manual' };
+
+          const refs = [...result.matchAll(/\bREF\s*=\s*([^\s\r\n]+)/gi)].map(match => String(match[1] || '').trim().toUpperCase());
+          const allNew = refs.length > 0 && refs.every(ref => ref === 'NEW');
+
+          // 기존 REF(C001...)를 하나도 쓰지 않는 전체 교체본은 별도 프롬프트 실행정보가 없어도
+          // 현재 마스터를 기준으로 안전하게 새 run을 만들어 적용할 수 있습니다.
+          if (allNew) return { run:createStoryTimelineRun(room, activeLabel, 'manual-replace', 'FULL'), timelineLabel:activeLabel, source:'manual-replace' };
+
+          // C번호가 들어간 결과는 그 C번호를 발급한 수동 run이 필요합니다.
+          // stale run이 있으면 그대로 넘겨 assert에서 "현재 마스터 기준 재실행" 오류를 명확히 냅니다.
+          if (manualRun?.runId && manualRun.kind !== 'audit' && String(manualRun.timelineLabel) === String(activeLabel)) {
+            return { run:manualRun, timelineLabel:activeLabel, source:'manual-stale' };
+          }
+        }
+
+        return { timelineLabel:activeLabel, source:'plain' };
       };
       const diffMap = () => new Map((room.storyTimelineLastDiff || []).map(item => [String(item.cardId), item.type]));
       const renderReadCards = (list, allowDelete = false, changes = diffMap()) => list.length ? list.map((card, index) => {
@@ -10079,7 +10662,7 @@ ${dialogueText}`;
         if (!button) return;
         const action = button.dataset.storyViewAct;
         if (action === 'close') { finish(dirty); return; }
-        if (action === 'view') { captureApiForm(false); mode = mode === 'guide' ? guideReturnMode : 'view'; preview = null; previewFilter = 'changed'; render(); return; }
+        if (action === 'view') { captureApiForm(false); mode = mode === 'guide' ? guideReturnMode : 'view'; preview = null; previewRun = null; previewFilter = 'changed'; render(); return; }
         if (action === 'help') { helpOpen = !helpOpen; settingsOpen = false; render(); return; }
         if (action === 'close-help') { helpOpen = false; render(); return; }
         if (action === 'guide') { captureApiForm(false); guideReturnMode = mode === 'api-update' ? 'api-update' : mode === 'audit' ? 'audit' : 'view'; mode = 'guide'; render(); return; }
@@ -10101,9 +10684,9 @@ ${dialogueText}`;
         }
         if (action === 'close-settings') { settingsOpen = false; render(); return; }
         if (action === 'update') { mode = 'api-update'; apiSections.add('range'); apiSections.add('result'); render(); await refreshReviewSnapshot(); return; }
-        if (action === 'audit') { mode = 'audit'; preview = null; auditDraft = null; apiStatus = ''; render(); await refreshReviewSnapshot(); return; }
-        if (action === 'return-update') { mode = 'api-update'; preview = null; previewFilter = 'changed'; render(); return; }
-        if (action === 'return-audit') { mode = 'audit'; preview = null; previewFilter = 'changed'; render(); return; }
+        if (action === 'audit') { mode = 'audit'; preview = null; previewRun = null; auditDraft = null; apiStatus = ''; render(); await refreshReviewSnapshot(); return; }
+        if (action === 'return-update') { mode = 'api-update'; preview = null; previewRun = null; previewFilter = 'changed'; render(); return; }
+        if (action === 'return-audit') { mode = 'audit'; preview = null; previewRun = null; previewFilter = 'changed'; render(); return; }
         if (action === 'toggle-api-section') { captureApiForm(false); const id = String(button.dataset.storySection || ''); if (apiSections.has(id)) apiSections.delete(id); else apiSections.add(id); render(); return; }
         if (action === 'toggle-month') { const section = button.closest('.rpcm-story-month'); if (!section) return; section.classList.toggle('is-open'); button.querySelector('span').textContent = `${section.classList.contains('is-open') ? '▾' : '▸'} ${button.querySelector('span').textContent.replace(/^[▾▸]\s*/, '')}`; return; }
         if (action === 'preview-changed') { previewFilter = 'changed'; render(); return; }
@@ -10187,7 +10770,7 @@ ${dialogueText}`;
         if (action === 'load-api-history') {
           const item = (room.storyTimelineApiHistory || []).find(entry => String(entry.id || '') === String(button.dataset.storyHistoryId || ''));
           if (!item) return;
-          apiDraft = item; room.storyTimelineApiDraft = item; resultText = String(item.finalText || item.rawResult || ''); updateMode = item.updateMode === 'rebuild' ? 'rebuild' : 'continue'; apiSections.add('result'); render(); return;
+          apiDraft = item; room.storyTimelineApiDraft = item; resultText = String(item.finalText || item.rawResult || ''); preview = null; previewRun = null; updateMode = item.updateMode === 'rebuild' ? 'rebuild' : 'continue'; apiSections.add('result'); render(); return;
         }
         if (action === 'api-generate') {
           if (!reviewSnapshot) { notify('RP 검토 범위를 확인한 뒤 다시 눌러 주세요.', 'warn'); return; }
@@ -10200,6 +10783,8 @@ ${dialogueText}`;
             room.storyTimelineApiDraft = apiDraft;
             room.storyTimelineApiHistory = [apiDraft, ...(room.storyTimelineApiHistory || []).filter(item => String(item.id) !== String(apiDraft.id))].slice(0, 10);
             resultText = apiDraft.finalText;
+            preview = null;
+            previewRun = null;
             apiStatus = apiDraft.noChange ? '검토 완료 · 타임라인 변경 없음' : `생성 완료 · ${apiDraft.usage.calls}회 호출 · ${formatAiCostUsd(apiDraft.usage.estimatedCostUsd)}`;
             apiSections.add('result'); dirty = true; await saveRoom(room);
           } catch (error) { const failure = classifyAiFailure(error); setAiFeatureStatus('timeline', 'error', apiSettings.provider, apiSettings.models?.[apiSettings.provider] || '', failure.category, failure.detail); apiStatus = `생성 실패 · ${failure.category} · ${friendlyAiErrorMessage(error)}`; }
@@ -10269,7 +10854,7 @@ ${dialogueText}`;
         if (action === 'edit-preview') {
           if (!preview) return;
           const returnMode = mode;
-          const run = returnMode === 'audit-preview' ? auditDraft?.run : (apiDraft?.run || room.storyTimelineManualRun || createStoryTimelineRun(room, activeLabel, 'manual-edit', 'FULL'));
+          const run = returnMode === 'audit-preview' ? auditDraft?.run : (previewRun || room.storyTimelineManualRun || createStoryTimelineRun(room, activeLabel, 'manual-edit', 'FULL'));
           const temporaryRoom = { ...room, activeLogTimeline:activeLabel, storyTimelineCards:(preview.cards || []).map(card => ({ ...card, timelineLabel:activeLabel, tags:[...(card.tags || [])] })), storyTimelineBackup:null };
           backdrop.remove();
           const edited = await openStoryTimelineEditorDialog(temporaryRoom);
@@ -10282,8 +10867,15 @@ ${dialogueText}`;
           mode = returnMode; render(); return;
         }
         if (action === 'parse') {
-          try { resultText = String(backdrop.querySelector('#rpcm-story-paste-text')?.value || ''); if (/^타임라인\s*변경\s*없음\s*$/.test(resultText.trim())) { notify('변경 없음 결과입니다. “변경 없음 · 검토 완료”를 눌러 주세요.', 'info', 4200); return; } preview = parseStoryTimelineImport(resultText, room, apiImportOptionsFor(resultText)); mode = 'preview'; render(); }
-          catch (error) { notify(`타임라인 결과 확인 실패: ${error.message}`, 'error', 6500); }
+          try {
+            resultText = String(backdrop.querySelector('#rpcm-story-paste-text')?.value || '');
+            if (/^타임라인\s*변경\s*없음\s*$/.test(resultText.trim())) { notify('변경 없음 결과입니다. “변경 없음 · 검토 완료”를 눌러 주세요.', 'info', 4200); return; }
+            const importOptions = apiImportOptionsFor(resultText);
+            preview = parseStoryTimelineImport(resultText, room, importOptions);
+            previewRun = importOptions.run || null;
+            mode = 'preview'; render();
+          }
+          catch (error) { previewRun = null; notify(`타임라인 결과 확인 실패: ${error.message}`, 'error', 6500); }
           return;
         }
         if (action === 'save-result') {
@@ -10292,12 +10884,14 @@ ${dialogueText}`;
             try {
               resultText = String(backdrop.querySelector('#rpcm-story-paste-text')?.value || resultText || '');
               if (/^타임라인\s*변경\s*없음\s*$/.test(resultText.trim())) { notify('변경이 없다면 “변경 없음 · 검토 완료”를 눌러 주세요.', 'info', 4200); return; }
-              preview = parseStoryTimelineImport(resultText, room, apiImportOptionsFor(resultText));
-            } catch (error) { notify(`타임라인 저장 실패: ${error.message}`, 'error', 6500); return; }
+              const importOptions = apiImportOptionsFor(resultText);
+              preview = parseStoryTimelineImport(resultText, room, importOptions);
+              previewRun = importOptions.run || null;
+            } catch (error) { previewRun = null; notify(`타임라인 저장 실패: ${error.message}`, 'error', 6500); return; }
           }
           const summary = diffSummary(preview.diff);
           if (!confirm(`현재 결과를 최신 전체 타임라인으로 저장할까요?\n\n${summary}\n전체 카드 ${cards().length} → ${preview.cards.length}`)) return;
-          const run = savingAudit ? auditDraft?.run : (apiDraft?.run || room.storyTimelineManualRun);
+          const run = savingAudit ? auditDraft?.run : previewRun;
           if (run) {
             try { assertStoryTimelineRunCurrent(room, run); }
             catch (error) { notify(error.message, 'error', 7000); return; }
@@ -10324,8 +10918,10 @@ ${dialogueText}`;
           }
           room.storyTimelineCarryoverTurnKeys = (completedScope?.reviewedTailKeys || apiDraft?.reviewScope?.reviewedTailKeys || room.storyTimelineCarryoverTurnKeys || []).map(String).slice(-40);
           room.storyTimelineApiDraft = null;
+          previewRun = null;
           if (room.storyTimelineManualRun?.runId === run?.runId) room.storyTimelineManualRun = null;
           if (hadPendingReview) room.storyTimelineUnreviewedTurnCount = 0;
+          await saveRoom(room);
           dirty = true; finish(true); return;
         }
       }, true);
@@ -10368,11 +10964,12 @@ ${dialogueText}`;
       backdrop.onkeydown = event => {
         if (event.key !== 'Escape') return;
         if (helpOpen || settingsOpen) { helpOpen = false; settingsOpen = false; render(); return; }
-        if (mode !== 'view') { captureApiForm(false); mode = 'view'; preview = null; render(); return; }
+        if (mode !== 'view') { captureApiForm(false); mode = 'view'; preview = null; previewRun = null; render(); return; }
         finish(dirty);
       };
       document.body.appendChild(backdrop);
       render();
+      if (mode === 'api-update') void refreshReviewSnapshot();
     });
   }
 
@@ -10700,9 +11297,10 @@ ${dialogueText}`;
     if (String(log?.content || '').trim() && !blocks.length && String(log.content || '').length > APP.legacyWholeLogFallbackMax) warnings.push('로그요약이 길지만 날짜 블록을 감지하지 못해 통짜 주입을 차단함. [2026년 8월 31일-사건명]·[BC206-사건명] 같은 형식을 사용해 주세요.');
     if (blocks.length) {
       const noYearCount = blocks.filter(b => !b.isUnknown && !b.isSpecialDate && b.year == null).length;
-      const unknownCount = blocks.filter(b => b.isUnknown).length;
+      const acceptedUnknown = new Set((room.acceptedUnknownLogKeys || []).map(String));
+      const unknownCount = blocks.filter(b => b.isUnknown && !acceptedUnknown.has(String(b.key))).length;
       if (noYearCount) warnings.push(`연도 없는 날짜 로그 ${noYearCount}개 있음. ‘날짜 정리’에서 선택한 항목에 2024년/2025년처럼 연도를 일괄 적용할 수 있음.`);
-      if (unknownCount) warnings.push(`날짜 미상 로그 ${unknownCount}개 있음. 미상으로 유지해도 되며, 실제 날짜를 아는 항목만 ‘날짜 정리’에서 지정할 수 있음.`);
+      if (unknownCount) warnings.push(`확인하지 않은 날짜 미상 로그 ${unknownCount}개 있음. ‘날짜 수정’에서 ‘날짜 미상으로 계속 유지’를 체크하면 이 안내를 숨길 수 있음.`);
       const byDate = new Map();
       for (const b of blocks) {
         if (b.isUnknown) continue;
@@ -11701,7 +12299,7 @@ ${dialogueText}`;
       autoLogRecallEnabled:!!room?.autoLogRecallEnabled,
       autoLogRecentBlocks:Number(room?.autoLogRecentBlocks || 0),
       autoLogRelatedBlocks:Number(room?.autoLogRelatedBlocks || 0),
-      autoLogPinnedKeys:room?.autoLogPinnedKeys || [], autoLogExcludedKeys:room?.autoLogExcludedKeys || [], manualLogSelectedKeys:room?.manualLogSelectedKeys || [], favoriteLogKeys:room?.favoriteLogKeys || [], aiContextLogRerankEnabled:!!room?.aiContextLogRerankEnabled,
+      autoLogPinnedKeys:room?.autoLogPinnedKeys || [], autoLogExcludedKeys:room?.autoLogExcludedKeys || [], manualLogSelectedKeys:room?.manualLogSelectedKeys || [], favoriteLogKeys:room?.favoriteLogKeys || [], acceptedUnknownLogKeys:room?.acceptedUnknownLogKeys || [], aiContextLogRerankEnabled:!!room?.aiContextLogRerankEnabled,
       aiApiUsage:room?.aiApiUsage || { version:1, features:{ summary:emptyRoomAiFeatureUsage(), timeline:emptyRoomAiFeatureUsage(), context:emptyRoomAiFeatureUsage() }, history:[] },
       storyTimelineCards:(room?.storyTimelineCards || []).map(card => ({ cardId:card.cardId, timelineLabel:card.timelineLabel, dateStart:card.dateStart, dateEnd:card.dateEnd, title:card.title, content:card.content, tags:card.tags || [], userLocked:!!card.userLocked, inject:card.inject !== false, sortOrder:Number(card.sortOrder || 0) })), storyTimelineCarryoverTurnKeys:room?.storyTimelineCarryoverTurnKeys || [], storyTimelineApiHistory:room?.storyTimelineApiHistory || [], storyTimelineAuditHistory:room?.storyTimelineAuditHistory || [], storyTimelineManualRun:room?.storyTimelineManualRun || null,
       storyLogReviews:room?.storyLogReviews || [], storyTimelineGuide:String(room?.storyTimelineGuide || STORY_TIMELINE_GUIDE_V15), storyTimelineGuideSource:String(room?.storyTimelineGuideSource || ''), storyTimelineGuideRevisionV15:!!room?.storyTimelineGuideRevisionV15, storyTimelinePendingReview:room?.storyTimelinePendingReview || null,
@@ -12260,6 +12858,16 @@ ${dialogueText}`;
     // 간편 주입 관리에서 끈 항목은 자동 최근로그 갱신이나 자동 고정 복구가 다시
     // 추가하더라도 현재 주입 세션이 끝날 때까지 제외 상태를 유지합니다.
     applyQuickItemSuppression(p);
+    // 새 답변으로 carrier 이동이 실패한 복구 대기 상태에서는 이미 원문으로 복원된
+    // 이전 AI 메시지에 다시 주입하지 않습니다. 편집한 항목은 pending에 보존하고
+    // 같은 답변 재시도 또는 다음 AI 답변에서 새 carrier로 옮깁니다.
+    if (p.reanchorRetry) {
+      p.verified = false;
+      savePendingBackup(room.chatId, p);
+      await saveRoom(room);
+      if (room.chatId === state.currentChatId) state.currentRoom = room;
+      return { active:activePendingItems(p).length, cleared:false, suspended:true, reason };
+    }
     let active = fitItemsToCarrierLimits(room, p.originalText, activePendingItems(p));
     const activeLogIds = new Set(active.filter(i => i.sourceSlotId === 'logSummary' || i.group === 'log-auto' || i.slotId === 'logSummary').map(i => i.slotId));
     p.items = (p.items || []).filter(i => !(i.sourceSlotId === 'logSummary' || i.group === 'log-auto' || i.slotId === 'logSummary') || activeLogIds.has(i.slotId));
@@ -12619,7 +13227,8 @@ ${dialogueText}`;
   }
 
   function updateQuickInjectionTrigger() {
-    const shouldShow = !!state.currentChatId && !!state.currentRoom?.pending && !isMobileManagerLayout() && !state.modal && !state.quickPanel;
+    const desktopQuickTriggerVisible = loadUiPrefs().desktopQuickTriggerVisible !== false;
+    const shouldShow = desktopQuickTriggerVisible && !!state.currentChatId && !!state.currentRoom?.pending && !isMobileManagerLayout() && !state.modal && !state.quickPanel;
     let trigger = state.quickTrigger;
     if (!shouldShow) {
       if (trigger) trigger.hidden = true;
@@ -13433,14 +14042,14 @@ ${dialogueText}`;
     const requestMetrics = carrierRequestMetrics(nextInjected);
     const maxChars = Number(room.maxChars) || APP.defaultMaxChars;
     if (nextInjected.length > maxChars || requestMetrics.payloadBytes > APP.safeCarrierPayloadBytes) {
-      room.pending = null; clearPendingBackup(room.chatId); await saveRoom(room);
-      throw new Error(`새 AI 응답 + 숨김 컨텍스트가 주입 안전선을 넘어 자동 유지를 종료했습니다. ${formatCount(nextInjected.length)} / ${formatCount(maxChars)}자 · UTF-8 요청 ${formatCount(requestMetrics.payloadBytes)} / ${formatCount(APP.safeCarrierPayloadBytes)}바이트`);
+      throw new Error(`새 AI 응답 + 숨김 컨텍스트가 주입 안전선을 넘어 이번 carrier 이동을 보류했습니다. 설정과 계속 유지 항목은 보존하며 다음 답변에서 다시 시도합니다. ${formatCount(nextInjected.length)} / ${formatCount(maxChars)}자 · UTF-8 요청 ${formatCount(requestMetrics.payloadBytes)} / ${formatCount(APP.safeCarrierPayloadBytes)}바이트`);
     }
 
     const nextPending = { ...p, messageId: newId, originalText: newOriginal, baselineAssistantId: newId,
       armedAt: Date.now(), carrierArmedAt: Date.now(), originalChars: newOriginal.length, carrierChars: nextInjected.length,
       carrierMessageBytes:requestMetrics.messageBytes, carrierPayloadBytes:requestMetrics.payloadBytes,
       verified: false, verifiedAt: null, serverChars: 0, logRecallRevision: APP.logRecallRevision, contextBlock, injectedChars: contextBlock.length, items: p.items };
+    delete nextPending.reanchorRetry;
     stampVerifiedPendingSnapshot(nextPending, active, contextBlock);
     if (rerollMove) delete nextPending.reroll;
 
@@ -13449,16 +14058,13 @@ ${dialogueText}`;
     if (!verification.verified) {
       try {
         await restoreCarrierOnly(room, nextPending);
-        room.pending = null;
-        clearPendingBackup(room.chatId);
-        await saveRoom(room);
       } catch (rollbackError) {
         room.pending = nextPending;
         savePendingBackup(room.chatId, nextPending);
         await saveRoom(room);
         throw new Error(`새 carrier 검증과 원문 롤백 확인에 실패했습니다. 복구 정보는 유지했습니다: ${rollbackError.message}`);
       }
-      throw new Error('새 carrier 서버 검증에 실패해 새 AI 원문으로 안전 복원하고 자동 유지를 종료했습니다.');
+      throw new Error('새 carrier 서버 검증에 실패해 새 AI 원문으로 안전 복원했습니다. 설정과 계속 유지 항목은 보존하며 자동으로 다시 시도합니다.');
     }
     nextPending.verified = true; nextPending.verifiedAt = Date.now(); nextPending.serverChars = verification.serverChars;
     stampVerifiedPendingSnapshot(nextPending, active, contextBlock);
@@ -13486,6 +14092,13 @@ ${dialogueText}`;
     const latestAssistant = recent.find(m => messageRoleOf(m) === 'assistant');
     const latestAssistantId = messageIdOf(latestAssistant);
     if (!latestAssistantId) return;
+    const recovery = p.reanchorRetry && typeof p.reanchorRetry === 'object' ? p.reanchorRetry : null;
+    const retryingSameAssistant = !!recovery && String(recovery.failedMessageId || '') === String(latestAssistantId);
+    if (retryingSameAssistant) {
+      if (recovery.holdUntilNextAssistant) return;
+      if (Number(recovery.nextRetryAt || 0) > Date.now()) return;
+      if (Number(recovery.attempts || 0) >= 3) return;
+    }
 
     if (p.reroll) {
       const reroll = p.reroll;
@@ -13553,7 +14166,14 @@ ${dialogueText}`;
       try {
         const carrier = await fetchMessage(apiChatIdOf(room), p.messageId);
         const carrierText = messageTextOf(carrier);
-        if (carrierText && !stripOurContextBlock(carrierText).found) {
+        const carrierHasContext = !!carrierText && stripOurContextBlock(carrierText).found;
+        if (carrierHasContext && p.reanchorRetry) {
+          delete p.reanchorRetry;
+          p.verified = true;
+          p.verifiedAt = Date.now();
+          savePendingBackup(room.chatId, p);
+          await saveRoom(room);
+        } else if (carrierText && !carrierHasContext) {
           const active = fitItemsToCarrierLimits(room, carrierText, activePendingItems(p));
           const activeLogIds = new Set(active.filter(i => i.sourceSlotId === 'logSummary' || i.group === 'log-auto' || i.slotId === 'logSummary').map(i => i.slotId));
           p.items = (p.items || []).filter(i => !(i.sourceSlotId === 'logSummary' || i.group === 'log-auto' || i.slotId === 'logSummary') || activeLogIds.has(i.slotId));
@@ -13568,6 +14188,7 @@ ${dialogueText}`;
             if (!reapplied.verified) throw new Error('carrier 재주입 서버 검증 실패');
             p.contextBlock = contextBlock; p.carrierChars = injected.length; p.carrierMessageBytes = requestMetrics.messageBytes; p.carrierPayloadBytes = requestMetrics.payloadBytes; p.serverChars = reapplied.serverChars;
             p.verified = true; p.verifiedAt = Date.now();
+            delete p.reanchorRetry;
             savePendingBackup(room.chatId, p); await saveRoom(room);
           }
         }
@@ -13578,7 +14199,7 @@ ${dialogueText}`;
     if (latestAssistantId !== p.baselineAssistantId) {
       const beforeReanchor = { ...p, items: clonePendingItems(p.items) };
       try {
-        await reanchorAfterResponse(room, latestAssistant);
+        await reanchorAfterResponse(room, latestAssistant, retryingSameAssistant ? { countTurn:false, reason:'recovery' } : {});
       } catch (e) {
         console.warn('[RP매니저] reanchor failed:', room.chatId, e);
         // 실패 시 이전/새 carrier 양쪽이 깨끗한지 확인합니다. 네트워크 오류로 확인하지 못했다면
@@ -13591,17 +14212,39 @@ ${dialogueText}`;
             console.warn('[RP매니저] reanchor cleanup not confirmed:', messageId, cleanupError);
           }
         }
-        if (cleanupConfirmed) {
+        const failedCurrent = room.pending;
+        const failedItems = clonePendingItems(failedCurrent?.items || p.items || beforeReanchor.items);
+        const activeAfterFailure = activePendingItems({ items:failedItems });
+        if (activeAfterFailure.length) {
+          const attempts = retryingSameAssistant ? Number(recovery?.attempts || 0) + 1 : 1;
+          const holdUntilNextAssistant = /안전선을 넘어/.test(String(e.message || '')) || attempts >= 3;
+          const preserved = cleanupConfirmed
+            ? { ...beforeReanchor, items:failedItems }
+            : { ...(failedCurrent || beforeReanchor), items:failedItems };
+          preserved.verified = false;
+          preserved.verifiedAt = null;
+          preserved.reanchorRetry = {
+            failedMessageId:String(latestAssistantId),
+            failedAt:Date.now(),
+            attempts,
+            nextRetryAt:Date.now() + 15000,
+            holdUntilNextAssistant,
+            reason:String(e.message || 'carrier 자동 이동 실패'),
+          };
+          room.pending = preserved;
+          savePendingBackup(room.chatId, preserved);
+        } else if (cleanupConfirmed) {
           room.pending = null;
           clearPendingBackup(room.chatId);
         } else {
-          room.pending = room.pending || beforeReanchor;
+          room.pending = failedCurrent || beforeReanchor;
           savePendingBackup(room.chatId, room.pending);
         }
         await saveRoom(room);
         if (room.chatId === state.currentChatId) {
           state.currentRoom = room;
-          if (cleanupConfirmed) notifyInjectionEnded(room, 'error', e.message);
+          if (room.pending) notify(`자동 이동 보류 · 계속 유지 설정과 주입 항목을 보존했습니다. ${room.pending.reanchorRetry?.holdUntilNextAssistant ? '다음 AI 답변에서 다시 시도합니다.' : '잠시 후 자동으로 다시 시도합니다.'} ${e.message}`, 'warn', 8500);
+          else if (cleanupConfirmed) notifyInjectionEnded(room, 'error', e.message);
           else notify(`자동 이동 오류 · 복구 확인 전이라 주입 백업을 유지했습니다: ${e.message}`, 'error', 7500);
           renderModalIfOpen();
         }
@@ -15072,7 +15715,7 @@ ${dialogueText}`;
       .rpcm-breakdown-chip{gap:8px!important;padding:7px 3px!important}.rpcm-breakdown-chip strong{color:#d3d3d3!important;font-weight:750!important}.rpcm-breakdown-chip>span:last-child{color:color-mix(in srgb,var(--rpcm-tone) 78%,white);font-weight:700}.rpcm-breakdown-chip:hover{background:color-mix(in srgb,var(--rpcm-tone) 6%,transparent)}
       .rpcm-story-audit-controls{display:grid;grid-template-columns:minmax(210px,.8fr) minmax(260px,1.2fr);gap:10px;margin:12px 0}.rpcm-story-audit-controls>label,.rpcm-story-audit-controls>div{display:flex;min-width:0;flex-direction:column;gap:5px;padding:11px 12px;border:1px solid #35564f;border-radius:10px;background:#19231f}.rpcm-story-audit-controls span{color:#87a59e;font-size:9px;font-weight:750}.rpcm-story-audit-controls select{height:34px;border:1px solid #4d756c;border-radius:8px;background:#101513;color:#ddf3ed;padding:0 9px}.rpcm-story-audit-controls strong{color:#82dbc8;font-size:13px}.rpcm-story-audit-controls small{color:#78928c;font-size:9px;line-height:1.45}.rpcm-story-audit-report{margin:12px 0;padding:12px 14px;border:1px solid #43635c;border-left:4px solid #67c0ad;border-radius:10px;background:#19231f}.rpcm-story-audit-report>div:first-child{display:flex;align-items:center;justify-content:space-between;gap:12px}.rpcm-story-audit-report strong{color:#d9f4ee;font-size:12px}.rpcm-story-audit-report span{color:#91ada6;font-size:9px}.rpcm-story-audit-report.is-pass{border-left-color:#4ade80}.rpcm-story-audit-report.is-fail{border-color:#77584a;border-left-color:#fb923c;background:#251d18}.rpcm-story-audit-report.is-unverified{border-color:#5d6370;border-left-color:#94a3b8;background:#1d2025}.rpcm-story-audit-counts{display:flex!important;justify-content:flex-start!important;flex-wrap:wrap;gap:6px!important;margin-top:10px}.rpcm-story-audit-counts b{padding:4px 7px;border-radius:999px;background:#263a35;color:#a9ddd1;font-size:9px}.rpcm-story-audit-report.is-fail .rpcm-story-audit-counts b{background:#3b2c23;color:#ffc594}.rpcm-story-audit-report p{margin:10px 0 0;color:#b8c9c5;font-size:10px;line-height:1.55}.rpcm-story-audit-report details{margin-top:9px;color:#a9bdb8;font-size:9px}.rpcm-story-audit-report details span{display:block;padding:3px 0;color:#c8ddd8}.rpcm-story-audit-locked{margin-top:9px;color:#f7b7be;font-size:9px}.rpcm-story-audit-history{margin:12px 0;border:1px solid #34433f;border-radius:9px;background:#171c1b;color:#9bb1ab}.rpcm-story-audit-history>summary{padding:9px 11px;cursor:pointer;font-size:10px;font-weight:800}.rpcm-story-audit-history>div{display:flex;align-items:center;gap:9px;padding:8px 11px;border-top:1px solid #2a3532}.rpcm-story-audit-history b{min-width:72px;color:#8ed8c8;font-size:9px}.rpcm-story-audit-history span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#82958f;font-size:9px}.rpcm-story-audit-reviewed{display:grid;grid-template-columns:auto minmax(0,1fr);gap:3px 8px;align-items:start;margin:12px 0;padding:10px 12px;border:1px solid #3a4845;border-radius:9px;background:#191d1c;color:#b4c5c1;font-size:10px}.rpcm-story-audit-reviewed input{grid-row:1/3;margin:2px 0 0;accent-color:#67c0ad}.rpcm-story-audit-reviewed small{color:#74847f;font-size:9px;line-height:1.4}.rpcm-story-audit-reviewed:has(input:disabled){opacity:.55}.rpcm-story-toolbar>[data-story-view-act]{flex:0 1 auto}.rpcm-story-toolbar .rpcm-story-count{min-width:150px}.rpcm-story-dialog button:focus-visible,.rpcm-story-dialog select:focus-visible,.rpcm-story-dialog textarea:focus-visible{outline:2px solid #67c0ad;outline-offset:2px}
       @media(max-width:680px){.rpcm-story-audit-controls{grid-template-columns:1fr}.rpcm-story-audit-report>div:first-child{align-items:flex-start;flex-direction:column}.rpcm-story-audit-history>div{align-items:flex-start;flex-direction:column;gap:3px}.rpcm-story-audit-history span{white-space:normal}.rpcm-story-toolbar{align-items:stretch}.rpcm-story-toolbar .rpcm-story-count{flex-basis:100%;min-width:0}.rpcm-story-toolbar>[data-story-view-act]{flex:1 1 calc(50% - 8px)}.rpcm-story-actions{align-items:stretch;flex-wrap:wrap}.rpcm-story-actions>span{flex-basis:100%}.rpcm-story-actions button{flex:1 1 auto}}
-      .rpcm-quickbar{position:sticky;top:-16px;z-index:8;display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin:-2px -4px 13px;padding:9px 4px;background:rgba(24,24,24,.95);backdrop-filter:blur(9px);border-bottom:1px solid #292929}.rpcm-jump{border:1px solid #373737;background:#222;color:#aaa;border-radius:999px;padding:6px 9px;font-size:10px;font-weight:700;cursor:pointer}.rpcm-jump:hover{border-color:#70405a;color:#efb5d1;background:#2b1d25}.rpcm-search-box{position:relative;display:flex;align-items:center;gap:5px;flex:1;min-width:240px}.rpcm-search-input{width:100%;height:30px;box-sizing:border-box;border:1px solid #3c3c3c;border-radius:8px;background:#111;color:#eee;padding:0 9px;font-size:11px;outline:none}.rpcm-search-input:focus{border-color:#df6298;box-shadow:0 0 0 2px rgba(223,98,152,.14)}.rpcm-search-nav{width:29px;height:29px;padding:0;border:1px solid #3c3c3c;border-radius:7px;background:#242424;color:#aaa;cursor:pointer}.rpcm-search-count{min-width:52px;text-align:center;color:#888;font-size:10px}.rpcm-search-results{position:absolute;top:35px;left:0;right:0;z-index:40;max-height:min(420px,58vh);overflow:auto;padding:6px;background:#151515;border:1px solid #3a3a3a;border-radius:10px;box-shadow:0 18px 48px rgba(0,0,0,.58)}.rpcm-search-results[hidden]{display:none!important}.rpcm-search-empty{padding:12px;color:#777;font-size:11px;text-align:center}.rpcm-search-result{width:100%;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 10px;align-items:center;text-align:left;border:0;border-bottom:1px solid #292929;background:transparent;color:#ddd;padding:9px 10px;cursor:pointer;border-radius:7px}.rpcm-search-result:last-child{border-bottom:0}.rpcm-search-result:hover,.rpcm-search-result:focus{outline:0;background:#231c21}.rpcm-search-result-head{min-width:0;display:flex;align-items:center;gap:7px}.rpcm-search-result-head strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:#eee}.rpcm-search-result-kind{flex:0 0 auto;padding:2px 5px;border-radius:999px;background:#292329;color:#c89aae;font-size:9px;font-weight:750}.rpcm-search-result-count{grid-column:2;grid-row:1/3;align-self:center;color:#a87991;font-size:9px;font-weight:750;white-space:nowrap}.rpcm-search-result-snippet{grid-column:1;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#858585;font-size:10px}.rpcm-search-result-more{padding:7px 10px;color:#777;font-size:9px;text-align:center;border-top:1px solid #292929}.rpcm-density-select{height:30px;border:1px solid #3c3c3c;border-radius:7px;background:#242424;color:#aaa;padding:0 7px;font-size:10px}
+      .rpcm-quickbar{position:sticky;top:-16px;z-index:8;display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin:-2px -4px 13px;padding:9px 4px;background:rgba(24,24,24,.95);backdrop-filter:blur(9px);border-bottom:1px solid #292929}.rpcm-jump{border:1px solid #373737;background:#222;color:#aaa;border-radius:999px;padding:6px 9px;font-size:10px;font-weight:700;cursor:pointer}.rpcm-jump:hover{border-color:#70405a;color:#efb5d1;background:#2b1d25}.rpcm-search-box{position:relative;display:flex;align-items:center;gap:5px;flex:1;min-width:240px}.rpcm-search-input{width:100%;height:30px;box-sizing:border-box;border:1px solid #3c3c3c;border-radius:8px;background:#111;color:#eee;padding:0 9px;font-size:11px;outline:none}.rpcm-search-input:focus{border-color:#df6298;box-shadow:0 0 0 2px rgba(223,98,152,.14)}.rpcm-search-nav{width:29px;height:29px;padding:0;border:1px solid #3c3c3c;border-radius:7px;background:#242424;color:#aaa;cursor:pointer}.rpcm-search-count{min-width:52px;text-align:center;color:#888;font-size:10px}.rpcm-search-results{position:absolute;top:35px;left:0;right:0;z-index:40;max-height:min(420px,58vh);overflow:auto;padding:6px;background:#151515;border:1px solid #3a3a3a;border-radius:10px;box-shadow:0 18px 48px rgba(0,0,0,.58)}.rpcm-search-results[hidden]{display:none!important}.rpcm-search-empty{padding:12px;color:#777;font-size:11px;text-align:center}.rpcm-search-result{width:100%;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 10px;align-items:center;text-align:left;border:0;border-bottom:1px solid #292929;background:transparent;color:#ddd;padding:9px 10px;cursor:pointer;border-radius:7px}.rpcm-search-result:last-child{border-bottom:0}.rpcm-search-result:hover,.rpcm-search-result:focus{outline:0;background:#231c21}.rpcm-search-result-head{min-width:0;display:flex;align-items:center;gap:7px}.rpcm-search-result-head strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:#eee}.rpcm-search-result-kind{flex:0 0 auto;padding:2px 5px;border-radius:999px;background:#292329;color:#c89aae;font-size:9px;font-weight:750}.rpcm-search-result-count{grid-column:2;grid-row:1/3;align-self:center;color:#a87991;font-size:9px;font-weight:750;white-space:nowrap}.rpcm-search-result-snippet{grid-column:1;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#858585;font-size:10px}.rpcm-search-result-more{padding:7px 10px;color:#777;font-size:9px;text-align:center;border-top:1px solid #292929}.rpcm-density-select{height:30px;border:1px solid #3c3c3c;border-radius:7px;background:#242424;color:#aaa;padding:0 7px;font-size:10px}.rpcm-desktop-quick-trigger-pref{display:flex;align-items:center;gap:5px;height:30px;box-sizing:border-box;border:1px solid #3c3c3c;border-radius:7px;background:#242424;color:#aaa;padding:0 8px;font-size:10px;white-space:nowrap;cursor:pointer}.rpcm-desktop-quick-trigger-pref input{margin:0;accent-color:#df6298}
       .rpcm-slot{border:1px solid #333;background:#1f1f1f;border-radius:11px;margin-bottom:9px;overflow:hidden}
       .rpcm-slot summary{list-style:none;display:flex;align-items:center;gap:10px;padding:11px 12px;cursor:pointer;user-select:none}.rpcm-slot summary::-webkit-details-marker{display:none}.rpcm-slot summary:hover{background:#252525}
       #rpcm-modal input[type=checkbox],#rpcm-lib-dialog-backdrop input[type=checkbox],#rpcm-log-dialog-backdrop input[type=checkbox],#rpcm-story-dialog-backdrop input[type=checkbox],#rpcm-story-view-backdrop input[type=checkbox],#rpcm-dup-dialog-backdrop input[type=radio]{accent-color:#df6298}
@@ -15108,9 +15751,12 @@ ${dialogueText}`;
       .rpcm-story-read-list{flex:1;min-height:0;overflow:auto;padding:18px 22px 32px}.rpcm-story-read-card{display:grid;grid-template-columns:32px minmax(0,1fr);gap:12px;position:relative}.rpcm-story-read-rail{position:relative;display:flex;justify-content:center}.rpcm-story-read-rail span{position:relative;z-index:1;width:12px;height:12px;margin-top:9px;border-radius:50%;background:#67c0ad;box-shadow:0 0 0 5px #20342f}.rpcm-story-read-rail i{position:absolute;top:25px;bottom:-9px;width:2px;background:#35564e}.rpcm-story-read-main{min-width:0;margin-bottom:18px;padding:0 2px 18px;border-bottom:1px solid #29332f}.rpcm-story-read-date{display:flex;align-items:center;gap:8px;color:#76c8b6;font-size:11px;font-weight:850}.rpcm-story-read-date span{color:#70827d;font-size:9px;font-weight:600}.rpcm-story-read-main h3{margin:7px 0 8px;color:#edf5f3;font-size:15px;line-height:1.4}.rpcm-story-read-content{color:#bdc9c6;font-size:12px;line-height:1.72;white-space:pre-wrap;overflow-wrap:anywhere}.rpcm-story-read-tags{display:flex;flex-wrap:wrap;gap:5px;margin-top:10px}.rpcm-story-read-tags span{padding:3px 7px;border-radius:999px;background:#21332f;color:#8cc8bb;font-size:9px}.rpcm-story-paste{flex:1;min-height:0;overflow:auto;padding:16px 18px}.rpcm-story-paste>label{display:flex;height:calc(100% - 74px);min-height:260px;flex-direction:column;gap:8px;color:#9aaba7;font-size:11px}.rpcm-story-paste textarea{flex:1;min-height:240px;resize:none;box-sizing:border-box;border:1px solid #3c504b;border-radius:10px;background:#0e1211;color:#dce7e4;padding:13px;font:11px/1.58 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;outline:none}.rpcm-story-paste textarea:focus{border-color:#5fb8a6;box-shadow:0 0 0 2px rgba(95,184,166,.13)}.rpcm-story-paste details{margin-top:10px;border:1px solid #303c39;border-radius:8px;background:#171c1b}.rpcm-story-paste summary{padding:9px 11px;color:#869792;font-size:10px;cursor:pointer}.rpcm-story-paste pre{margin:0;padding:11px;border-top:1px solid #303c39;color:#9eb0ab;font:10px/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:pre-wrap}.rpcm-story-import-summary{display:flex;align-items:center;gap:12px;padding:12px 18px;border-bottom:1px solid #2f403c;background:#19231f}.rpcm-story-import-summary strong{color:#d7eee9;font-size:12px}.rpcm-story-import-summary span{color:#85a49d;font-size:10px}
       .rpcm-story-read-date button{margin-left:auto;border:1px solid #59383d;border-radius:6px;background:#291d1f;color:#d99ba1;padding:4px 7px;font-size:9px;cursor:pointer}.rpcm-story-read-date button:hover{border-color:#98505a;background:#3a2226;color:#ffd6da}.rpcm-story-diff-badge{border:1px solid #4d7b70;border-radius:999px;padding:2px 6px;color:#9fe2d4;font-size:8px}.rpcm-story-read-card.is-new .rpcm-story-read-main{background:linear-gradient(90deg,rgba(49,103,89,.16),transparent)}.rpcm-story-read-card.is-updated .rpcm-story-read-main{background:linear-gradient(90deg,rgba(114,91,48,.12),transparent)}.rpcm-story-guide{flex:1;min-height:0;padding:16px 18px;display:flex;flex-direction:column;gap:10px}.rpcm-story-guide-note{display:flex;flex-direction:column;gap:3px;padding:10px 12px;border:1px solid #365149;border-radius:9px;background:#18231f;color:#91aaa3;font-size:10px;line-height:1.55}.rpcm-story-guide-note strong{color:#d2e9e3}.rpcm-story-guide label{display:flex;min-height:0;flex:1;flex-direction:column;gap:8px;color:#9aaba7;font-size:11px}.rpcm-story-guide textarea{flex:1;min-height:280px;resize:none;box-sizing:border-box;border:1px solid #3c504b;border-radius:10px;background:#0e1211;color:#dce7e4;padding:13px;font:11px/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;outline:none}.rpcm-story-guide textarea:focus{border-color:#5fb8a6;box-shadow:0 0 0 2px rgba(95,184,166,.13)}.rpcm-story-update-head{display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid #2e3a37;background:#19201e}.rpcm-story-update-head label{display:flex;align-items:center;gap:8px;color:#9aaba7;font-size:10px}.rpcm-story-update-head select{height:33px;border:1px solid #40514d;border-radius:7px;background:#101312;color:#e7f0ee;padding:0 9px}.rpcm-story-update-head>span{margin-left:auto;color:#76a499;font-size:10px}.rpcm-story-update-note{padding:9px 16px;border-bottom:1px solid #2e3a37;background:#17201d;color:#8da49e;font-size:10px;line-height:1.55}.rpcm-story-review-range{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:7px 12px;padding:12px 16px;border-bottom:1px solid #2e3a37;background:#151b19;color:#94a8a2;font-size:10px}.rpcm-story-review-range strong{color:#d7e9e4}.rpcm-story-review-range label{display:flex;align-items:center;gap:6px}.rpcm-story-review-range small{grid-column:1/-1;color:#71847f}.rpcm-story-review-error{padding:10px 16px;background:#351d20;color:#f3a5ad;font-size:10px}.rpcm-story-review-error>strong,.rpcm-story-review-error>span{display:block}.rpcm-story-review-error>span{margin-top:4px;line-height:1.55}.rpcm-story-review-error>div{display:flex;gap:7px;flex-wrap:wrap;margin-top:9px}.rpcm-story-update-list{flex:1;min-height:0;overflow:auto;padding:12px 16px}.rpcm-story-update-list h2{margin:0 0 8px;color:#d4e2de;font-size:12px}.rpcm-story-update-list h2 small{font-weight:500}.rpcm-story-log-group{margin:0 0 12px;border:1px solid #2e3d39;border-radius:9px;overflow:hidden}.rpcm-story-log-group h3{margin:0;padding:8px 10px;background:#1b2522;color:#9bc7bd;font-size:10px}.rpcm-story-log-group label{display:flex;align-items:flex-start;gap:10px;padding:10px;border-top:1px solid #293330;cursor:pointer}.rpcm-story-log-group label>span{display:flex;flex-direction:column;gap:3px}.rpcm-story-log-group small{color:#70847e;font-size:9px}.rpcm-story-empty.compact{padding:28px 16px}.rpcm-story-settings{flex:1;padding:20px;color:#a9bbb6;overflow:auto}.rpcm-story-settings h3+label{margin-top:12px}.rpcm-story-settings h3:not(:first-child){margin-top:28px}.rpcm-story-settings>label{display:flex;align-items:center;gap:8px;margin:18px 0}.rpcm-story-settings input[type=number]{width:72px;border:1px solid #40514d;border-radius:7px;background:#101312;color:#fff;padding:7px}.rpcm-story-setting-checks{display:flex;gap:14px;flex-wrap:wrap}.rpcm-story-setting-checks label{display:flex;gap:6px}.rpcm-story-settings p{color:#748781;font-size:10px}.rpcm-story-review-status{color:#7d938d;font-size:10px}.rpcm-story-review-status.is-due{color:#efbb79;font-weight:800}.rpcm-story-result-choice{display:flex;align-items:center;gap:8px;padding:12px 16px;border-top:1px solid #2d3b37;background:#17201d}.rpcm-story-result-choice strong{color:#bde4db}.rpcm-story-result-choice span{margin-right:auto;color:#78918a;font-size:10px}.rpcm-story-last-diff{display:flex;align-items:center;gap:10px;padding:8px 16px;border-bottom:1px solid #34463f;background:#19241f;color:#91b8af;font-size:10px}.rpcm-story-last-diff strong{color:#d1e8e2}.rpcm-story-last-diff span{flex:1}.rpcm-story-last-diff button{border:0;background:none;color:#80a99f;cursor:pointer}.rpcm-story-fields select{width:100%;box-sizing:border-box;border:1px solid #3a4744;border-radius:7px;background:#111413;color:#e3e9e7;padding:8px 9px;font:11px/1.45 inherit;outline:none}.rpcm-story-actions{flex-wrap:wrap}.rpcm-story-drag{cursor:grab;color:#6e9188;font-size:15px;line-height:1}.rpcm-story-card.is-dragging{opacity:.45}.rpcm-story-merge-check{display:flex;align-items:center;gap:3px;color:#879b96;font-size:9px}.rpcm-story-month{margin:0 0 12px;border:1px solid #30403c;border-radius:10px;overflow:hidden;background:#171b1a}.rpcm-story-month>summary{display:flex;align-items:center;justify-content:space-between;padding:10px 13px;background:#1b2421;color:#b8d5ce;font-size:11px;font-weight:800;cursor:pointer;list-style:none}.rpcm-story-month>summary::-webkit-details-marker{display:none}.rpcm-story-month>summary b{color:#718c85;font-size:9px}.rpcm-story-month>div{padding:14px 10px 0}.rpcm-story-date-indicator{display:flex;gap:13px;padding:9px 16px;border-bottom:1px solid #2c3936;overflow-x:auto;background:#151a18}.rpcm-story-date-indicator>div{display:flex;align-items:center;gap:4px;flex:0 0 auto}.rpcm-story-date-indicator strong{margin-right:3px;color:#77958e;font-size:9px}.rpcm-story-date-indicator button{display:flex;align-items:center;gap:3px;border:0;background:none;color:#b4cbc5;padding:3px;font-size:9px;cursor:pointer}.rpcm-story-date-indicator i{width:5px;height:5px;border-radius:50%;background:#58af9d}.rpcm-story-import-summary{flex-wrap:wrap}.rpcm-story-import-summary>div:first-child{display:flex;flex-direction:column;gap:2px;margin-right:auto}.rpcm-story-diff-counts{display:flex;gap:8px;flex-wrap:wrap}.rpcm-story-diff-counts b{color:#92afa8;font-size:9px}.rpcm-story-preview-tabs{display:flex;gap:5px;flex:1 1 100%}.rpcm-story-preview-tabs button{border:1px solid #3b4a46;border-radius:7px;background:#1c2220;color:#8da09b;padding:5px 8px;font-size:9px;cursor:pointer}.rpcm-story-preview-tabs button.active{border-color:#4f8b7e;background:#203c35;color:#c6ebe2}.rpcm-story-import-warnings{display:flex;flex-direction:column;gap:3px;padding:9px 16px;border-bottom:1px solid #5c4d32;background:#2a2419;color:#c8b787;font-size:9px}.rpcm-story-removed-card{margin:0 0 12px;padding:12px;border:1px solid #5a373b;border-radius:9px;background:#251a1c;color:#b99a9e}.rpcm-story-removed-card>div{display:flex;gap:8px;align-items:center}.rpcm-story-removed-card b{color:#e09ba3;font-size:8px}.rpcm-story-removed-card span{font-size:9px}.rpcm-story-removed-card>strong{display:block;margin-top:7px;color:#e0c2c5}.rpcm-story-removed-card p{margin:6px 0 0;white-space:pre-wrap;font-size:10px;line-height:1.55}
       .rpcm-breakdown{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:18px;row-gap:0;margin-top:10px;border-top:1px solid #292929}.rpcm-breakdown-chip{display:flex;align-items:center;justify-content:flex-start;gap:7px;border:0;border-bottom:1px solid #292929;background:transparent;color:#777;border-radius:0;padding:6px 1px;font-size:10px}.rpcm-breakdown-chip strong{color:#bdbdbd;font-weight:700}.rpcm-breakdown-chip>span:last-child{margin-left:auto}.rpcm-auto-active{margin:0 0 12px;padding:10px 12px;border:1px solid #303030;border-radius:10px;background:#191919}.rpcm-auto-active-title{font-size:11px;font-weight:800;color:#bbb;margin-bottom:6px}.rpcm-auto-active-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:7px;align-items:center;padding:5px 0;border-top:1px solid #252525;font-size:10px;color:#888}.rpcm-auto-active-row:first-of-type{border-top:0}.rpcm-auto-badge{border:1px solid color-mix(in srgb,var(--rpcm-tone,#6f7782) 72%,#3c3c3c);border-radius:999px;padding:2px 7px;color:var(--rpcm-tone,#bbb);background:color-mix(in srgb,var(--rpcm-tone,#6f7782) 11%,transparent);font-weight:750}.rpcm-auto-active-row strong{display:block;color:#ddd;font-size:11px}.rpcm-auto-active-copy{min-width:0}.rpcm-auto-reason{display:block;color:#888;margin-top:1px}.rpcm-auto-evidence{display:block;margin-top:3px;color:#c496ac;font-size:9px;line-height:1.45}.rpcm-auto-active-meta{display:flex;align-items:center;justify-content:flex-end;gap:6px;white-space:nowrap}.rpcm-auto-inline-toggle{width:25px;height:24px;padding:0;border:1px solid #3b3b3b;border-radius:6px;background:#222;color:#aaa;cursor:pointer;font-size:11px;line-height:1}.rpcm-auto-inline-toggle:hover{border-color:#70405a;background:#2b1d25;color:#e9abc8}.rpcm-auto-inline-content{grid-column:1/-1;white-space:pre-wrap;word-break:break-word;max-height:220px;overflow:auto;margin:4px 0 3px;padding:9px 10px;border:1px solid #303030;border-left:2px solid #b55a84;border-radius:7px;background:#101010;color:#aaa;font:10px/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.rpcm-auto-inline-content[hidden]{display:none!important}.rpcm-warnings{margin:0 0 12px;padding:9px 11px;border:1px solid rgba(245,158,11,.35);background:rgba(245,158,11,.08);border-radius:9px;color:#fbbf24;font-size:10px;line-height:1.55}.rpcm-warning-action{display:inline-flex;align-items:center;margin-top:7px;padding:5px 8px;border:1px solid rgba(245,158,11,.45);border-radius:6px;background:rgba(245,158,11,.10);color:#fbbf24;font-size:10px;font-weight:750;cursor:pointer}.rpcm-warning-action:hover{background:rgba(245,158,11,.18);color:#fde68a}.rpcm-save-status{font-size:10px;white-space:nowrap}.rpcm-save-status.saved{color:#6b9f7b}.rpcm-save-status.saving{color:#d1a64b}.rpcm-save-status.error{color:#ef7777}.rpcm-active-timeline-chip{display:inline-flex;align-items:center;padding:5px 9px;border:1px solid #684357;border-radius:999px;background:#271b21;color:#efb7d0;font-size:10px;font-weight:750}#rpcm-log-dialog-backdrop{position:fixed;inset:0;z-index:1000005;background:rgba(0,0,0,.64);display:flex;align-items:center;justify-content:center;padding:18px}.rpcm-log-dialog{width:min(820px,95vw);max-height:min(820px,90vh);display:flex;flex-direction:column;background:#171717;border:1px solid #3b3b3b;border-radius:14px;overflow:hidden;color:#ddd}.rpcm-log-list{overflow:auto;padding:10px 12px}.rpcm-log-timeline-toolbar{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid #30272b;background:#1d191b}.rpcm-log-timeline-toolbar label{display:flex;align-items:center;gap:8px;flex:1;min-width:0;color:#c7a6b5;font-size:10px;font-weight:750}.rpcm-log-timeline-toolbar select,.rpcm-log-timeline-choice select{min-width:150px;max-width:260px;height:32px;border:1px solid #494047;border-radius:7px;background:#111;color:#e4e4e4;padding:0 8px}.rpcm-log-timeline-toolbar.is-simple{gap:7px}.rpcm-log-simple-label{color:#d9b1c4;font-size:11px;font-weight:800}.rpcm-log-simple-desc{flex:1;color:#81747a;font-size:10px}.rpcm-log-single-timeline{padding:1px 0}.rpcm-log-timeline-delete{border-color:#653b43!important;color:#e2a0a7!important}.rpcm-log-timeline-folder{border:1px solid #493541;border-radius:11px;background:#181518;margin-bottom:11px;overflow:hidden}.rpcm-log-timeline-folder>summary{display:flex;align-items:center;gap:10px;padding:12px 13px;cursor:pointer;list-style:none;background:#211a1e}.rpcm-log-timeline-folder>summary::-webkit-details-marker{display:none}.rpcm-log-timeline-folder>summary:before{content:"▸";color:#d36b9b}.rpcm-log-timeline-folder[open]>summary:before{content:"▾"}.rpcm-log-timeline-folder>summary strong{flex:1;color:#f0cadb;font-size:12px}.rpcm-log-timeline-folder>summary span{color:#9b7d8b;font-size:10px}.rpcm-log-timeline-body{padding:9px}.rpcm-log-empty{padding:18px;text-align:center;color:#777;font-size:10px}.rpcm-log-picked{margin:10px 12px 0;border:1px solid #53404a;border-radius:10px;background:#1d191b;overflow:hidden}.rpcm-log-picked>summary{display:flex;align-items:center;gap:8px;padding:9px 11px;cursor:pointer;list-style:none}.rpcm-log-picked>summary::-webkit-details-marker{display:none}.rpcm-log-picked>summary strong{flex:1;color:#e6bdd0;font-size:11px}.rpcm-log-picked>summary span{color:#9d7b8b;font-size:10px}.rpcm-log-picked>summary:before{content:"▸";color:#d36b9b}.rpcm-log-picked[open]>summary:before{content:"▾"}.rpcm-log-picked-row{display:flex;align-items:center;gap:10px;padding:8px 10px;border-top:1px solid #342b30}.rpcm-log-picked-row>div:first-child{flex:1;min-width:0}.rpcm-log-picked-row strong{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#ddd;font-size:10px}.rpcm-log-picked-row span{display:block;margin-top:2px;color:#83727a;font-size:9px}.rpcm-log-picked-row>div:last-child{display:flex;gap:5px}.rpcm-log-picked-row button{border:1px solid #493c43;border-radius:6px;background:#262124;color:#c8a4b5;padding:4px 7px;font-size:9px;cursor:pointer}.rpcm-log-picked-row button:hover{background:#33262d;color:#fff}.rpcm-log-picked-empty{padding:12px;text-align:center;color:#75676d;font-size:10px;border-top:1px solid #342b30}.rpcm-log-row.is-picked-jump{border-color:#df6298;box-shadow:0 0 0 2px rgba(223,98,152,.15)}.rpcm-log-row{padding:10px 11px;border:1px solid #303030;border-radius:9px;background:#1d1d1d;margin-bottom:8px}.rpcm-log-row-head{display:flex;gap:8px;align-items:center}.rpcm-log-row-head strong{flex:1;font-size:12px}.rpcm-log-row-head span,.rpcm-log-row-reason{font-size:10px;color:#777}.rpcm-log-row-reason{margin-top:3px}.rpcm-log-row-controls{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:7px;font-size:10px;color:#aaa}.rpcm-log-row-controls label{display:flex;align-items:center;gap:4px}.rpcm-log-timeline-choice{margin-right:auto;color:#cf9bb3!important}.rpcm-log-content{white-space:pre-wrap;word-break:break-word;max-height:220px;overflow:auto;background:#101010;border:1px solid #2d2d2d;border-radius:7px;padding:9px;margin:8px 0 0;color:#aaa;font:10px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.rpcm-log-help{padding:9px 14px;border-bottom:1px solid #292929;background:#1b1719;color:#9c9096;font-size:10px;line-height:1.55}.rpcm-log-help b{color:#d8b2c4}.rpcm-log-year,.rpcm-log-month{border:1px solid #2f2f2f;border-radius:10px;background:#191919;margin-bottom:9px;overflow:hidden}.rpcm-log-year>summary,.rpcm-log-month>summary{display:flex;align-items:center;gap:8px;cursor:pointer;list-style:none;padding:10px 11px;background:#1d1d1d;color:#ddd}.rpcm-log-year>summary::-webkit-details-marker,.rpcm-log-month>summary::-webkit-details-marker{display:none}.rpcm-log-year>summary:before,.rpcm-log-month>summary:before{content:"▸";color:#8b7c83;font-size:10px}.rpcm-log-year[open]>summary:before,.rpcm-log-month[open]>summary:before{content:"▾"}.rpcm-log-year>summary strong,.rpcm-log-month>summary strong{flex:1}.rpcm-log-year>summary span,.rpcm-log-month>summary span{color:#777;font-size:10px}.rpcm-log-month{margin:8px;border-color:#2a2a2a}.rpcm-log-month>summary{padding:8px 9px;background:#1b1b1b}.rpcm-log-groupbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 10px;border-top:1px solid #252525;border-bottom:1px solid #252525;background:#181518;color:#9b9095;font-size:10px}.rpcm-log-groupbar label{display:flex;align-items:center;gap:4px;cursor:pointer}.rpcm-log-groupbar input,.rpcm-log-manual{accent-color:#df6298}.rpcm-log-month .rpcm-log-row{margin:7px 8px;background:#1b1b1b}.rpcm-log-dialog .rpcm-spacer{flex:1}#rpcm-dup-dialog-backdrop{position:fixed;inset:0;z-index:1000006;background:rgba(0,0,0,.68);display:flex;align-items:center;justify-content:center;padding:18px}.rpcm-dup-dialog{width:min(860px,95vw)}.rpcm-dup-list{padding:12px 14px}.rpcm-dup-group{border:1px solid #3b3326;border-radius:10px;background:#1b1916;margin-bottom:12px;overflow:hidden}.rpcm-dup-group-head{display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid #332d24;background:#211d18}.rpcm-dup-group-head strong{color:#f0cf8a;font-size:12px}.rpcm-dup-group-head span{color:#8e8270;font-size:10px}.rpcm-dup-choice{margin:9px;border:1px solid #303030;border-radius:9px;background:#1b1b1b;overflow:hidden;transition:border-color .15s,box-shadow .15s}.rpcm-dup-choice.is-selected{border-color:#b75d86;box-shadow:0 0 0 1px rgba(223,98,152,.12)}.rpcm-dup-choice-head{display:flex;align-items:center;gap:8px;padding:8px 10px;background:#202020;cursor:pointer}.rpcm-dup-choice-head strong{flex:1;color:#ddd;font-size:11px}.rpcm-dup-choice-head span{color:#777;font-size:10px}.rpcm-dup-editor{display:block;width:100%;min-height:130px;max-height:260px;resize:vertical;box-sizing:border-box;border:0;border-top:1px solid #2b2b2b;background:#101010;color:#c7c7c7;padding:10px 11px;outline:none;font:10px/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.rpcm-dup-editor:focus{box-shadow:inset 0 0 0 1px rgba(223,98,152,.42)}
+      .rpcm-unknown-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px}.rpcm-unknown-controls label{display:flex;align-items:center;gap:5px;margin-right:auto;color:#e1bc72;font-size:10px}.rpcm-unknown-controls input{accent-color:#d89a2b}.rpcm-unknown-delete{border-color:#653b43!important;color:#e2a0a7!important}.rpcm-date-unknown-row.is-delete-pending{border-color:#6d3941;background:#24191b;opacity:.72}.rpcm-date-unknown-row.is-delete-pending strong{text-decoration:line-through}.rpcm-unknown-editor{margin-top:8px;padding:9px;border:1px solid #39302a;border-radius:8px;background:#141210}.rpcm-unknown-editor[hidden]{display:none!important}.rpcm-unknown-editor label{display:block;margin-top:8px}.rpcm-unknown-editor label:first-child{margin-top:0}.rpcm-unknown-editor span{display:block;margin-bottom:4px;color:#a99575;font-size:10px;font-weight:700}.rpcm-unknown-editor input,.rpcm-unknown-editor textarea{display:block;width:100%;box-sizing:border-box;border:1px solid #3b3732;border-radius:7px;background:#101010;color:#ddd;padding:8px;outline:none}.rpcm-unknown-editor textarea{min-height:130px;resize:vertical;font:10px/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.rpcm-unknown-editor input:focus,.rpcm-unknown-editor textarea:focus{border-color:#b47a22}
       .rpcm-dup-dialog{width:min(1120px,96vw)}.rpcm-dup-heading{display:grid;grid-template-columns:120px minmax(0,1fr);align-items:center;gap:9px;padding:9px 10px;border-top:1px solid #2b2b2b;background:#171717;color:#9d8b94;font-size:10px}.rpcm-dup-heading input{width:100%;height:36px;box-sizing:border-box;border:1px solid #444;border-radius:8px;background:#0f0f0f;color:#eee;padding:0 10px;font:11px/1.2 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;outline:none}.rpcm-dup-heading input:focus{border-color:#df6298;box-shadow:0 0 0 2px rgba(223,98,152,.13)}
       .rpcm-dup-group-head{flex-wrap:wrap}.rpcm-dup-group-head>span{margin-left:auto}.rpcm-timeline-hint{border:1px solid #785171;border-radius:999px;background:#321f2d;color:#f0b9d6;padding:3px 7px;font-size:9px;font-style:normal;font-weight:750}
-      #rpcm-log-dialog-backdrop .rpcm-date-row input[type=number],#rpcm-log-dialog-backdrop #rpcm-date-bulk-year,#rpcm-log-dialog-backdrop .rpcm-date-full{box-sizing:border-box;color:#151515!important;-webkit-text-fill-color:#151515!important;background:#fff!important;border:1px solid #c9c9ce!important;border-radius:6px;padding:6px 8px;opacity:1!important;caret-color:#151515!important;color-scheme:light;transition:background .14s,border-color .14s,box-shadow .14s}#rpcm-log-dialog-backdrop .rpcm-date-row input[type=number]:focus,#rpcm-log-dialog-backdrop #rpcm-date-bulk-year:focus,#rpcm-log-dialog-backdrop .rpcm-date-full:focus{color:#151515!important;-webkit-text-fill-color:#151515!important;background:#ededf0!important;border-color:#df6298!important;box-shadow:0 0 0 2px rgba(223,98,152,.22)!important;outline:none}#rpcm-log-dialog-backdrop .rpcm-date-row input[type=number]::placeholder,#rpcm-log-dialog-backdrop #rpcm-date-bulk-year::placeholder,#rpcm-log-dialog-backdrop .rpcm-date-full::placeholder{color:#8b8b93!important;-webkit-text-fill-color:#8b8b93!important;opacity:1!important}
+      .rpcm-date-bulkbar{position:sticky;top:0;z-index:4;box-shadow:0 5px 14px rgba(0,0,0,.32)}.rpcm-date-bulkbar>strong{color:#efb8d1;font-size:10px;white-space:nowrap}.rpcm-date-bulk-fields{display:inline-flex;align-items:center;gap:7px;flex-wrap:wrap}.rpcm-date-bulk-fields label{gap:5px!important}.rpcm-date-bulk-fields input{width:66px}.rpcm-date-bulk-fields #rpcm-date-bulk-year{width:92px}.rpcm-date-row.is-selected{border-color:#9f4f75;box-shadow:inset 3px 0 0 #df6298;background:#241b20}
+      #rpcm-log-dialog-backdrop .rpcm-date-row input[type=number],#rpcm-log-dialog-backdrop .rpcm-date-bulk-fields input,#rpcm-log-dialog-backdrop .rpcm-date-full{box-sizing:border-box;color:#151515!important;-webkit-text-fill-color:#151515!important;background:#fff!important;border:1px solid #c9c9ce!important;border-radius:6px;padding:6px 8px;opacity:1!important;caret-color:#151515!important;color-scheme:light;transition:background .14s,border-color .14s,box-shadow .14s}#rpcm-log-dialog-backdrop .rpcm-date-row input[type=number]:focus,#rpcm-log-dialog-backdrop .rpcm-date-bulk-fields input:focus,#rpcm-log-dialog-backdrop .rpcm-date-full:focus{color:#151515!important;-webkit-text-fill-color:#151515!important;background:#ededf0!important;border-color:#df6298!important;box-shadow:0 0 0 2px rgba(223,98,152,.22)!important;outline:none}#rpcm-log-dialog-backdrop .rpcm-date-row input[type=number]::placeholder,#rpcm-log-dialog-backdrop .rpcm-date-bulk-fields input::placeholder,#rpcm-log-dialog-backdrop .rpcm-date-full::placeholder{color:#8b8b93!important;-webkit-text-fill-color:#8b8b93!important;opacity:1!important}
+      @media(max-width:680px){.rpcm-date-bulkbar{align-items:stretch;gap:7px}.rpcm-date-bulkbar>strong{display:flex;align-items:center;margin-left:auto}.rpcm-date-bulk-fields{flex:1 1 100%}.rpcm-date-bulk-fields label{flex:1}.rpcm-date-bulk-fields input,.rpcm-date-bulk-fields #rpcm-date-bulk-year{width:100%;min-width:0}.rpcm-date-bulkbar>.rpcm-lib-small{min-height:36px;flex:1 1 calc(50% - 7px)}}
       .rpcm-retention{display:flex;align-items:center;gap:9px;flex-wrap:wrap;padding:10px 12px;margin:10px 0 0;border:1px solid #343434;border-radius:10px;background:#191919;color:#bbb;font-size:12px}.rpcm-retention strong{color:#eee}.rpcm-retention select{height:32px;border:1px solid #444;border-radius:8px;background:#242424;color:#f2f2f2;padding:0 9px;font:inherit;outline:none}.rpcm-retention .rpcm-retention-help{color:#888;font-size:11px}
       #rpcm-preview-backdrop,#rpcm-import-backdrop{position:fixed;inset:0;z-index:1000009;background:rgba(0,0,0,.7);display:flex;align-items:center;justify-content:center;padding:18px;animation:rpcm-fade-in .14s ease-out}.rpcm-preview-dialog,.rpcm-import-dialog{width:min(820px,96vw);max-height:min(860px,92vh);display:flex;flex-direction:column;background:#171717;border:1px solid #40343a;border-radius:15px;box-shadow:0 28px 90px rgba(0,0,0,.72);color:#ddd;overflow:hidden}.rpcm-preview-list,.rpcm-import-list{overflow:auto;padding:12px 14px}.rpcm-preview-card{border:1px solid #333;border-left:3px solid var(--rpcm-tone);border-radius:10px;background:#1d1d1d;margin-bottom:8px;overflow:hidden}.rpcm-preview-card summary{display:flex;align-items:center;gap:8px;list-style:none;padding:11px 12px;cursor:pointer}.rpcm-preview-card summary::-webkit-details-marker{display:none}.rpcm-preview-card summary:hover{background:#242424}.rpcm-preview-card[open] summary{border-bottom:1px solid #303030}.rpcm-preview-index{color:#666;font:10px/1 ui-monospace,SFMono-Regular,Menlo,monospace}.rpcm-preview-kind{padding:3px 7px;border-radius:999px;background:color-mix(in srgb,var(--rpcm-tone) 16%,transparent);color:#ddd;font-size:9px;font-weight:800}.rpcm-preview-card strong{flex:1;min-width:0;font-size:12px}.rpcm-preview-meta{font-size:10px;color:#888;white-space:nowrap}.rpcm-preview-reason{padding:8px 12px 0;color:#a68d99;font-size:10px}.rpcm-preview-evidence{padding:5px 12px 0;color:#c496ac;font-size:9px;line-height:1.45}.rpcm-preview-card pre{white-space:pre-wrap;word-break:break-word;max-height:420px;overflow:auto;margin:8px 12px 12px;padding:11px;border:1px solid #2d2d2d;border-radius:8px;background:#0e0e0e;color:#bbb;font:11px/1.58 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.rpcm-import-toolbar{display:flex;align-items:center;gap:7px;padding:10px 14px;border-bottom:1px solid #2c2c2c}.rpcm-import-list{min-height:180px}.rpcm-import-group-title{margin:5px 2px 7px;color:#888;font-size:10px;font-weight:800;letter-spacing:.03em}.rpcm-import-group-title:not(:first-child){margin-top:17px}.rpcm-import-row{display:flex;align-items:flex-start;gap:10px;padding:10px;border-radius:9px;cursor:pointer}.rpcm-import-row:hover{background:#222}.rpcm-import-row.is-current{background:rgba(223,98,152,.07)}.rpcm-import-row.is-blocked{opacity:.55;cursor:not-allowed}.rpcm-import-row input{margin-top:3px;accent-color:#df6298}.rpcm-import-row span{display:flex;flex-direction:column;gap:3px;min-width:0}.rpcm-import-row strong{font-size:12px;color:#e6e6e6}.rpcm-import-row small{font-size:10px;color:#777}.rpcm-import-diff{font-style:normal;font-size:9px;font-weight:700;color:#c596ad;margin-left:5px}.rpcm-import-note{padding:9px 14px;background:#1c181a;border-top:1px solid #2d292b;color:#9c878f;font-size:10px}
       #rpcm-raw-viewer{position:fixed;inset:0;z-index:10001;background:rgba(0,0,0,.56);display:flex;align-items:center;justify-content:center;padding:24px;pointer-events:auto}.rpcm-raw-card{width:min(920px,94vw);height:min(760px,88vh);display:flex;flex-direction:column;background:#161616;border:1px solid #444;border-radius:14px;box-shadow:0 24px 80px rgba(0,0,0,.65);overflow:hidden}.rpcm-raw-head{display:flex;align-items:center;gap:12px;padding:13px 15px;border-bottom:1px solid #333}.rpcm-raw-head>div:first-child{flex:1;font-size:12px;color:#999}.rpcm-raw-head strong{display:block;color:#f5f5f5;font-size:14px;margin-bottom:3px}.rpcm-raw-note{padding:10px 15px;background:#202020;color:#aaa;font-size:11px;line-height:1.45;border-bottom:1px solid #303030}.rpcm-raw-text{flex:1;min-height:0;resize:none;background:#0c0c0c;color:#ddd;border:0;outline:0;padding:15px;font:12px/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:pre-wrap;word-break:break-word}
@@ -15156,7 +15802,7 @@ ${dialogueText}`;
       html.rpcm-mobile-layout .rpcm-search-input{height:44px;padding:0 12px;font-size:16px}
       html.rpcm-mobile-layout .rpcm-search-nav{width:44px;height:44px;font-size:18px}html.rpcm-mobile-layout .rpcm-search-count{min-width:48px;font-size:11px}
       html.rpcm-mobile-layout .rpcm-search-results{top:49px;max-height:calc(var(--rpcm-vvh,100vh) - 150px)}
-      html.rpcm-mobile-layout .rpcm-density-select{display:none}
+      html.rpcm-mobile-layout .rpcm-density-select,html.rpcm-mobile-layout .rpcm-desktop-quick-trigger-pref{display:none}
       html.rpcm-mobile-layout .rpcm-summary{padding:10px 12px;margin-bottom:10px}
       html.rpcm-mobile-layout .rpcm-pending{display:grid;grid-template-columns:1fr 1fr;gap:7px;padding:10px;font-size:12px}html.rpcm-mobile-layout .rpcm-pending>div:first-child{grid-column:1/-1}html.rpcm-mobile-layout .rpcm-pending .rpcm-spacer{display:none}html.rpcm-mobile-layout .rpcm-pending .rpcm-btn{min-height:42px;padding:8px;font-size:12px}html.rpcm-mobile-layout .rpcm-pending .rpcm-btn:last-child{grid-column:1/-1}
       html.rpcm-mobile-layout #rpcm-quick-trigger{display:none!important}html.rpcm-mobile-layout .rpcm-quick-panel{top:auto;left:0;right:0;bottom:0;width:100%;height:min(82vh,var(--rpcm-vvh,82vh));border-left:0;border-top:1px solid #59404d;border-radius:18px 18px 0 0;box-shadow:0 -24px 70px rgba(0,0,0,.64)}html.rpcm-mobile-layout .rpcm-quick-head{padding:12px 13px}html.rpcm-mobile-layout .rpcm-quick-note{padding:9px 13px;font-size:12px}html.rpcm-mobile-layout .rpcm-quick-list{padding:8px 10px 18px;-webkit-overflow-scrolling:touch}html.rpcm-mobile-layout .rpcm-quick-row{grid-template-columns:24px auto minmax(0,1fr);min-height:58px;padding:8px 9px}html.rpcm-mobile-layout .rpcm-quick-row input{width:22px;height:22px}html.rpcm-mobile-layout .rpcm-quick-copy strong{font-size:13px}html.rpcm-mobile-layout .rpcm-quick-copy small{font-size:11px}html.rpcm-mobile-layout .rpcm-quick-foot{flex-wrap:wrap}html.rpcm-mobile-layout .rpcm-quick-foot>span{flex-basis:100%;font-size:10px}html.rpcm-mobile-layout .rpcm-quick-foot .rpcm-btn{flex:1;min-height:44px;font-size:12px}
@@ -15234,7 +15880,7 @@ ${dialogueText}`;
       html.rpcm-mobile-layout .rpcm-lib-list,html.rpcm-mobile-layout .rpcm-library-manager-list,html.rpcm-mobile-layout .rpcm-log-list,html.rpcm-mobile-layout .rpcm-preview-list,html.rpcm-mobile-layout .rpcm-import-list{flex:1 1 auto;min-height:0;overflow:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
       html.rpcm-mobile-layout .rpcm-lib-dialog-actions{flex:0 0 auto;padding:9px 10px calc(9px + env(safe-area-inset-bottom,0px));gap:8px}html.rpcm-mobile-layout .rpcm-lib-dialog-actions .rpcm-btn{min-height:46px;font-size:14px}
       html.rpcm-mobile-layout .rpcm-lib-row{min-height:48px;padding:10px}html.rpcm-mobile-layout .rpcm-lib-row strong{font-size:14px}html.rpcm-mobile-layout .rpcm-lib-row small{font-size:12px}
-      html.rpcm-mobile-layout .rpcm-library-name-row{padding:10px 12px}html.rpcm-mobile-layout .rpcm-library-name-input,html.rpcm-mobile-layout .rpcm-library-item-edit input,html.rpcm-mobile-layout .rpcm-library-item-edit select,html.rpcm-mobile-layout .rpcm-library-item-edit textarea,html.rpcm-mobile-layout .rpcm-dup-editor,html.rpcm-mobile-layout #rpcm-log-dialog-backdrop input{font-size:16px!important}
+      html.rpcm-mobile-layout .rpcm-library-name-row{padding:10px 12px}html.rpcm-mobile-layout .rpcm-library-name-input,html.rpcm-mobile-layout .rpcm-library-item-edit input,html.rpcm-mobile-layout .rpcm-library-item-edit select,html.rpcm-mobile-layout .rpcm-library-item-edit textarea,html.rpcm-mobile-layout .rpcm-dup-editor,html.rpcm-mobile-layout .rpcm-unknown-body,html.rpcm-mobile-layout #rpcm-log-dialog-backdrop input{font-size:16px!important}
       html.rpcm-mobile-layout .rpcm-library-item-edit{grid-template-columns:1fr}html.rpcm-mobile-layout .rpcm-library-item-edit label:last-child{grid-column:1}html.rpcm-mobile-layout .rpcm-library-item-edit textarea{min-height:240px;resize:none}
       html.rpcm-mobile-layout .rpcm-library-row{flex-wrap:wrap}html.rpcm-mobile-layout .rpcm-lib-row-main{flex-basis:calc(100% - 96px)}html.rpcm-mobile-layout .rpcm-lib-manage-btn{order:4;margin-left:32px;min-height:40px;font-size:12px}
       html.rpcm-mobile-layout .rpcm-lib-rename-icon,html.rpcm-mobile-layout .rpcm-lib-delete-icon{width:42px;height:42px}html.rpcm-mobile-layout .rpcm-library-manager-actions{flex-wrap:wrap}html.rpcm-mobile-layout .rpcm-library-manager-actions [data-act="delete-library"]{flex-basis:100%}
@@ -15278,7 +15924,10 @@ ${dialogueText}`;
 
       #rpcm-ai-backdrop .rpcm-ai-input-preview.safe,#rpcm-ai-backdrop .rpcm-ai-status.success,#rpcm-ai-backdrop .rpcm-ai-connection-state.ready{border-color:#8b4568!important;background:#281b22!important;color:#f0c4da!important}#rpcm-ai-backdrop .rpcm-ai-input-preview.safe .rpcm-ai-meter>span,#rpcm-ai-backdrop .rpcm-ai-meter>span{background:#df6298!important}#rpcm-ai-backdrop .rpcm-ai-diff.added,#rpcm-ai-backdrop .rpcm-ai-result-tab.active{border-color:#b65382!important;background:#38202c!important;color:#f7cade!important}
 
-      @media(max-width:720px){.rpcm-log-auto-panel{align-items:stretch!important}.rpcm-log-auto-panel>*{flex:1 1 calc(50% - 8px)!important}.rpcm-log-auto-panel .rpcm-active-timeline-picker{flex-basis:100%!important}.rpcm-log-auto-panel .rpcm-lib-small{min-height:36px}.rpcm-related-picker{width:100vw;height:100vh;height:100dvh;border:0;border-radius:0}.rpcm-related-picker-filters{grid-template-columns:1fr 1fr}.rpcm-related-picker-filters .wide{grid-column:1/-1}.rpcm-related-picker-row{grid-template-columns:28px minmax(0,1fr)}.rpcm-related-picker-row>button:not(.rpcm-related-star){grid-row:2}.rpcm-related-picker-row>button[data-related-act="toggle"]{grid-column:1/2}.rpcm-related-picker-row>button[data-related-act="select"]{grid-column:2/3}.rpcm-related-picker>footer span{display:none}.rpcm-story-token-top{align-items:stretch;flex-direction:column}.rpcm-story-api-generate{width:100%}.rpcm-story-range-stat strong{font-size:12px}}
+      .rpcm-ai-review-launchbar{border-color:#6b4d2b;background:linear-gradient(135deg,#2b2116,#1d1a18)}.rpcm-ai-review-launchbar.has-pending{border-color:#d49a4a;box-shadow:inset 3px 0 0 #e8ad5c}.rpcm-ai-review-launchbar strong{color:#f1c785}.rpcm-ai-review-launchbar .rpcm-mini{border-color:#9f7138;background:#392817;color:#f3cf97}.rpcm-ai-review-launchbar.has-pending .rpcm-mini{background:#5b3b18;color:#ffe4b3}
+      #rpcm-ai-review-backdrop{position:fixed;inset:0;z-index:2147483647;display:flex;align-items:center;justify-content:center;box-sizing:border-box;padding:18px;background:rgba(0,0,0,.74);font-family:-apple-system,BlinkMacSystemFont,"Pretendard",sans-serif}.rpcm-ai-review-dialog{display:flex;flex-direction:column;width:min(1100px,96vw);height:min(820px,92vh);overflow:hidden;border:1px solid #72522d;border-radius:15px;background:#181716;color:#eee;box-shadow:0 28px 90px rgba(0,0,0,.72)}.rpcm-ai-review-dialog>header{display:flex;align-items:flex-start;gap:12px;padding:16px 18px;border-bottom:1px solid #3b3024;background:#1e1a16}.rpcm-ai-review-dialog>header>div{flex:1;min-width:0}.rpcm-ai-review-dialog h2{margin:0;color:#f4dfbd;font-size:18px}.rpcm-ai-review-dialog header p{margin:5px 0 0;color:#9f9383;font-size:10px;line-height:1.55}.rpcm-ai-review-dialog>header>button{border:0;background:transparent;color:#9c8e7d;font-size:21px;cursor:pointer}.rpcm-ai-review-summary{display:flex;align-items:center;gap:10px;padding:10px 15px;border-bottom:1px solid #362e25;background:#1c1916}.rpcm-ai-review-summary strong{color:#e9bd78;font-size:11px}.rpcm-ai-review-summary span{flex:1;color:#8d8275;font-size:10px}.rpcm-ai-review-summary button,.rpcm-ai-review-actions button{border:1px solid #514638;border-radius:7px;background:#26221d;color:#c9baa6;padding:7px 10px;font:10px/1.2 inherit;cursor:pointer}.rpcm-ai-review-summary button:hover,.rpcm-ai-review-actions button:hover{border-color:#a9793e;color:#fff}.rpcm-ai-review-layout{display:grid;grid-template-columns:minmax(250px,34%) minmax(0,1fr);flex:1;min-height:0}.rpcm-ai-review-layout>aside{overflow:auto;padding:9px;border-right:1px solid #352e26;background:#161514}.rpcm-ai-review-row{display:grid;width:100%;grid-template-columns:auto minmax(0,1fr);gap:4px 8px;align-items:center;margin:0 0 7px;padding:10px;text-align:left;border:1px solid #35312c;border-radius:9px;background:#1d1b19;color:#ddd;cursor:pointer}.rpcm-ai-review-row:hover,.rpcm-ai-review-row.active{border-color:#a87940;background:#292117}.rpcm-ai-review-row strong{min-width:0;overflow:hidden;color:#e8e0d5;font-size:11px;text-overflow:ellipsis;white-space:nowrap}.rpcm-ai-review-row small{grid-column:1/-1;color:#81786c;font-size:9px}.rpcm-ai-review-row>span,.rpcm-ai-review-meta>span{display:inline-flex;border:1px solid #5b4b36;border-radius:999px;padding:3px 6px;color:#c7a873;font-size:8px;font-weight:800;white-space:nowrap}.rpcm-ai-review-row>span.status-applied,.rpcm-ai-review-meta>span.status-applied{border-color:#2f6b4b;color:#75d69b}.rpcm-ai-review-row>span.status-dismissed,.rpcm-ai-review-meta>span.status-dismissed{border-color:#4b4b4b;color:#999}.rpcm-ai-review-layout>main{display:flex;min-width:0;min-height:0;flex-direction:column;padding:14px}.rpcm-ai-review-meta{display:flex;align-items:flex-start;gap:12px;margin-bottom:10px}.rpcm-ai-review-meta>div{display:flex;min-width:0;flex:1;flex-direction:column;gap:4px}.rpcm-ai-review-meta b{color:#f0e6d8;font-size:13px}.rpcm-ai-review-meta div span{color:#8d8275;font-size:9px}.rpcm-ai-review-layout textarea{box-sizing:border-box;width:100%;flex:1;min-height:180px;resize:none;border:1px solid #3f3932;border-radius:9px;background:#101010;color:#ded8d0;padding:13px;font:11px/1.62 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;outline:none}.rpcm-ai-review-layout textarea:focus{border-color:#a9793e;box-shadow:0 0 0 2px rgba(169,121,62,.16)}.rpcm-ai-review-edit-note{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 2px 0;color:#9f9383;font-size:9px}.rpcm-ai-review-edit-note span[data-tone="saved"]{color:#75d69b}.rpcm-ai-review-edit-note span[data-tone="error"]{color:#e6a4a4}.rpcm-ai-review-edit-note small{color:#71685d}.rpcm-ai-review-actions{display:flex;justify-content:flex-end;gap:7px;flex-wrap:wrap;padding-top:11px}.rpcm-ai-review-actions button.primary{border-color:#b57e38;background:#6c461a;color:#fff0d3;font-weight:800}.rpcm-ai-review-actions button.danger{border-color:#633636;color:#e6a4a4}.rpcm-ai-review-empty,.rpcm-ai-review-detail-empty{padding:28px 14px;color:#81776a;text-align:center;font-size:11px;line-height:1.65}.rpcm-ai-review-detail-empty{margin:auto}
+
+      @media(max-width:720px){.rpcm-log-auto-panel{align-items:stretch!important}.rpcm-log-auto-panel>*{flex:1 1 calc(50% - 8px)!important}.rpcm-log-auto-panel .rpcm-active-timeline-picker{flex-basis:100%!important}.rpcm-log-auto-panel .rpcm-lib-small{min-height:36px}.rpcm-related-picker{width:100vw;height:100vh;height:100dvh;border:0;border-radius:0}.rpcm-related-picker-filters{grid-template-columns:1fr 1fr}.rpcm-related-picker-filters .wide{grid-column:1/-1}.rpcm-related-picker-row{grid-template-columns:28px minmax(0,1fr)}.rpcm-related-picker-row>button:not(.rpcm-related-star){grid-row:2}.rpcm-related-picker-row>button[data-related-act="toggle"]{grid-column:1/2}.rpcm-related-picker-row>button[data-related-act="select"]{grid-column:2/3}.rpcm-related-picker>footer span{display:none}.rpcm-story-token-top{align-items:stretch;flex-direction:column}.rpcm-story-api-generate{width:100%}.rpcm-story-range-stat strong{font-size:12px}#rpcm-ai-review-backdrop{inset:0;padding:0}.rpcm-ai-review-dialog{width:100vw;height:100vh;height:100dvh;border:0;border-radius:0}.rpcm-ai-review-layout{grid-template-columns:1fr;grid-template-rows:minmax(150px,38%) minmax(0,1fr)}.rpcm-ai-review-layout>aside{border-right:0;border-bottom:1px solid #352e26}.rpcm-ai-review-summary span{display:none}.rpcm-ai-review-layout textarea{font-size:13px}.rpcm-ai-review-edit-note{align-items:flex-start;flex-direction:column}.rpcm-ai-review-actions button{min-height:42px;flex:1 1 calc(50% - 7px)}}
       @media(max-width:460px){.rpcm-log-auto-panel>*{flex-basis:100%!important}.rpcm-log-auto-panel label{justify-content:space-between}.rpcm-log-auto-panel select{flex:1;max-width:none!important}.rpcm-related-picker-filters{grid-template-columns:1fr}.rpcm-related-picker-filters .wide{grid-column:1}.rpcm-related-picker-filters label.check{min-height:36px}}
     `);
   }
@@ -16012,9 +16661,13 @@ ${dialogueText}`;
     const duplicateGroups = duplicateLogDateGroups(room);
     const duplicateBranchHint = duplicateGroups.map(timelineBranchHintForGroup).find(Boolean) || '';
     const logBlocksForIssues = parseDatedLogBlocks((room.slots || []).find(s => s.id === 'logSummary')?.content || '');
-    const hasLogDateIssues = logBlocksForIssues.some(b => b.isUnknown || (!b.isUnknown && !b.isSpecialDate && b.year == null));
+    const acceptedUnknownForUi = new Set((room.acceptedUnknownLogKeys || []).map(String));
+    const hasLogDateIssues = logBlocksForIssues.some(b => (b.isUnknown && !acceptedUnknownForUi.has(String(b.key))) || (!b.isUnknown && !b.isSpecialDate && b.year == null));
     const manualLogStats = manualLogSelectionStats(room);
     const storyStats = storyTimelineSummary(room);
+    const aiReviewItems = normalizeAiReviewInbox(room);
+    const aiReviewPending = aiReviewPendingCount(room);
+    const aiReviewVisible = state.wishBridgeAvailable || aiReviewItems.length > 0;
     const activeTimeline = activeLogTimelineLabel(room);
     const storyUnreviewedCount = Math.max(0, Number(room.storyTimelineUnreviewedTurnCount || 0));
     const storyReviewThreshold = Number(room.storyTimelineReviewSettings?.threshold || 50);
@@ -16064,12 +16717,13 @@ ${dialogueText}`;
           <aside class="rpcm-main-help-panel" id="rpcm-main-help-panel" hidden><header><h3>RP Manager 사용 방법</h3><button type="button" id="rpcm-main-help-close" aria-label="도움말 닫기">✕</button></header><div class="rpcm-main-help-row"><strong>기억 관리</strong><span>현재상태는 계속 유지하고, 날짜로그는 최신·관련·직접 주입·항상 주입 날짜만 골라 주입합니다.</span></div><div class="rpcm-main-help-row"><strong>로그 관리</strong><span>날짜별 내용을 보고 직접 주입하거나 ★ 즐겨찾기·📌 항상 주입·자동 선택 제외를 정할 수 있습니다.</span></div><div class="rpcm-main-help-row"><strong>AI 맥락 검토</strong><span>키워드 후보를 저장된 API가 현재 RP 흐름으로 한 번 더 고릅니다. API가 실패하면 키워드 방식으로 돌아가며, ‘+ 관련로그 추가’로 사용자가 직접 보강할 수 있습니다.</span></div><div class="rpcm-main-help-row"><strong>연속성 타임라인</strong><span>중요 사건과 관계 변화가 현재까지 이어진 흐름입니다. 타임라인 갱신에서 API 초안 생성·결과 미리보기·최종 저장을 진행합니다.</span></div><div class="rpcm-main-help-row"><strong>캐릭터·기타</strong><span>자주 쓰는 설정을 저장하고 현재 주입 여부를 체크합니다. RP 등장 캐릭터 자동 선택을 켜면 선택한 설정집의 캐릭터가 최근 실제 RP에서 감지될 때 현재 주입이 자동으로 켜집니다.</span></div><div class="rpcm-main-help-row"><strong>주입 시작</strong><span>체크한 항목을 다음 AI 답변용 carrier에 넣습니다. 주입 중에는 위 목록의 로그를 펼쳐 보고 빼거나 관련로그를 교체할 수 있습니다.</span></div><div class="rpcm-main-help-row"><strong>AI 요약</strong><span>저장한 API로 새 RP를 읽어 날짜요약과 현재상태를 만들며, 결과는 확인·수정한 뒤에만 적용됩니다.</span></div><div class="rpcm-main-help-row"><strong>백업</strong><span>현재 방 복사용 JSON을 원본 방에서 저장한 뒤 분기방에서 불러오면, RP Manager 전체 데이터를 현재 방으로 복사할 수 있습니다.</span></div></aside>
           <div class="rpcm-mobile-editbar"><button type="button" id="rpcm-mobile-edit-done">완료</button><strong id="rpcm-mobile-edit-title">내용 편집</strong><span id="rpcm-mobile-edit-count">0자</span></div>
           <div class="rpcm-body">
-            ${pending ? `<div class="rpcm-pending"><div>🟠 <strong>${pending.verified ? '서버 주입 확인됨 ✓' : '서버 주입 확인 필요'}</strong><br>${esc(pendingProgressText(pending))}<br>현재 carrier AI ${esc(shortId(pending.messageId))} · 숨김 컨텍스트 ${formatCount(pending.injectedChars)}자 · 서버 raw ${formatCount(pending.serverChars || pending.carrierChars)}자${pending.verified ? '' : '<br><b>재검증에 실패하면 ‘지금 해제’ 후 다시 주입해 주세요.</b>'}</div><div class="rpcm-spacer"></div><button class="rpcm-btn secondary" id="rpcm-show-raw">주입 내용 확인</button><button class="rpcm-btn secondary" id="rpcm-reverify">서버 재검증</button><button class="rpcm-btn warn" id="rpcm-restore-now">지금 해제</button></div>` : ''}
+            ${pending ? `<div class="rpcm-pending"><div>🟠 <strong>${pending.reanchorRetry ? '자동 복구 대기 · 설정 보존됨' : pending.verified ? '서버 주입 확인됨 ✓' : '서버 주입 확인 필요'}</strong><br>${esc(pendingProgressText(pending))}<br>현재 carrier AI ${esc(shortId(pending.messageId))} · 숨김 컨텍스트 ${formatCount(pending.injectedChars)}자 · 서버 raw ${formatCount(pending.serverChars || pending.carrierChars)}자${pending.reanchorRetry ? `<br><b>${esc(pending.reanchorRetry.reason || '새 답변으로 주입문을 옮기지 못했습니다.')}</b><br>체크·유지주기는 풀리지 않았습니다. ${pending.reanchorRetry.holdUntilNextAssistant ? '다음 AI 답변에서 자동으로 다시 시도합니다.' : '잠시 후 자동으로 다시 시도합니다.'}` : pending.verified ? '' : '<br><b>재검증에 실패하면 ‘지금 해제’ 후 다시 주입해 주세요.</b>'}</div><div class="rpcm-spacer"></div>${pending.reanchorRetry ? '<button class="rpcm-btn secondary" id="rpcm-retry-reanchor">지금 다시 시도</button>' : '<button class="rpcm-btn secondary" id="rpcm-show-raw">주입 내용 확인</button><button class="rpcm-btn secondary" id="rpcm-reverify">서버 재검증</button>'}<button class="rpcm-btn warn" id="rpcm-restore-now">지금 해제</button></div>` : ''}
             <div class="rpcm-quickbar">
               <div class="rpcm-mobile-nav-strip"><button type="button" class="rpcm-jump" data-jump="rpcm-section-basic">기억 관리</button><button type="button" class="rpcm-jump" data-jump="rpcm-section-character">캐릭터</button><button type="button" class="rpcm-jump" data-jump="rpcm-section-extra">기타</button><button type="button" class="rpcm-jump" data-jump="rpcm-section-tools">도구</button></div>
               <button type="button" class="rpcm-mobile-search-toggle" id="rpcm-mobile-search-toggle" aria-label="통합 검색">⌕</button>
               <div class="rpcm-search-box"><input class="rpcm-search-input" id="rpcm-search-input" placeholder="현재상태·로그·캐릭터·기타 검색"><button type="button" class="rpcm-search-nav" id="rpcm-search-prev" aria-label="이전 검색 결과">↑</button><button type="button" class="rpcm-search-nav" id="rpcm-search-next" aria-label="다음 검색 결과">↓</button><span class="rpcm-search-count" id="rpcm-search-count">0 / 0</span><div class="rpcm-search-results" id="rpcm-search-results" hidden></div></div>
               <select class="rpcm-density-select" id="rpcm-density" aria-label="화면 여백"><option value="comfortable" ${uiPrefs.density !== 'compact' ? 'selected' : ''}>편안하게</option><option value="compact" ${uiPrefs.density === 'compact' ? 'selected' : ''}>간결하게</option></select>
+              <label class="rpcm-desktop-quick-trigger-pref" title="PC 화면 오른쪽의 주입 관리 탭 표시 여부"><input type="checkbox" id="rpcm-desktop-quick-trigger-visible" ${uiPrefs.desktopQuickTriggerVisible !== false ? 'checked' : ''}> 오른쪽 주입 탭</label>
             </div>
             <div class="rpcm-summary">
               <div class="rpcm-summary-head">
@@ -16086,6 +16740,11 @@ ${dialogueText}`;
               <div><strong>✨ AI 요약</strong><span>새 RP 로그로 날짜요약과 현재상태를 만들고, 결과를 확인·수정한 뒤 적용합니다.</span></div>
               <button class="rpcm-mini" id="rpcm-ai-summary">AI 요약 열기</button>
             </div>
+
+            ${aiReviewVisible ? `<div class="rpcm-ai-launchbar rpcm-ai-review-launchbar${aiReviewPending ? ' has-pending' : ''}">
+              <div><strong>📥 AI 검토함${aiReviewPending ? ` · 새 결과 ${aiReviewPending}건` : ''}</strong><span>${aiReviewItems.length ? `이 방에 보관된 AI Manager 결과 ${aiReviewItems.length}건` : 'Wish AI Manager에서 보낸 결과가 여기에 표시됩니다.'}</span></div>
+              <button class="rpcm-mini" id="rpcm-ai-review-open">검토함 열기${aiReviewPending ? ` (${aiReviewPending})` : ''}</button>
+            </div>` : ''}
 
             <div class="rpcm-section" id="rpcm-section-basic">
               <div class="rpcm-section-head"><div><div class="rpcm-section-title">기억 관리</div><div class="rpcm-section-desc">현재상태는 다음 업데이트 전까지 유효한 지속 상태로 통째 유지합니다. ${hasMultipleLogTimelines ? '로그요약 원문은 시간선별 날짜 블록 저장소로 보관하고, 현재 회차와 이전 모든 회차에서' : '로그요약 원문은 날짜 블록 저장소로 보관하고,'} 직접 주입·최근·관련·항상 주입 날짜 블록을 45,000자·UTF-8 ${formatCount(APP.safeCarrierPayloadBytes)}바이트 안전선 안에서 골라 주입합니다.</div></div></div>
@@ -16678,6 +17337,15 @@ ${dialogueText}`;
       overlay.querySelector('#rpcm-modal')?.classList.toggle('rpcm-density-compact', prefs.density === 'compact');
     };
 
+    const desktopQuickTriggerVisible = overlay.querySelector('#rpcm-desktop-quick-trigger-visible');
+    if (desktopQuickTriggerVisible) desktopQuickTriggerVisible.onchange = () => {
+      const prefs = loadUiPrefs();
+      prefs.desktopQuickTriggerVisible = desktopQuickTriggerVisible.checked;
+      saveUiPrefs(prefs);
+      updateQuickInjectionTrigger();
+      notify(desktopQuickTriggerVisible.checked ? 'PC 오른쪽 주입 관리 탭을 표시합니다.' : 'PC 오른쪽 주입 관리 탭을 숨겼습니다.', 'success', 3000);
+    };
+
     const searchInput = overlay.querySelector('#rpcm-search-input');
     const searchCount = overlay.querySelector('#rpcm-search-count');
     const searchResults = overlay.querySelector('#rpcm-search-results');
@@ -17222,16 +17890,32 @@ ${dialogueText}`;
     };
 
     if (pending) {
-      overlay.querySelector('#rpcm-show-raw').onclick = async () => {
+      const showRawButton = overlay.querySelector('#rpcm-show-raw');
+      if (showRawButton) showRawButton.onclick = async () => {
         try { await showInjectedRaw(room); }
         catch (e) { notify(`확인 실패: ${e.message}`, 'error', 6000); }
       };
-      overlay.querySelector('#rpcm-reverify').onclick = async () => {
+      const reverifyButton = overlay.querySelector('#rpcm-reverify');
+      if (reverifyButton) reverifyButton.onclick = async () => {
         try {
           const r = await reverifyPending(room);
           notify(r.verified ? '서버 재검증 성공 ✓' : '서버에서 숨김 주입 블록을 확인하지 못했습니다. ‘지금 해제’ 후 다시 주입해 주세요.', r.verified ? 'success' : 'error', 6500);
           renderModalIfOpen();
         } catch (e) { notify(`재검증 실패: ${e.message}`, 'error', 6000); }
+      };
+      const retryReanchorButton = overlay.querySelector('#rpcm-retry-reanchor');
+      if (retryReanchorButton) retryReanchorButton.onclick = async () => {
+        if (!room.pending?.reanchorRetry) return;
+        room.pending.reanchorRetry.holdUntilNextAssistant = false;
+        room.pending.reanchorRetry.nextRetryAt = 0;
+        room.pending.reanchorRetry.attempts = Math.min(2, Number(room.pending.reanchorRetry.attempts || 0));
+        savePendingBackup(room.chatId, room.pending);
+        await saveRoom(room);
+        try {
+          await checkPendingRoom(room);
+          if (room.pending?.reanchorRetry) notify('아직 carrier 이동이 완료되지 않았습니다. 설정은 그대로 보존되어 있습니다.', 'warn', 5200);
+          renderModalIfOpen();
+        } catch (e) { notify(`다시 시도 실패 · 설정은 보존됨: ${e.message}`, 'error', 6500); }
       };
       overlay.querySelector('#rpcm-restore-now').onclick = async () => {
         try { await restorePending(room, 'manual'); }
@@ -17261,6 +17945,9 @@ ${dialogueText}`;
         openAiSummaryDialog(room);
       } catch (e) { notify(`API 요약 화면 열기 실패: ${e.message}`, 'error', 6000); }
     };
+
+    const aiReviewOpen = overlay.querySelector('#rpcm-ai-review-open');
+    if (aiReviewOpen) aiReviewOpen.onclick = () => openAiReviewInboxDialog(room);
 
     overlay.querySelector('#rpcm-room-transfer-backup').onclick = async () => {
       readModalIntoRoom();
@@ -17496,6 +18183,7 @@ ${dialogueText}`;
       }
       // 다시 탭을 열면 숨겨야 할 marker와 새 응답을 즉시 한 번 확인합니다.
       startRenderedContextObserver();
+      requestWishBridgeReplay();
       scheduleRouteTick(0);
       scheduleRecovery(0);
     });
@@ -17536,6 +18224,7 @@ ${dialogueText}`;
       createFab();
       startRenderedContextObserver();
       await ensureCurrentRoom(getChatIdFromPath(), true);
+      bindWishAiBridge();
       await cleanOrphanMarkerInCurrentRoom();
       scheduleRouteTick();
       // 새로고침 후에도 활성 자동 유지 세션을 이어가기 위한 즉시 복구 패스입니다.
