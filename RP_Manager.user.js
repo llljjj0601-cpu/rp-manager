@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🪽위시 RP Manager
 // @namespace    local.rp.context.manager
-// @version      0.15.3
+// @version      0.15.4
 // @description  장기 RP용 현재상태·날짜로그·연속성 타임라인·캐릭터 설정을 관리하고, 검수형 AI 생성과 필요한 컨텍스트 자동 주입을 지원합니다.
 // @author       User
 // @license      All Rights Reserved
@@ -43,13 +43,13 @@
   // 버전별 키를 쓰면 구버전과 신버전이 동시에 설치됐을 때 둘 다 실행될 수 있습니다.
   // 모든 버전이 공유하는 고정 키로 중복 실행을 막습니다.
   if (window.__WISH_RP_MANAGER_LOADED__) return;
-  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.15.3', loadedAt: Date.now() };
+  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.15.4', loadedAt: Date.now() };
   // 같은 페이지에 남아 있는 v0.8.10 복사본이 뒤늦게 시작되는 경우도 차단합니다.
   window.__RP_MANAGER_0810_LOADED__ = true;
 
   const APP = {
     name: '🪽위시 RP Manager',
-    version: '0.15.3',
+    version: '0.15.4',
     dbName: 'RPContextManagerDB',
     dbVersion: 2,
     storeName: 'rooms',
@@ -30914,9 +30914,30 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
     overlay.querySelectorAll('[data-ai-memory-baseline]').forEach(button=>button.addEventListener('click',async()=>{const area=button.dataset.aiMemoryBaseline,row=config.areas[area];try{const turns=await loadManualCompletedTurns(room);const options=['<option value="">처음부터</option>',...turns.map((turn,index)=>`<option value="${esc(String(turn.key))}" ${row.baseline===String(turn.key)?'selected':''}>${esc(manualTurnOption(turn,index))}</option>`)].join('');const box=document.createElement('div');box.id='rpcm-ai-memory-baseline-dialog';box.innerHTML=`<section role="dialog" aria-modal="true" aria-label="AI 기억정리 시작점"><h3>${esc(AI_MEMORY_AREAS[area].label)} 시작점</h3><p>선택한 턴까지는 자동 생성에서 건너뜁니다. 수동 업데이트 체크포인트는 변경하지 않습니다.</p><select>${options}</select><div><button type="button" data-close>취소</button><button type="button" data-save>시작점 저장</button></div></section>`;document.body.appendChild(box);box.querySelector('[data-close]').onclick=()=>box.remove();box.querySelector('[data-save]').onclick=async()=>{const key=box.querySelector('select').value;if(!confirm(`${key||'처음'}까지 AI 자동 작업 기준으로 건너뛰거나 다시 처리합니다. 계속할까요?`))return;row.baseline=key;row.cursor='';row.failedEnd='';row.plannedStart='';row.plannedEnd='';row.draft=null;row.error='';await saveRoom(room);box.remove();aiMemoryRuntime.lastCounts.delete(String(room.chatId));renderModalIfOpen();void aiMemoryPoll(room,true);};}catch(error){notify(`시작점 확인 실패: ${error.message}`,'error');}}));
   }
 
+  const RPCM_RESPONSE_REFINER_SETTINGS_KEY = 'wish-rp-core-response-refiner-settings-v3';
+  function rpcmResponseRefinerDisplayPrefs() {
+    try {
+      const raw=GM_getValue(RPCM_RESPONSE_REFINER_SETTINGS_KEY,'');
+      const saved=raw?JSON.parse(raw):{};
+      return {showButton:saved.showButton!==false,showBadge:saved.showBadge!==false};
+    } catch (_) { return {showButton:true,showBadge:true}; }
+  }
+  function rpcmSetResponseRefinerDisplayPref(field,value) {
+    if(!['showButton','showBadge'].includes(field))return false;
+    try {
+      const raw=GM_getValue(RPCM_RESPONSE_REFINER_SETTINGS_KEY,'');
+      const saved=raw?JSON.parse(raw):{};
+      saved[field]=!!value;
+      GM_setValue(RPCM_RESPONSE_REFINER_SETTINGS_KEY,JSON.stringify(saved));
+      window.__WISH_RP_MANAGER_REFINER__?.setDisplayPreference?.(field,!!value);
+      return true;
+    } catch (_) { return false; }
+  }
+
   function renderRpcmPreferences(room) {
     const ai=aiFeatureSettings(loadAiSummarySettings(),'summary'),provider=ai.provider,model=ai.models?.[provider]||'';
     const secret=!!readAiSecret(provider);
+    const refinerDisplay=rpcmResponseRefinerDisplayPrefs();
     const guideRows=['currentItems','logSummary','personInfo','timeline','lore'].map(task=>{const meta=manualGuideMetadata(room,task);return `<div class="rpcm-pref-row"><span>${esc(MANUAL_UPDATE_TASKS[task].title)}<small>${esc(meta.version)} · ${esc(meta.source)}</small></span><button type="button" class="rpcm-btn secondary" data-rpcm-pref-guide="${task}">지침</button></div>`;}).join('');
     return `<div class="rpcm-pref-grid rpcm-settings-grid">
       <article class="rpcm-pref-card"><header><h3>AI 연결 ${rpcmHelpButton('ai')}</h3><span class="rpcm-pref-scope">이 기기</span></header><p>${secret?'인증 저장됨':'인증 필요'} · ${esc(provider)} · ${esc(model)}</p><button type="button" class="rpcm-btn secondary" data-rpcm-pref-action="api">API · 모델 설정</button></article>
@@ -30924,7 +30945,10 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
         <label class="rpcm-pref-row"><span>최근·관련 날짜로그 자동 선택<small>직접 선택·고정·제외는 기억 화면에서 관리</small></span><input type="checkbox" data-rpcm-pref-field="autoLogRecallEnabled" ${room.autoLogRecallEnabled?'checked':''}></label>
         <label class="rpcm-pref-row"><span>관련도 기준<small>최근 연속성 로그에는 적용되지 않음</small></span><select data-rpcm-pref-field="autoLogRelevance"><option value="strict" ${room.autoLogRelevance==='strict'?'selected':''}>엄격</option><option value="balanced" ${room.autoLogRelevance==='balanced'?'selected':''}>균형</option><option value="broad" ${room.autoLogRelevance==='broad'?'selected':''}>넓게</option></select></label>
         <label class="rpcm-pref-row"><span>AI 맥락 검토 ${rpcmHelpButton('context')}<small>관련 날짜로그 후보만 API로 재검토</small></span><input type="checkbox" data-rpcm-pref-field="aiContextLogRerankEnabled" ${room.aiContextLogRerankEnabled?'checked':''}></label></article>
-      <article class="rpcm-pref-card"><header><h3>화면·모니터</h3><span class="rpcm-pref-scope">이 기기</span></header><p>상단 WISH 버튼을 짧게 누르면 빠른 관리, 길게 누르면 전체 Manager가 열립니다. 작은 초록색 표시가 있으면 주입이 켜진 상태입니다.</p><button type="button" class="rpcm-btn secondary" data-rpcm-pref-action="quick">Quick Panel 열기</button></article>
+      <article class="rpcm-pref-card"><header><h3>화면·모니터</h3><span class="rpcm-pref-scope">이 기기</span></header><p>상단 WISH 버튼을 짧게 누르면 빠른 관리, 길게 누르면 전체 Manager가 열립니다. 작은 초록색 표시가 있으면 주입이 켜진 상태입니다.</p>
+        <label class="rpcm-pref-row"><span>응답교정 바로가기 표시<small>크랙 채팅 상단의 🪽 응답교정 버튼을 표시합니다. 꺼도 Manager의 AI 화면에서 응답교정 설정을 열 수 있습니다.</small></span><input type="checkbox" data-rpcm-refiner-ui-field="showButton" ${refinerDisplay.showButton?'checked':''}></label>
+        <label class="rpcm-pref-row"><span>응답교정 검토 알림 표시<small>검토 중·검토 완료 상태를 채팅 화면 상단에 잠시 표시합니다.</small></span><input type="checkbox" data-rpcm-refiner-ui-field="showBadge" ${refinerDisplay.showBadge?'checked':''}></label>
+        <button type="button" class="rpcm-btn secondary" data-rpcm-pref-action="quick">Quick Panel 열기</button></article>
       <article class="rpcm-pref-card"><header><h3>AI 작업</h3><span class="rpcm-pref-scope">이 기기 · 현재 방</span></header><p>AI 요약은 현재상태·날짜로그의 수동 실행 도구입니다. 결과 확인 후 선택 적용합니다.</p><button type="button" class="rpcm-btn secondary" data-rpcm-pref-action="summary">AI 요약 열기</button></article>
       <article class="rpcm-pref-card"><header><h3>지침·백업 ${rpcmHelpButton('guide')}</h3><span class="rpcm-pref-scope">지침별 · 현재 방</span></header>${guideRows}<div class="rpcm-pref-row"><span>전체 재구축 Master<small>기본 v1.0.3 또는 사용자 수정본</small></span><button type="button" class="rpcm-btn secondary" data-rpcm-pref-action="rebuild-guide">지침</button></div><button type="button" class="rpcm-btn secondary" data-rpcm-pref-action="backup">백업·복원 열기</button></article>
     </div>`;
@@ -30935,6 +30959,11 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
       const main=field==='autoLogRecallEnabled'?overlay.querySelector('#rpcm-auto-log'):field==='autoLogRelevance'?overlay.querySelector('#rpcm-auto-log-relevance'):overlay.querySelector('#rpcm-ai-context-toggle');
       if(main){main.value=input.type==='checkbox'?main.value:value;if(input.type==='checkbox')main.checked=value;main.dispatchEvent(new Event('change',{bubbles:true}));}
       else {room[field]=value;try{await saveRoom(room);}catch(error){room[field]=old;notify(`설정 저장 실패: ${error.message}`,'error');}}
+    }));
+    overlay.querySelectorAll('[data-rpcm-refiner-ui-field]').forEach(input=>input.addEventListener('change',()=>{
+      const field=input.dataset.rpcmRefinerUiField,value=input.checked;
+      if(!rpcmSetResponseRefinerDisplayPref(field,value)){input.checked=!value;notify('응답교정 화면 설정을 저장하지 못했습니다.','error');return;}
+      notify(field==='showButton'?(value?'응답교정 바로가기를 표시합니다.':'응답교정 바로가기를 숨겼습니다.'):(value?'응답교정 검토 알림을 표시합니다.':'응답교정 검토 알림을 숨겼습니다.'),'success',2200);
     }));
     overlay.querySelectorAll('[data-rpcm-pref-guide]').forEach(button=>button.addEventListener('click',()=>{const task=button.dataset.rpcmPrefGuide;const guide=manualGuideMetadata(room,task);openManualUpdateTextDialog(`${MANUAL_UPDATE_TASKS[task].title} · 지침`,`${guide.source} · ${guide.version} · ${guide.hash}`,manualGuideOnlyText(room,task),'내용 복사');}));
     overlay.querySelectorAll('[data-rpcm-pref-action]').forEach(button=>button.addEventListener('click',()=>{
@@ -33829,6 +33858,7 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
   const DEFAULT_SETTINGS = {
     enabled: true,
     autoApply: false,
+    showButton: true,
     showBadge: true,
     contextTurns: 3,
     template: 'basic',
@@ -36305,14 +36335,7 @@ A correction requires a supported contradiction, a materially relevant persisten
       settings.autoApply = v; saveSettings();
     }));
     box.appendChild(makeToggle('검토 알림 표시', '채팅창 상단에 검토 진행 상황과 결과를 표시합니다. 이상 여부와 원본을 유지한 이유를 보여준 뒤 자동으로 닫습니다.', settings.showBadge, v => {
-      settings.showBadge = v; saveSettings();
-      if (badge) {
-        const show = v && isReviewStatus(currentStatus);
-        badge.style.display = show ? 'flex' : 'none';
-        if (show) {delete badge.dataset.result;badge.dataset.active = 'true';}
-        else hideReviewNotice();
-      }
-      if (badge?.style.display !== 'none') positionReviewBadge();
+      setDisplayPreference('showBadge',v);
     }));
 
     const managerAi=window.__WISH_RP_MANAGER_AI_BRIDGE__?.status()||{};
@@ -36524,6 +36547,11 @@ A correction requires a supported contradiction, a materially relevant persisten
   }
 
   function injectHeaderButton() {
+    if (settings.showButton === false) {
+      document.getElementById('wish-rpcore-refiner-button')?.remove();
+      floatingButton = null;
+      return false;
+    }
     // '크랙 요약 메모리 텍스트 편집기'와 같은 상단 헤더 슬롯을 사용합니다.
     const headerContainer = document.querySelector('.group\\/header .flex.gap-3.items-center');
     if (!headerContainer) return false;
@@ -36616,7 +36644,20 @@ A correction requires a supported contradiction, a materially relevant persisten
     const card=[...(panel?.querySelectorAll('[data-correction-archive]')||[])].find(node=>node.dataset.correctionArchive===String(messageId));
     if(card){card.open=true;card.scrollIntoView({block:'center'});}return !!card;
   }
-  window.__WISH_RP_MANAGER_REFINER__ = { openSettings, openFromNotice, canUseTurn:canUseReviewTurn, reviewLatest: () => runRefiner({ force:true }) };
+  function setDisplayPreference(field,value) {
+    if(!['showButton','showBadge'].includes(field))return false;
+    settings[field]=!!value;saveSettings();
+    if(field==='showButton') {
+      if(settings.showButton) injectHeaderButton();
+      else {document.getElementById('wish-rpcore-refiner-button')?.remove();floatingButton=null;}
+    } else if(field==='showBadge') {
+      if(!settings.showBadge) hideReviewNotice();
+      else if(isReviewStatus(currentStatus)){ensureReviewBadge();badge.style.display='flex';badge.dataset.active='true';positionReviewBadge();}
+    }
+    return true;
+  }
+  function displayPreferences(){return {showButton:settings.showButton!==false,showBadge:settings.showBadge!==false};}
+  window.__WISH_RP_MANAGER_REFINER__ = { openSettings, openFromNotice, canUseTurn:canUseReviewTurn, reviewLatest: () => runRefiner({ force:true }), setDisplayPreference, displayPreferences };
 
   try {
     GM_registerMenuCommand('🪽 응답교정 설정 열기', openSettings);
