@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🪽위시 RP Manager
 // @namespace    local.rp.context.manager
-// @version      0.15.2
+// @version      0.15.3
 // @description  장기 RP용 현재상태·날짜로그·연속성 타임라인·캐릭터 설정을 관리하고, 검수형 AI 생성과 필요한 컨텍스트 자동 주입을 지원합니다.
 // @author       User
 // @license      All Rights Reserved
@@ -43,13 +43,13 @@
   // 버전별 키를 쓰면 구버전과 신버전이 동시에 설치됐을 때 둘 다 실행될 수 있습니다.
   // 모든 버전이 공유하는 고정 키로 중복 실행을 막습니다.
   if (window.__WISH_RP_MANAGER_LOADED__) return;
-  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.15.2', loadedAt: Date.now() };
+  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.15.3', loadedAt: Date.now() };
   // 같은 페이지에 남아 있는 v0.8.10 복사본이 뒤늦게 시작되는 경우도 차단합니다.
   window.__RP_MANAGER_0810_LOADED__ = true;
 
   const APP = {
     name: '🪽위시 RP Manager',
-    version: '0.15.2',
+    version: '0.15.3',
     dbName: 'RPContextManagerDB',
     dbVersion: 2,
     storeName: 'rooms',
@@ -21753,6 +21753,7 @@ ${dialogueText}`;
     `);
 
     // v0.15.2 · Person rail pin/edit spacing + detail injection control cleanup.
+    // v0.15.3 · Mobile full navigation restored to the top-right menu + overflow regression fixes.
     GM_addStyle(`
       html body #rpcm-overlay #rpcm-modal #rpcm-person-core .rpcm-person-pin .rpcm-person-pin-mark{
         display:inline-flex!important;
@@ -22360,6 +22361,40 @@ html.rpcm-mobile-layout #rpcm-modal .rpcm-workspace #rpcm-section-preferences{di
 #rpcm-modal #rpcm-utility-backdrop.rpcm-assistant-inline .rpcm-utility-dialog{width:100%!important;height:min(560px,61vh)!important;max-height:none!important;border-color:var(--wish-line)!important;border-radius:11px!important;background:var(--wish-card)!important;box-shadow:var(--wish-shadow)!important}
 #rpcm-modal #rpcm-utility-backdrop.rpcm-assistant-inline [data-assistant-act="close"]{display:none!important}
 @media(max-width:680px){#rpcm-modal #rpcm-section-ai .rpcm-ai-work-tabs{grid-template-columns:repeat(2,minmax(0,1fr))}#rpcm-modal #rpcm-section-ai .rpcm-ai-mobile-assistant-open{display:inline-flex}#rpcm-modal #rpcm-section-ai .rpcm-ai-usage-compact>details{margin-left:0}#rpcm-modal #rpcm-section-ai .rpcm-ai-control-grid article{grid-template-columns:minmax(0,1fr)!important}}
+
+/* v0.15.3 · mobile navigation/accessibility regression patch */
+#rpcm-modal .rpcm-mobile-header-nav{display:none}
+#rpcm-modal .rpcm-header-menu-utilities{display:grid;gap:3px}
+html.rpcm-mobile-layout #rpcm-modal .rpcm-header-menu-list{
+  width:min(286px,calc(100vw - 20px))!important;
+  max-height:min(72dvh,620px);
+  overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;
+  scrollbar-width:thin;
+}
+html.rpcm-mobile-layout #rpcm-modal .rpcm-mobile-header-nav{display:grid;gap:2px}
+html.rpcm-mobile-layout #rpcm-modal .rpcm-mobile-header-nav .rpcm-header-menu-group{
+  display:block;padding:8px 10px 4px;color:var(--wish-muted);font-size:10px;font-weight:700;letter-spacing:.04em;
+}
+html.rpcm-mobile-layout #rpcm-modal .rpcm-mobile-header-nav button{
+  display:grid!important;grid-template-columns:24px minmax(0,1fr);align-items:center;gap:8px;
+  height:42px!important;min-height:42px!important;padding:6px 10px!important;
+}
+html.rpcm-mobile-layout #rpcm-modal .rpcm-mobile-header-nav button.is-active{
+  background:var(--wish-accent-soft)!important;color:var(--wish-accent-strong)!important;
+}
+html.rpcm-mobile-layout #rpcm-modal .rpcm-header-menu-utilities{
+  margin-top:6px;padding-top:6px;border-top:1px solid var(--wish-line-2);
+}
+/* Full navigation now lives in the top-right menu on mobile. Hide the old fixed strip so it cannot sit under/over the footer. */
+html.rpcm-mobile-layout #rpcm-modal .rpcm-quickbar{display:none!important}
+html.rpcm-mobile-layout #rpcm-modal .rpcm-mobile-nav-strip{display:none!important}
+/* Prevent child cards and form controls from widening the mobile workspace. Intentional tab rows keep their own horizontal scrolling. */
+html.rpcm-mobile-layout #rpcm-modal .rpcm-work-content{overflow-x:hidden!important;padding:12px 12px 18px!important}
+html.rpcm-mobile-layout #rpcm-modal .rpcm-work-content>*{max-width:100%;min-width:0;box-sizing:border-box}
+html.rpcm-mobile-layout #rpcm-modal :is(.rpcm-section,.rpcm-overview,.rpcm-tools,.rpcm-settings-card,.rpcm-pref-card,.rpcm-tool-card,.rpcm-update-center,.rpcm-update-overview,.rpcm-ai-top-summary){max-width:100%;min-width:0;box-sizing:border-box}
+html.rpcm-mobile-layout #rpcm-modal :is(input:not([type=checkbox]):not([type=radio]),select,textarea){max-width:100%;min-width:0;box-sizing:border-box}
+html.rpcm-mobile-layout #rpcm-modal :is(.rpcm-section-head,.rpcm-charlib-actions,.rpcm-item-folder-field,.rpcm-extra-category-field,.rpcm-tool-actions,.rpcm-maintenance-actions){min-width:0;max-width:100%;flex-wrap:wrap}
+html.rpcm-mobile-layout #rpcm-modal :is(.rpcm-section-title,.rpcm-section-desc,.rpcm-slot-name,.rpcm-item-readable,.rpcm-read-text,.rpcm-tool-card p,.rpcm-settings-card p){overflow-wrap:anywhere;word-break:break-word}
     `);
   }
 
@@ -28467,6 +28502,7 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
       state.mobileSectionId = wanted;
       [...new Set(Object.values(sections))].forEach(id => overlay.querySelector(`#${id}`)?.classList.toggle('rpcm-mobile-section-active', id === wanted));
       overlay.querySelectorAll('.rpcm-mobile-nav-strip [data-jump]').forEach(button => button.classList.toggle('is-active', button.dataset.jump === wanted));
+      overlay.querySelectorAll('.rpcm-mobile-header-nav [data-workview]').forEach(button => button.classList.toggle('is-active', button.dataset.workview === key));
     }
     if (key === 'memory' || key === 'logs') {
       const pane = key === 'logs' ? 'logs' : 'state';
@@ -31050,9 +31086,30 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
             <button class="rpcm-iconbtn rpcm-user-memo-open" type="button" id="rpcm-user-memo-open" aria-label="사용자 메모 열기 · 활성 ${activeUserCanonMemos(room).length}개" title="사용자 메모">${rpcmUiIcon('doc')}<span class="rpcm-user-memo-badge" id="rpcm-user-memo-badge" ${activeUserCanonMemos(room).length?'':'hidden'}>${activeUserCanonMemos(room).length>99?'99+':activeUserCanonMemos(room).length}</span></button>
             <button class="rpcm-iconbtn" type="button" id="rpcm-notice-open" aria-label="알림 센터 열기" title="알림 센터">${rpcmUiIcon('bell')}<span id="rpcm-notice-badge" ${noticeUnreadCount(room)?'':'hidden'}>${noticeUnreadCount(room)}</span></button>
             <details class="rpcm-header-menu"><summary aria-label="추가 메뉴" title="추가 메뉴">⋯</summary><div class="rpcm-header-menu-list">
-              <button class="rpcm-header-quick-toggle" type="button" id="rpcm-header-quick-toggle">Quick Monitor 열기</button>
-              <button class="rpcm-main-help-button" type="button" id="rpcm-main-help-open">사용 방법</button>
-              <button class="rpcm-main-api-button" type="button" id="rpcm-main-api-open">AI · API 설정</button>
+              <div class="rpcm-mobile-header-nav" aria-label="모바일 전체 메뉴">
+                <button type="button" class="rpcm-jump" data-workview="overview" data-jump="rpcm-section-overview"><span aria-hidden="true">✅</span><span>확인</span></button>
+                <span class="rpcm-header-menu-group">기억</span>
+                <button type="button" class="rpcm-jump" data-workview="memory" data-jump="rpcm-section-basic"><span aria-hidden="true">🧠</span><span>현재상태</span></button>
+                <button type="button" class="rpcm-jump" data-workview="logs" data-jump="rpcm-section-basic"><span aria-hidden="true">📅</span><span>날짜로그</span></button>
+                <button type="button" class="rpcm-jump" data-workview="timeline" data-jump="rpcm-section-timeline"><span aria-hidden="true">🕰️</span><span>타임라인</span></button>
+                <button type="button" class="rpcm-jump" data-workview="items" data-jump="rpcm-section-item"><span aria-hidden="true">📦</span><span>중요 물품</span></button>
+                <button type="button" class="rpcm-jump" data-workview="characters" data-jump="rpcm-section-character"><span aria-hidden="true">👤</span><span>캐릭터</span></button>
+                <button type="button" class="rpcm-jump" data-workview="extra" data-jump="rpcm-section-extra"><span aria-hidden="true">🧩</span><span>기타·OOC</span></button>
+                <button type="button" class="rpcm-jump" data-workview="lore" data-jump="rpcm-section-lore"><span aria-hidden="true">📚</span><span>자료집</span></button>
+                <button type="button" class="rpcm-jump" data-workview="people" data-jump="rpcm-section-people"><span aria-hidden="true">🫂</span><span>인물정보</span></button>
+                <span class="rpcm-header-menu-group">자료 관리</span>
+                <button type="button" class="rpcm-jump" data-workview="update" data-jump="rpcm-section-update"><span aria-hidden="true">📝</span><span>수동 업데이트</span></button>
+                <button type="button" class="rpcm-jump" data-workview="longterm" data-jump="rpcm-section-longterm"><span aria-hidden="true">🧷</span><span>장기기억</span></button>
+                <button type="button" class="rpcm-jump" data-workview="tools" data-jump="rpcm-section-tools"><span aria-hidden="true">🛠️</span><span>복사 · 백업 · 복원</span></button>
+                <span class="rpcm-header-menu-group">설정 · AI</span>
+                <button type="button" class="rpcm-jump" data-workview="preferences" data-jump="rpcm-section-preferences"><span aria-hidden="true">⚙️</span><span>일반·UI</span></button>
+                <button type="button" class="rpcm-jump" data-workview="ai" data-jump="rpcm-section-ai"><span aria-hidden="true">✨</span><span>AI</span></button>
+              </div>
+              <div class="rpcm-header-menu-utilities">
+                <button class="rpcm-header-quick-toggle" type="button" id="rpcm-header-quick-toggle">Quick Monitor 열기</button>
+                <button class="rpcm-main-help-button" type="button" id="rpcm-main-help-open">사용 방법</button>
+                <button class="rpcm-main-api-button" type="button" id="rpcm-main-api-open">AI · API 설정</button>
+              </div>
             </div></details>
             <button class="rpcm-iconbtn" id="rpcm-close" aria-label="닫기" title="닫기" data-rpcm-close="icon">${rpcmUiIcon('close')}</button>
               <div class="rpcm-header-search-pop" id="rpcm-header-search-pop" hidden><label for="rpcm-search-input">저장 항목 검색 <small>기억·날짜로그·인물정보·타임라인·물품·자료집·캐릭터·기타</small></label><div class="rpcm-search-box"><input class="rpcm-search-input" id="rpcm-search-input" type="search" placeholder="저장된 제목과 내용 검색"><button type="button" class="rpcm-search-nav" id="rpcm-search-prev" aria-label="이전 검색 결과">↑</button><button type="button" class="rpcm-search-nav" id="rpcm-search-next" aria-label="다음 검색 결과">↓</button><span class="rpcm-search-count" id="rpcm-search-count">0 / 0</span><div class="rpcm-search-results" id="rpcm-search-results" hidden></div></div></div>
@@ -32233,6 +32290,8 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
       const shell=overlay.querySelector('.rpcm-workspace');if(shell)showWorkView(overlay,mobileViews[wanted]||'overview',false);
       mobileSectionIds.forEach(id => overlay.querySelector(`#${id}`)?.classList.toggle('rpcm-mobile-section-active', id === wanted));
       overlay.querySelectorAll('.rpcm-jump').forEach(button => button.classList.toggle('is-active', button.dataset.jump === wanted));
+      const activeMobileView = wanted === 'rpcm-section-basic' ? (state.memoryPane === 'logs' ? 'logs' : 'memory') : (mobileViews[wanted] || 'overview');
+      overlay.querySelectorAll('.rpcm-mobile-header-nav [data-workview]').forEach(button => button.classList.toggle('is-active', button.dataset.workview === activeMobileView));
       shell?.querySelectorAll('.rpcm-work-nav [data-topview]').forEach(button => button.classList.toggle('is-active', button.dataset.topview === shell.dataset.topGroup));
       const strip = overlay.querySelector('.rpcm-mobile-nav-strip');
       const activeTab = strip?.querySelector('.rpcm-jump.is-active');
@@ -32254,8 +32313,13 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
       overlay.addEventListener('click', event => {
         const button = event.target.closest('.rpcm-jump');
         if (!button || !overlay.contains(button)) return;
-        if (isMobileManagerLayout()) activateMobileSection(button.dataset.jump, true);
-        else showWorkView(overlay, button.dataset.arg || button.dataset.workview || 'overview', true);
+        if (isMobileManagerLayout()) {
+          const mobileView = button.dataset.workview || button.dataset.arg || '';
+          if (mobileView && Object.hasOwn(RPCM_WORK_VIEWS, mobileView)) showWorkView(overlay, mobileView, true);
+          else activateMobileSection(button.dataset.jump, true);
+          const mobileHeaderMenu = button.closest('.rpcm-header-menu');
+          if (mobileHeaderMenu) mobileHeaderMenu.open = false;
+        } else showWorkView(overlay, button.dataset.arg || button.dataset.workview || 'overview', true);
       });
     }
     const workNav = overlay.querySelector('.rpcm-work-nav');
