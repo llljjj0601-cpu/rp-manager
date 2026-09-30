@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🪽위시 RP Manager
 // @namespace    local.rp.context.manager
-// @version      0.15.22
+// @version      0.15.27
 // @description  장기 RP용 현재상태·날짜로그·연속성 타임라인·캐릭터 설정을 관리하고, 검수형 AI 생성과 필요한 컨텍스트 자동 주입을 지원합니다.
 // @author       User
 // @license      All Rights Reserved
@@ -43,13 +43,13 @@
   // 버전별 키를 쓰면 구버전과 신버전이 동시에 설치됐을 때 둘 다 실행될 수 있습니다.
   // 모든 버전이 공유하는 고정 키로 중복 실행을 막습니다.
   if (window.__WISH_RP_MANAGER_LOADED__) return;
-  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.15.22', loadedAt: Date.now() };
+  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.15.27', loadedAt: Date.now() };
   // 같은 페이지에 남아 있는 v0.8.10 복사본이 뒤늦게 시작되는 경우도 차단합니다.
   window.__RP_MANAGER_0810_LOADED__ = true;
 
   const APP = {
     name: '🪽위시 RP Manager',
-    version: '0.15.22',
+    version: '0.15.27',
     dbName: 'RPContextManagerDB',
     dbVersion: 2,
     storeName: 'rooms',
@@ -81,7 +81,7 @@
     legacyMarkerEnd: '</rp_context_manager>',
     modalPosKey: 'RPCM_modal_position_v1',
     uiPrefsKey: 'RPCM_ui_preferences_v1',
-    logRecallRevision: 12, // v0.14.30: 최근 연속성 2개와 관련로그 최대 5개
+    logRecallRevision: 12, // v0.14.30: 최근/관련 개수 사용자 지정
   };
 
   // Wish AI Manager가 Crack 탭으로 전달하는 외부 결과 브리지입니다.
@@ -6443,8 +6443,8 @@ ${dialogueText}`;
     room.allowedDuplicateItemSignatures = Array.isArray(room.allowedDuplicateItemSignatures) ? [...new Set(room.allowedDuplicateItemSignatures.map(String).filter(Boolean))] : [];
     room.autoLogRecallEnabled = !!room.autoLogRecallEnabled;
     room.autoLogRelevance = ['strict','balanced','broad'].includes(room.autoLogRelevance) ? room.autoLogRelevance : 'balanced';
-    room.autoLogRecentBlocks = [1,2].includes(Number(room.autoLogRecentBlocks)) ? Number(room.autoLogRecentBlocks) : APP.defaultRecentLogBlocks;
-    room.autoLogRelatedBlocks = [1,2,3,4].includes(Number(room.autoLogRelatedBlocks)) ? Number(room.autoLogRelatedBlocks) : APP.defaultRelatedLogBlocks;
+    room.autoLogRecentBlocks = Number.isInteger(Number(room.autoLogRecentBlocks)) && room.autoLogRecentBlocks != null && Number(room.autoLogRecentBlocks) >= 0 && Number(room.autoLogRecentBlocks) <= 10 ? Number(room.autoLogRecentBlocks) : APP.defaultRecentLogBlocks;
+    room.autoLogRelatedBlocks = Number.isInteger(Number(room.autoLogRelatedBlocks)) && room.autoLogRelatedBlocks != null && Number(room.autoLogRelatedBlocks) >= 0 && Number(room.autoLogRelatedBlocks) <= 10 ? Number(room.autoLogRelatedBlocks) : APP.defaultRelatedLogBlocks;
     room.autoLogPinnedKeys = Array.isArray(room.autoLogPinnedKeys) ? [...new Set(room.autoLogPinnedKeys.map(String))] : [];
     room.autoLogExcludedKeys = Array.isArray(room.autoLogExcludedKeys) ? [...new Set(room.autoLogExcludedKeys.map(String))] : [];
     room.manualLogSelectedKeys = Array.isArray(room.manualLogSelectedKeys) ? [...new Set(room.manualLogSelectedKeys.map(String))] : [];
@@ -6610,7 +6610,7 @@ ${dialogueText}`;
   async function listUsableExtraLibraries() {
     const all = await getAllCharacterLibraries();
     return all
-      .filter(lib => Array.isArray(lib?.extras) && lib.extras.length)
+      .filter(lib => (Array.isArray(lib?.extras) && lib.extras.length) || (Array.isArray(lib?.folders) && lib.folders.length))
       .map(ensureExtraLibraryItemIds)
       .sort((a, b) => new Date(b.updatedAt || b.createdAt || 0) - new Date(a.updatedAt || a.createdAt || 0));
   }
@@ -8228,42 +8228,117 @@ ${dialogueText}`;
     backdrop.onkeydown = event => { if (event.key === 'Escape') close(); };
   }
 
+  const ITEM_WEAK_SINGLE_TERMS = new Set([
+    '사진','이미지','티셔츠','셔츠','옷','의상','반지','목걸이','팔찌','귀걸이','가방','신발','열쇠','키',
+    '휴대폰','핸드폰','폰','차량','자동차','차','카드','편지','꽃','책','노트','파일','문서','선물','술','병',
+    '잔','음식','약','상자','박스','총','칼','GPS','추적기','사진첩','앨범'
+  ]);
+
   function importantItemAutomaticTerms(item) {
-    const title = cleanImportantItemTitle(item?.title);
+    const title = cleanImportantItemTitle(item?.title).split(/[|｜]/)[0].trim();
     if (!title) return [];
-    const terms = [];
-    const titleWithoutMeta = title.split(/[|｜]/)[0].trim();
-    const phrases = titleWithoutMeta.split(/\s*\/\s*/).map(x => x.trim()).filter(Boolean);
-    for (const phrase of phrases) {
-      if (phrase.length >= 2) terms.push(phrase);
-      const tokens = phrase.match(/[\p{L}\p{N}_'-]{2,}/gu) || [];
-      for (const raw of tokens) {
-        const token = String(raw || '').trim();
-        if (token.length < 3 || /의$/.test(token) || /^\d+(?:개|장|권|세트)?$/.test(token) || ITEM_GENERIC_TERMS.has(token)) continue;
-        terms.push(token);
-      }
-    }
-    return [...new Set(terms)].sort((a,b) => b.length - a.length);
+    // 자동 감지는 카드 제목의 '완전한 물품명'을 우선합니다.
+    // 제목을 단어 단위로 쪼개지 않아 회색/티셔츠/사진 같은 부분 일치가 다른 물품을 끌어오지 않게 합니다.
+    return [...new Set(title.split(/\s*\/\s*/).map(term => term.trim()).filter(term =>
+      term.length >= 3 && !ITEM_GENERIC_TERMS.has(term) && !/^(?:중요\s*물품|물품\s*\d+)$/.test(term)
+    ))];
   }
 
   function importantItemDetectionTerms(item) {
     const terms = [...importantItemAutomaticTerms(item)];
     for (const alias of (Array.isArray(item?.aliases) ? item.aliases : [])) {
       const value = String(alias || '').trim();
-      if (value.length >= 2) terms.push(value);
+      if (value.length >= 2 && !ITEM_GENERIC_TERMS.has(value)) terms.push(value);
     }
     return [...new Set(terms)].sort((a,b) => b.length - a.length);
+  }
+
+  function importantItemPhraseAppears(text, term) {
+    const hay = String(text || '');
+    const needle = String(term || '').trim();
+    if (!needle || needle.length < 2) return false;
+    // 한글도 무조건 includes() 하지 않습니다. '반지'가 '반지갑'에, '차'가 '차갑다'에 걸리는 식의
+    // 부분 문자열 오탐을 막되, 정상적인 조사(은/는/이/가/을/를...)가 붙은 표기는 허용합니다.
+    try {
+      const particle = '(?:은|는|이|가|을|를|에|에서|에게|한테|으로|로|와|과|도|만|의|랑|이랑|부터|까지|처럼|보다)';
+      return new RegExp(
+        `(^|[^\\p{L}\\p{N}_])${escapeRegex(needle)}(?=$|[^\\p{L}\\p{N}_]|${particle}(?=$|[^\\p{L}\\p{N}_]))`,
+        'iu'
+      ).test(hay);
+    } catch (_) {
+      return hay.toLocaleLowerCase('ko-KR').includes(needle.toLocaleLowerCase('ko-KR'));
+    }
+  }
+
+  function importantItemTitleSupportTerms(item, matched='') {
+    const title = cleanImportantItemTitle(item?.title).split(/[|｜]/)[0].trim();
+    const matchedWords = new Set(utilityWords(matched).map(word => word.toLocaleLowerCase('ko-KR')));
+    return [...new Set(utilityWords(title))]
+      .map(word => String(word || '').trim())
+      .filter(word => word.length >= 2 && !ITEM_GENERIC_TERMS.has(word) && !ITEM_WEAK_SINGLE_TERMS.has(word))
+      .filter(word => !matchedWords.has(word.toLocaleLowerCase('ko-KR')))
+      .sort((a,b) => b.length - a.length);
+  }
+
+  function importantItemSupportNearMatch(text, matched, supportTerms) {
+    if (!supportTerms.length) return '';
+    const hay = String(text || '');
+    const lower = hay.toLocaleLowerCase('ko-KR');
+    const needle = String(matched || '').toLocaleLowerCase('ko-KR');
+    let from = 0;
+    while (needle && from < lower.length) {
+      const index = lower.indexOf(needle, from);
+      if (index < 0) break;
+      const window = hay.slice(Math.max(0, index - 140), Math.min(hay.length, index + matched.length + 140));
+      const support = supportTerms.find(term => importantItemPhraseAppears(window, term));
+      if (support) return support;
+      from = index + Math.max(1, needle.length);
+    }
+    return '';
   }
 
   function importantItemRpDetectionEvidence(text, item) {
     const terms = importantItemDetectionTerms(item);
     if (!terms.length) return { accepted:false, confidence:0, matched:'', reason:'감지어 없음' };
     const haystack = String(text || '');
-    const matched = terms.find(term => aliasAppears(haystack, term)) || '';
-    if (!matched) return { accepted:false, confidence:0, matched:'', reason:'실제 RP 본문에서 물품 미감지' };
     const automatic = new Set(importantItemAutomaticTerms(item).map(term => term.toLocaleLowerCase('ko-KR')));
-    const confidence = automatic.has(matched.toLocaleLowerCase('ko-KR')) ? 97 : 94;
-    return { accepted:true, confidence, matched, reason:`실제 RP 본문에서 “${matched}” 언급 감지` };
+    const titleSupportCount = importantItemTitleSupportTerms(item).length;
+
+    for (const term of terms) {
+      if (!importantItemPhraseAppears(haystack, term)) continue;
+      const normalized = term.toLocaleLowerCase('ko-KR');
+      const words = utilityWords(term);
+      const isCanonical = automatic.has(normalized);
+      const isMultiPart = words.length >= 2 || /\s/.test(term);
+      const isWeakSingle = words.length <= 1 && (term.length < 5 || ITEM_WEAK_SINGLE_TERMS.has(term));
+
+      // ① 카드의 완전한 물품명(복합명)은 그대로 강한 근거.
+      if (isCanonical && isMultiPart) {
+        return { accepted:true, confidence:99, matched:term, reason:`정확한 물품명 “${term}”이 최근 RP에 직접 등장` };
+      }
+
+      // ② 제목 자체가 하나의 충분히 구체적인 고유 단어인 경우만 단독 허용.
+      if (isCanonical && !isWeakSingle && titleSupportCount === 0) {
+        return { accepted:true, confidence:97, matched:term, reason:`구체적인 물품명 “${term}”이 최근 RP에 직접 등장` };
+      }
+
+      // ③ 별칭 또는 짧은 일반명사는 같은 단어 하나만으로 선택하지 않습니다.
+      //    제목에서 뽑은 소유자·색상·특징 등 다른 단서가 근처에 함께 있어야 같은 물품으로 봅니다.
+      const supports = importantItemTitleSupportTerms(item, term);
+      const support = importantItemSupportNearMatch(haystack, term, supports);
+      if (support) {
+        return {
+          accepted:true, confidence:isCanonical ? 96 : 93, matched:term,
+          reason:`“${term}” + 보조 단서 “${support}”가 같은 최근 RP 문맥에 함께 등장`
+        };
+      }
+
+      // 제목이 단일 고유명 하나뿐이고 사용자가 같은 별칭을 직접 등록한 경우는 허용합니다.
+      if (!isCanonical && !isWeakSingle && titleSupportCount === 0) {
+        return { accepted:true, confidence:92, matched:term, reason:`구체적인 별칭 “${term}”이 최근 RP에 직접 등장` };
+      }
+    }
+    return { accepted:false, confidence:0, matched:'', reason:'같은 단어만 있거나 같은 물품임을 확인할 보조 단서가 부족함' };
   }
 
   function parseImportantItemBulkText(text) {
@@ -8980,8 +9055,7 @@ ${dialogueText}`;
     ensureVerifiedPendingSnapshot(pending);
     const oldItems = clonePendingItems(pending.items);
     const oldRemoved = clonePendingItems(pending.quickRemovedItems);
-    const activeNames = new Set((pending.items || []).filter(isKnowledgePendingItem).map(item => item.personName).filter(Boolean));
-    for (const item of knowledgeInjectionItems(room, room.autoRecallContextText)) activeNames.add(item.personName);
+    const activeNames = new Set(knowledgeInjectionItems(room, room.autoRecallContextText).map(item => item.personName));
     const bundles = new Map(personInformationBundles(room).map(bundle => [bundle.name, bundle]));
     const removedKeys = new Set(quickRemovedPendingItems(pending).map(item => item.slotId));
     const fresh = [...activeNames].map(name => bundles.get(name)).filter(Boolean).map(bundle => personInformationItem(room, bundle)).filter(Boolean);
@@ -10822,7 +10896,7 @@ ${dialogueText}`;
       if (block.day != null && (!Number.isInteger(Number(block.day)) || Number(block.day) < 1 || Number(block.day) > 31)) return false;
       return true;
     });
-    return selectRecentLogBlocks(eligible, 2).reverse();
+    return selectRecentLogBlocks(eligible, recentLogInjectionCount(room)).reverse();
   }
 
   function logTimelineLabelsVisibleFromActive(room) {
@@ -11175,6 +11249,20 @@ ${dialogueText}`;
     return `관련도 ${Number(scored.score || 0).toFixed(1)}`;
   }
 
+  function recentLogInjectionCount(room) {
+    const raw = room?.autoLogRecentBlocks;
+    if (raw === undefined || raw === null || raw === '') return 2;
+    return Math.max(0, Math.min(10, Math.floor(Number(raw) || 0)));
+  }
+  function relatedLogInjectionCount(room) {
+    const raw = room?.autoLogRelatedBlocks;
+    if (raw === undefined || raw === null || raw === '') return APP.defaultRelatedLogBlocks;
+    return Math.max(0, Math.min(10, Math.floor(Number(raw) || 0)));
+  }
+  function logCountOptionsHtml(value) {
+    return Array.from({ length:11 },(_,i)=>`<option value="${i}" ${i===value?'selected':''}>${i}개</option>`).join('');
+  }
+
   function logRelevanceSetting(room) {
     return ['strict','balanced','broad'].includes(room?.autoLogRelevance) ? room.autoLogRelevance : 'balanced';
   }
@@ -11289,7 +11377,7 @@ ${dialogueText}`;
         put(makeRecentContinuityLogItem(block, slot, rank < 0 ? null : relatedScored[rank], rank < 0 ? null : rank + 1, relatedScored.length));
       }
       const recentKeys = new Set(recentActive.map(block => String(block.key)));
-      const relatedHistory = relatedScored.filter(entry => !recentKeys.has(String(entry.block.key))).slice(0, 5);
+      const relatedHistory = relatedScored.filter(entry => !recentKeys.has(String(entry.block.key))).slice(0, relatedLogInjectionCount(room));
       for (let relatedIndex = 0; relatedIndex < relatedHistory.length; relatedIndex++) {
         const scored = relatedHistory[relatedIndex];
         put(makeLogRecallItem(scored.block, slot, 'related-log', '관련로그', `${logTimelineLabelOfBlock(scored.block)} · ${relatedLogReason(scored)}`, {
@@ -11993,6 +12081,110 @@ ${dialogueText}`;
     backdrop.onkeydown=event=>{if(event.key==='Escape')close();};render();document.body.appendChild(backdrop);
   }
 
+  // 기타·OOC 설정집은 항목의 category를 그대로 보존하고 폴더를 선택 단위로 다룹니다.
+  GM_addStyle('\n/* v0.15.27 · 기타 설정집 폴더별 선택·원문 미리보기 */\n.rpcm-extra-library-select{width:min(690px,calc(100vw - 24px))!important;max-width:690px!important}\n.rpcm-extra-folder-select-list{display:grid;gap:9px;padding:14px!important}\n.rpcm-extra-choice-folder,.rpcm-extra-library-folder,.rpcm-extra-manager-folder{border:1px solid #e9d7e3;border-radius:11px;background:rgba(222,115,165,.035);overflow:hidden}\n.rpcm-extra-choice-head{display:flex;align-items:center;gap:8px;justify-content:space-between;padding:10px 12px}\n.rpcm-extra-choice-head>label,.rpcm-extra-choice-item>label{display:flex;gap:9px;align-items:center;min-width:0;flex:1;cursor:pointer}\n.rpcm-extra-choice-head strong,.rpcm-extra-choice-item strong{font-size:13px;overflow-wrap:anywhere}\n.rpcm-extra-choice-head small,.rpcm-extra-choice-item small,.rpcm-extra-library-folder small,.rpcm-extra-manager-folder small{color:#a18b99;font-size:11px;margin-left:auto;white-space:nowrap}\n.rpcm-extra-choice-head input,.rpcm-extra-choice-item input{width:16px;height:16px;flex:0 0 auto;accent-color:#c36298}\n.rpcm-extra-choice-head button{background:transparent;border:0;cursor:pointer;padding:8px;color:#a84b7c;font:inherit;font-size:12px;white-space:nowrap}\n.rpcm-extra-choice-body{padding:2px 12px 12px 34px;display:grid;gap:7px}\n.rpcm-extra-choice-body[hidden]{display:none!important}\n.rpcm-extra-choice-item{border-top:1px solid #eddde6;padding:9px 4px 3px;min-width:0}\n.rpcm-extra-choice-item>details{margin:7px 0 0 24px}\n.rpcm-extra-choice-item>details summary{cursor:pointer;color:#9a6080;font-size:12px}\n.rpcm-extra-library-card pre,.rpcm-extra-choice-item pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;line-height:1.65;margin:9px 0 0;padding:12px;border:1px solid #ead9e3;border-radius:9px;background:rgba(242,211,229,.14);max-height:260px;overflow-y:auto;color:inherit;font-family:inherit}\n.rpcm-extra-folder-empty{padding:10px;font-size:12px;opacity:.7}\n.rpcm-extra-library-picker-row{flex-wrap:wrap!important}\n.rpcm-extra-picker-preview{flex:1 0 100%;min-width:0;border-top:1px solid #ebdce5;padding:9px 3px 3px}\n.rpcm-extra-picker-preview>summary{cursor:pointer;font-size:12px;color:#b45889;font-weight:600;list-style:revert}\n.rpcm-extra-picker-preview>div{display:grid;gap:7px;max-height:300px;overflow-y:auto;padding:10px 2px}\n.rpcm-extra-library-folder>summary,.rpcm-extra-manager-folder>summary{cursor:pointer;padding:10px 12px;display:flex;align-items:center;gap:8px;font-size:12px}\n.rpcm-extra-library-folder-body{padding:0 10px 10px;display:grid;gap:7px}\n.rpcm-extra-library-card{padding:8px 10px;border:1px solid #ead9e3;border-radius:8px}\n.rpcm-extra-library-card>summary{cursor:pointer;display:flex;gap:8px;align-items:center;font-size:12px}\n.rpcm-extra-manager-folder{margin:8px}\n.rpcm-extra-manager-folder>div{padding:0 8px 8px}\n@media(max-width:680px){.rpcm-extra-folder-select-list{padding:10px!important}.rpcm-extra-choice-head{padding:8px}.rpcm-extra-choice-body{padding-left:18px}.rpcm-extra-choice-item>details{margin-left:8px}.rpcm-extra-library-select{width:100vw!important;max-width:none!important}}\n');
+
+  function extraLibraryFolderGroups(items = [], folderNames = []) {
+    const groups = new Map();
+    const add = name => {
+      const category = String(name || '').trim() || '미분류';
+      if (!groups.has(category)) groups.set(category, []);
+      return category;
+    };
+    (Array.isArray(folderNames) ? folderNames : []).forEach(add);
+    (Array.isArray(items) ? items : []).forEach((item, index) => {
+      const category = add(item?.category ?? item?.extraCategory ?? '');
+      groups.get(category).push({ item, index });
+    });
+    return groups;
+  }
+
+  function extraRoomFolderNames(room) {
+    return [...extraLibraryFolderGroups((room?.slots || []).filter(slot => slot.group === 'extra').map(slot => ({
+      category: String(slot.extraCategory || '').trim(),
+    }))).keys()];
+  }
+
+  function extraSavedFolderNames(lib) {
+    return [...extraLibraryFolderGroups(lib?.extras || [], lib?.folders || []).keys()];
+  }
+
+  function extraLibraryPreviewHtml(items = [], folders = []) {
+    const groups = extraLibraryFolderGroups(items, folders);
+    if (!groups.size) return '<div class="rpcm-extra-folder-empty">저장된 폴더가 없습니다.</div>';
+    return [...groups].map(([category, rows]) => `<details class="rpcm-extra-library-folder">
+      <summary><span>📁 ${esc(category)}</span><small>${rows.length}개 항목</small></summary>
+      <div class="rpcm-extra-library-folder-body">${rows.length ? rows.map(({item}) => `<details class="rpcm-extra-library-card">
+        <summary><strong>${esc(String(item.title || '제목 없음'))}</strong><small>${formatCount(String(item.content || '').length)}자</small></summary>
+        <pre>${esc(String(item.content || ''))}</pre>
+      </details>`).join('') : '<div class="rpcm-extra-folder-empty">비어 있는 폴더입니다.</div>'}</div>
+    </details>`).join('');
+  }
+
+  function openExtraFolderSelectionDialog({ title, description = '', items = [], folders = [], confirmText = '선택 항목 저장', preserveOption = false, preserveDefault = true }) {
+    return new Promise(resolve => {
+      document.getElementById('rpcm-lib-dialog-backdrop')?.remove();
+      const backdrop = document.createElement('div');
+      backdrop.id = 'rpcm-lib-dialog-backdrop';
+      const groups = extraLibraryFolderGroups(items, folders);
+      if (!groups.size) { notify('선택할 기타 폴더가 없습니다.', 'warn'); resolve(null); return; }
+      backdrop.innerHTML = `<div class="rpcm-lib-dialog rpcm-extra-library-select" role="dialog" aria-modal="true" aria-label="${esc(title)}">
+        <div class="rpcm-lib-dialog-head"><div><div class="rpcm-lib-dialog-title">${esc(title)}</div><div class="rpcm-lib-dialog-desc">${esc(description || '폴더를 체크하면 내부 항목을 모두 선택합니다. 폴더와 항목을 펼쳐 내용도 확인할 수 있어요.')}</div></div><button type="button" class="rpcm-lib-close" aria-label="닫기" data-rpcm-close="icon">✕</button></div>
+        <div class="rpcm-lib-toolbar"><button type="button" class="rpcm-lib-small" data-act="all">전체 선택</button><button type="button" class="rpcm-lib-small" data-act="none">전체 해제</button><span class="rpcm-lib-selected" aria-live="polite"></span></div>
+        <div class="rpcm-lib-list rpcm-extra-folder-select-list">${[...groups].map(([category, members], folderIndex) => `<section class="rpcm-extra-choice-folder" data-extra-folder="${folderIndex}">
+          <div class="rpcm-extra-choice-head"><label><input type="checkbox" data-extra-folder-check="${folderIndex}" checked><strong>📁 ${esc(category)}</strong><small>${members.length}개</small></label><button type="button" data-extra-folder-toggle="${folderIndex}" aria-expanded="false">펼쳐보기 <span aria-hidden="true">▾</span></button></div>
+          <div class="rpcm-extra-choice-body" data-extra-folder-body="${folderIndex}" hidden>${members.length ? members.map(({item,index}) => `<div class="rpcm-extra-choice-item">
+            <label><input type="checkbox" data-extra-item-index="${index}" data-extra-parent="${folderIndex}" checked><strong>${esc(String(item.title || '기타 항목'))}</strong><small>${formatCount(String(item.content || '').length)}자</small></label>
+            <details><summary>내용 보기</summary><pre>${esc(String(item.content || ''))}</pre></details>
+          </div>`).join('') : '<div class="rpcm-extra-folder-empty">내용이 없는 폴더입니다. 폴더 이름만 저장됩니다.</div>'}</div>
+        </section>`).join('')}</div>
+        ${preserveOption ? `<label class="rpcm-lib-preserve"><input type="checkbox" data-extra-preserve ${preserveDefault ? 'checked' : ''}> 기존 설정집의 미선택 항목·폴더 유지</label>` : ''}
+        <div class="rpcm-lib-dialog-actions"><button type="button" class="rpcm-btn secondary" data-act="cancel">취소</button><button type="button" class="rpcm-btn primary" data-act="confirm">${esc(confirmText)}</button></div>
+      </div>`;
+      document.body.appendChild(backdrop);
+      const names = [...groups.keys()];
+      const folderBoxes = () => [...backdrop.querySelectorAll('[data-extra-folder-check]')];
+      const itemBoxes = () => [...backdrop.querySelectorAll('[data-extra-item-index]')];
+      const refresh = () => {
+        folderBoxes().forEach(box => {
+          const children = itemBoxes().filter(child => child.dataset.extraParent === box.dataset.extraFolderCheck);
+          if (children.length) {
+            box.checked = children.every(child => child.checked);
+            box.indeterminate = children.some(child => child.checked) && !box.checked;
+          }
+        });
+        const foldersSelected = folderBoxes().filter(box => box.checked || box.indeterminate).length;
+        const selected = itemBoxes().filter(box => box.checked).length;
+        backdrop.querySelector('.rpcm-lib-selected').textContent = `${foldersSelected}개 폴더 · ${selected}개 항목 선택`;
+      };
+      const finish = value => { backdrop.remove(); resolve(value); };
+      folderBoxes().forEach(box => box.onchange = () => {
+        const value = box.checked;
+        itemBoxes().filter(child => child.dataset.extraParent === box.dataset.extraFolderCheck).forEach(child => { child.checked = value; });
+        refresh();
+      });
+      itemBoxes().forEach(box => box.onchange = refresh);
+      backdrop.querySelectorAll('[data-extra-folder-toggle]').forEach(button => button.onclick = () => {
+        const body = backdrop.querySelector(`[data-extra-folder-body="${button.dataset.extraFolderToggle}"]`);
+        body.hidden = !body.hidden;
+        button.setAttribute('aria-expanded', String(!body.hidden));
+        button.innerHTML = body.hidden ? '펼쳐보기 <span aria-hidden="true">▾</span>' : '접기 <span aria-hidden="true">▴</span>';
+      });
+      backdrop.querySelector('[data-act="all"]').onclick = () => { folderBoxes().forEach(box => { box.checked = true;box.indeterminate=false; });itemBoxes().forEach(box => {box.checked=true;});refresh(); };
+      backdrop.querySelector('[data-act="none"]').onclick = () => { folderBoxes().forEach(box => {box.checked=false;box.indeterminate=false;});itemBoxes().forEach(box => {box.checked=false;});refresh(); };
+      backdrop.querySelector('[data-act="confirm"]').onclick = () => {
+        const selected = itemBoxes().filter(box => box.checked).map(box => items[Number(box.dataset.extraItemIndex)]).filter(Boolean);
+        const selectedFolders = folderBoxes().filter(box => box.checked || box.indeterminate).map(box => names[Number(box.dataset.extraFolderCheck)]);
+        if (!selectedFolders.length) { notify('저장하거나 불러올 폴더를 선택해 주세요.', 'warn');return; }
+        finish({items:selected, folders:selectedFolders, preserve:preserveOption ? !!backdrop.querySelector('[data-extra-preserve]')?.checked : false});
+      };
+      backdrop.querySelector('.rpcm-lib-close').onclick = backdrop.querySelector('[data-act="cancel"]').onclick = () => finish(null);
+      backdrop.onclick = event => { if(event.target === backdrop) finish(null); };
+      backdrop.onkeydown = event => { if(event.key === 'Escape') finish(null); };
+      refresh();
+    });
+  }
+
   function openCharacterSelectionDialog({ title, description = '', items = [], confirmText = '확인', preserveOption = false, preserveDefault = true, itemFallback = '캐릭터', preserveText = '설정집에 이미 있는 미선택 캐릭터는 그대로 유지' }) {
     return new Promise(resolve => {
       const old = document.getElementById('rpcm-lib-dialog-backdrop');
@@ -12066,27 +12258,30 @@ ${dialogueText}`;
           list.innerHTML = '<div class="rpcm-empty">설정집에 남은 항목이 없습니다. 전체 삭제하거나 취소해 주세요.</div>';
           return;
         }
-        list.innerHTML = draft.map((item, index) => `
+        const renderCard = (item,index) => `
           <details class="rpcm-library-item-card" data-manager-item="${index}">
             <summary><input type="checkbox" data-manager-select="${index}" aria-label="${esc(String(item.title || (isExtra ? '기타' : '캐릭터')))} 선택"><span class="rpcm-library-item-number">${String(index + 1).padStart(2, '0')}.</span><strong data-manager-summary-title>${esc(String(item.title || (isExtra ? '기타' : '캐릭터')))}</strong><span>${formatCount(String(item.content || '').length)}자 · ${retentionLabel(item.retentionTurns)}</span><button type="button" class="rpcm-library-item-delete" data-manager-delete="${index}">삭제</button><span class="rpcm-chevron">▶</span></summary>
             <div class="rpcm-library-item-edit">
               <label>항목 이름<input type="text" data-manager-title value="${esc(String(item.title || ''))}" placeholder="${isExtra ? '기타 항목 이름' : '캐릭터 이름'}"></label>
-              ${isExtra ? '' : `<label>자동 선택용 별칭 · 주입 안 됨<input type="text" data-manager-aliases value="${esc((item.aliases || []).join(', '))}" placeholder="애칭·약칭·호칭을 쉼표로 구분"></label>`}
+              ${isExtra ? `<label>폴더(카테고리)<input type="text" data-manager-category value="${esc(String(item.category ?? item.extraCategory ?? ''))}" placeholder="예: 성인지침 · 문체"></label>` : `<label>자동 선택용 별칭 · 주입 안 됨<input type="text" data-manager-aliases value="${esc((item.aliases || []).join(', '))}" placeholder="애칭·약칭·호칭을 쉼표로 구분"></label>`}
               <label class="rpcm-library-retention-label">유지 주기<select data-manager-retention>${retentionOptionsHtml(item.retentionTurns)}</select></label>
               <label>내용<textarea data-manager-content data-rpcm-editor="true" spellcheck="false">${esc(String(item.content || ''))}</textarea></label>
             </div>
-          </details>`).join('');
+          </details>`;
+        list.innerHTML = isExtra ? [...extraLibraryFolderGroups(draft, library.folders || [])].map(([category,members]) => `<details class="rpcm-extra-manager-folder" open><summary>📁 ${esc(category)} <small>${members.length}개</small></summary><div>${members.map(({item,index})=>renderCard(item,index)).join('')}</div></details>`).join('') : draft.map(renderCard).join('');
 
         list.querySelectorAll('.rpcm-library-item-card').forEach(card => {
           const index = Number(card.dataset.managerItem);
           const item = draft[index];
           const titleInput = card.querySelector('[data-manager-title]');
           const aliasInput = card.querySelector('[data-manager-aliases]');
+          const categoryInput = card.querySelector('[data-manager-category]');
           const retentionInput = card.querySelector('[data-manager-retention]');
           const contentInput = card.querySelector('[data-manager-content]');
           const summaryTitle = card.querySelector('[data-manager-summary-title]');
           titleInput.oninput = () => { item.title = titleInput.value; summaryTitle.textContent = titleInput.value || (isExtra ? '기타' : '캐릭터'); };
           if (aliasInput) aliasInput.oninput = () => { item.aliases = aliasInput.value.split(',').map(value => value.trim()).filter(Boolean); };
+          if (categoryInput) { categoryInput.oninput = () => { item.category = categoryInput.value.trim(); }; categoryInput.onchange = () => renderItems(); }
           retentionInput.onchange = () => { item.retentionTurns = normalizeRetentionTurns(retentionInput.value); };
           contentInput.oninput = () => { item.content = contentInput.value; };
           card.addEventListener('toggle', () => { card.querySelector('.rpcm-chevron').textContent = card.open ? '▼' : '▶'; });
@@ -12139,8 +12334,10 @@ ${dialogueText}`;
               title: String(item.title || '').trim(),
               content: String(item.content || ''),
               retentionTurns: normalizeRetentionTurns(item.retentionTurns),
-              ...(isExtra ? {} : { aliases:[...new Set((item.aliases || []).map(value => String(value).trim()).filter(Boolean))] }),
+              ...(isExtra ? {category:String(item.category || '').trim()} : { aliases:[...new Set((item.aliases || []).map(value => String(value).trim()).filter(Boolean))] }),
             })),
+            // 기존부터 비어 있던 폴더만 이름을 보존합니다. 항목을 다른 폴더로 옮겼다면 유령 폴더를 만들지 않습니다.
+            ...(isExtra ? {folders:[...new Set([...(library.folders || []).filter(name => !(library.extras || []).some(item => (String(item.category || '').trim() || '미분류') === name)),...extraLibraryFolderGroups(draft).keys()])]} : {}),
           };
           await saveCharacterLibrary(updated);
           notify(`‘${nextName}’ 설정집 변경을 저장했습니다.`, 'success', 4200);
@@ -12179,7 +12376,7 @@ ${dialogueText}`;
             const nm = displayNameOf(lib);
             const count = itemCountOf(lib);
             const source = lib.sourceLabel || lib.sourceLabels?.[0] || '';
-            return `<div class="rpcm-lib-row rpcm-library-row" data-library-row="${index}"><label class="rpcm-lib-row-main"><input type="radio" name="rpcm-library-choice" data-lib-index="${index}" ${index === 0 ? 'checked' : ''}><span><strong data-lib-name="${index}">${esc(nm)}</strong><small><span data-lib-count="${index}">${count}${isExtra ? '개' : '명'}</span>${source ? ` · 저장 출처 ${esc(source)}` : ''}</small></span></label><button type="button" class="rpcm-lib-manage-btn" data-manage-index="${index}">항목 관리</button><button type="button" class="rpcm-lib-rename-icon" data-rename-index="${index}" title="설정집 이름 수정" aria-label="${esc(nm)} 이름 수정"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></button><button type="button" class="rpcm-lib-delete-icon" data-delete-library-index="${index}" title="설정집 전체 삭제" aria-label="${esc(nm)} 설정집 삭제"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v5M14 11v5"/></svg></button></div>`;
+            return `<div class="rpcm-lib-row rpcm-library-row ${isExtra ? 'rpcm-extra-library-picker-row' : ''}" data-library-row="${index}"><label class="rpcm-lib-row-main"><input type="radio" name="rpcm-library-choice" data-lib-index="${index}" ${index === 0 ? 'checked' : ''}><span><strong data-lib-name="${index}">${esc(nm)}</strong><small><span data-lib-count="${index}">${count}${isExtra ? '개' : '명'}</span>${source ? ` · 저장 출처 ${esc(source)}` : ''}</small></span></label><button type="button" class="rpcm-lib-manage-btn" data-manage-index="${index}">항목 관리</button><button type="button" class="rpcm-lib-rename-icon" data-rename-index="${index}" title="설정집 이름 수정" aria-label="${esc(nm)} 이름 수정"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></button><button type="button" class="rpcm-lib-delete-icon" data-delete-library-index="${index}" title="설정집 전체 삭제" aria-label="${esc(nm)} 설정집 삭제"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v5M14 11v5"/></svg></button>${isExtra ? `<details class="rpcm-extra-picker-preview"><summary>저장된 폴더 · ${extraSavedFolderNames(lib).length}개 보기</summary><div>${extraLibraryPreviewHtml(lib.extras,lib.folders)}</div></details>` : ''}</div>`;
           }).join('')}</div>
           <div class="rpcm-lib-dialog-actions"><button type="button" class="rpcm-btn secondary" data-act="cancel">취소</button><button type="button" class="rpcm-btn primary" data-act="confirm">${esc(confirmText)}</button></div>
         </div>`;
@@ -12197,6 +12394,15 @@ ${dialogueText}`;
         if (countEl) countEl.textContent = `${itemCountOf(lib)}${isExtra ? '개' : '명'}`;
         if (renameBtn) renameBtn.setAttribute('aria-label', `${displayName} 이름 수정`);
         if (deleteBtn) deleteBtn.setAttribute('aria-label', `${displayName} 설정집 삭제`);
+        // 항목 관리에서 바뀐 폴더·원문을 설정집 선택창에도 즉시 갱신합니다.
+        if (isExtra) {
+          const preview = backdrop.querySelector(`[data-library-row="${index}"] .rpcm-extra-picker-preview`);
+          if (preview) {
+            const wasOpen = preview.open;
+            preview.innerHTML = `<summary>저장된 폴더 · ${extraSavedFolderNames(lib).length}개 보기</summary><div>${extraLibraryPreviewHtml(lib.extras,lib.folders)}</div>`;
+            preview.open = wasOpen;
+          }
+        }
       };
       const removePickerRow = index => {
         libraries[index] = null;
@@ -13086,6 +13292,7 @@ ${dialogueText}`;
       if (room.pending) {
         room.pending.contextBlock = String(room.pending.contextBlock || '');
         room.pending.sessionStartedAt = Number(room.pending.sessionStartedAt || room.pending.armedAt || Date.now());
+        normalizePendingSlotMetadata(room);
         if (!Array.isArray(room.pending.items) || !room.pending.items.length) {
           const legacyTotal = room.pending.totalTurns == null ? APP.defaultRetentionTurns : normalizeRetentionTurns(room.pending.totalTurns);
           const legacyUsed = Number(room.pending.usedTurns || 0);
@@ -13642,7 +13849,7 @@ ${dialogueText}`;
     return result;
   }
 
-  function applySelectedExtraLibraryToRoom(room, selectedItems) {
+  function applySelectedExtraLibraryToRoom(room, selectedItems, selectedFolders = []) {
     const extras = (room.slots || []).filter(slot => slot.group === 'extra');
     const byId = new Map(extras.filter(slot => slot.libraryItemId).map(slot => [String(slot.libraryItemId), slot]));
     const selected = (selectedItems || []).map(item => ({ ...item, itemId:String(item.itemId || makeExtraLibraryItemId()) }));
@@ -13687,9 +13894,19 @@ ${dialogueText}`;
       slot.libraryItemId = String(src.itemId);
       slot.content = String(src.content || '');
       slot.retentionTurns = normalizeRetentionTurns(src.retentionTurns);
-      slot.extraCategory = String(src.category || '').trim();
+      slot.extraCategory = String(src.category ?? src.extraCategory ?? '').trim();
       slot.enabled = false; // 다른 방에서 불러온 규칙은 확인 후 직접 체크
       byId.set(String(src.itemId), slot);
+    }
+    // 내용이 비어 있어도 선택한 카테고리는 폴더로 복원합니다. 기존 폴더는 건드리지 않습니다.
+    for (const category of selectedFolders) {
+      const name = String(category || '').trim();
+      if (!name) continue;
+      const folderCategory = name === '미분류' ? '' : name;
+      if (room.slots.some(slot => slot.group === 'extra' && String(slot.extraCategory || '').trim() === folderCategory)) continue;
+      const placeholder = makeDynamicSlot('extra','새 기타 항목');
+      placeholder.extraCategory = folderCategory;
+      room.slots.push(placeholder);
     }
     normalizeRoomSlots(room);
     return { count:selected.length, added, updated };
@@ -13823,8 +14040,84 @@ ${dialogueText}`;
   // Context building / cleanup
   // ---------------------------------------------------------------------------
 
+  function rpAutomaticSlot(room, slot) {
+    if (!['character','item'].includes(String(slot?.group || ''))) return false;
+    return !!slot.autoChosenByRp || !!String(slot.lastAutoMatch || '').trim();
+  }
+
+  function rpSlotMentionedNow(slot, text) {
+    return slot.group === 'item' ? importantItemRpDetectionEvidence(text, slot).accepted : characterRpDetectionEvidence(text, slot).accepted;
+  }
+
+  function rpShouldInjectSlot(room, slot, contextText = null) {
+    if (!slot?.enabled) return false;
+    if (!['character','item'].includes(String(slot.group || ''))) return true;
+    // Manual checkbox and pin win over automatic selection; legacy manually checked
+    // cards with no auto-match metadata remain untouched.
+    if (slot.autoPinned || slot.manualInjectionOverride === 'on') return true;
+    if (slot.manualInjectionOverride === 'off') return false;
+    if (!rpAutomaticSlot(room, slot)) return true;
+    const context = contextText == null ? String(room?.autoRecallContextText || '') : String(contextText || '');
+    return !!context.trim() && rpSlotMentionedNow(slot, context);
+  }
+
   function selectedSlots(room) {
-    return (room.slots || []).filter(s => s.enabled && String(s.content || '').trim());
+    return (room.slots || []).filter(slot => String(slot.content || '').trim() && rpShouldInjectSlot(room,slot));
+  }
+
+  function normalizePendingSlotMetadata(room) {
+    if (!room?.pending || !Array.isArray(room.pending.items)) return 0;
+    const byId = new Map((room.slots || []).map(slot => [String(slot.id), slot]));
+    let changed = 0;
+    for (const item of room.pending.items) {
+      if (!item || !item.slotId || item.sourceSlotId === 'logSummary' || item.group === 'log-auto') continue;
+      const slot = byId.get(String(item.slotId));
+      if (!slot) continue;
+      const group = String(slot.group || 'extra');
+      const title = String(slot.title || slot.id || '메모').trim();
+      if (item.group !== group) { item.group = group; changed++; }
+      if (!String(item.title || '').trim() || item.title !== title) { item.title = title; changed++; }
+    }
+    return changed;
+  }
+
+  function reconcilePendingSlotsWithCurrentSelection(room) {
+    if (!room?.pending) return { added:0, removed:0, updated:0 };
+    const pending = room.pending;
+    const items = Array.isArray(pending.items) ? pending.items : (pending.items = []);
+    const selected = selectedSlots(room).filter(slot => slot.id !== 'logSummary');
+    const selectedById = new Map(selected.map(slot => [String(slot.id), slot]));
+    const removedKeys = new Set(quickRemovedPendingItems(pending).map(pendingItemIdentity).filter(Boolean));
+    let removed = 0, updated = 0, added = 0;
+
+    // 현재 체크/자동 판정에서 빠진 일반 슬롯은 현재 carrier에서도 제거합니다.
+    for (let i = items.length - 1; i >= 0; i--) {
+      const item = items[i];
+      if (!item?.slotId || item.sourceSlotId === 'logSummary' || item.group === 'log-auto') continue;
+      const slot = (room.slots || []).find(row => String(row.id) === String(item.slotId));
+      if (!slot) { items.splice(i,1); removed++; continue; }
+      if (!selectedById.has(String(item.slotId))) { items.splice(i,1); removed++; continue; }
+
+      const fresh = slotToPendingItem(slot);
+      // 기존 연속 유지 진행도는 새로고침만으로 리셋하지 않습니다.
+      fresh.usedTurns = Number(item.usedTurns || 0);
+      fresh.totalTurns = normalizeRetentionTurns(slot.retentionTurns);
+      const before = JSON.stringify([item.title,item.group,item.content,item.totalTurns,item.autoType,item.matchedAlias,item.autoConfidence,item.autoDetectionReason]);
+      const after = JSON.stringify([fresh.title,fresh.group,fresh.content,fresh.totalTurns,fresh.autoType,fresh.matchedAlias,fresh.autoConfidence,fresh.autoDetectionReason]);
+      if (before !== after) { items[i] = { ...item, ...fresh, usedTurns:fresh.usedTurns }; updated++; }
+      selectedById.delete(String(item.slotId));
+    }
+
+    // 현재 선택에는 있지만 carrier에 없는 일반 슬롯은 추가합니다.
+    for (const slot of selectedById.values()) {
+      const fresh = slotToPendingItem(slot);
+      const key = pendingItemIdentity(fresh);
+      if (removedKeys.has(key)) continue; // 사용자가 현재 주입에서 '제외'한 항목은 되살리지 않음
+      items.push(fresh);
+      added++;
+    }
+
+    return { added, removed, updated };
   }
 
   function openStoryTimelineEditorDialog(room) {
@@ -14851,7 +15144,10 @@ ${dialogueText}`;
     const haystack = String(contextText || '').toLocaleLowerCase('ko-KR');
     if (!haystack) return null;
     const groups = [['title', [card?.title], 3], ['alias', card?.aliases, 2], ['trigger', card?.triggers, 1]];
-    const hits = groups.flatMap(([kind, words, weight]) => (Array.isArray(words) ? words : []).map(word => String(word || '').trim()).filter(word => word && haystack.includes(word.toLocaleLowerCase('ko-KR'))).map(word => ({ kind, word, score:weight * 100 + Math.min(80, word.length * 4) })));
+    const generic = new Set(['설정','세계관','설명','관련','인물','사용','상태','물건','물품','사진','기록','내용','기타','과거','현재','사건','정보','장소','가족']);
+    const hits = groups.flatMap(([kind, words, weight]) => (Array.isArray(words) ? words : [])
+      .map(word => String(word || '').trim()).filter(word => word.length >= 2 && !generic.has(word) && aliasAppears(haystack, word))
+      .map(word => ({ kind, word, score:weight * 100 + Math.min(80, word.length * 4) })));
     return hits.sort((a,b) => b.score - a.score || b.word.length - a.word.length)[0] || null;
   }
 
@@ -15186,17 +15482,18 @@ ${dialogueText}`;
   function itemCategory(item) {
     if (item.slotId === 'currentState') return '현재상태';
     if (item.group === 'lore' || item.autoType === 'lore') return '자료집';
-    if (item.autoType === 'story-timeline') return '타임라인';
-    if (item.autoType === 'knowledge') return '인지 현황';
+    if (item.autoType === 'story-timeline' || item.group === 'story-timeline') return '타임라인';
+    if (item.autoType === 'knowledge' || item.group === 'knowledge') return '인지 현황';
     if (item.autoType === 'pinned-log') return '항상 주입';
     if (item.autoType === 'manual-log') return '직접 주입';
     if (item.autoType === 'recent-log') return '최근 연속성';
     if (item.autoType === 'related-log') return '관련로그';
-    if (item.slotId === 'logSummary') return '로그요약';
+    if (item.slotId === 'logSummary' || item.sourceSlotId === 'logSummary' || item.group === 'log-auto') return '로그요약';
     if (item.group === 'character') return '캐릭터';
     if (item.group === 'item') return '중요 물품';
-    if (item.group === 'extra') return '기타';
-    return '기타';
+    if (item.group === 'extra') return '기타·OOC';
+    // 과거 버전 pending 등 메타데이터가 불완전한 항목은 기타로 위장하지 않습니다.
+    return '분류 확인';
   }
 
   function categoryTone(label) {
@@ -15207,7 +15504,8 @@ ${dialogueText}`;
     if (label === '캐릭터') return 'character';
     if (label === '중요 물품') return 'item';
     if (label === '자료집') return 'knowledge';
-    if (label === '기타') return 'extra';
+    if (label === '기타·OOC') return 'extra';
+    if (label === '분류 확인') return 'format';
     return 'format';
   }
 
@@ -15222,7 +15520,7 @@ ${dialogueText}`;
       current.chars += String(item.content || '').length;
       grouped.set(key, current);
     }
-    const order = ['현재상태','인지 현황','타임라인','자료집','항상 주입','직접 주입','최근로그','관련로그','로그요약','캐릭터','중요 물품','기타'];
+    const order = ['현재상태','인지 현황','타임라인','자료집','항상 주입','직접 주입','최근 연속성','관련로그','로그요약','캐릭터','중요 물품','기타·OOC','분류 확인'];
     const result = order.filter(key => grouped.has(key)).map(key => grouped.get(key));
     const rawChars = result.reduce((sum, item) => sum + item.chars, 0);
     const overhead = Math.max(0, Number(blockChars || 0) - rawChars + Number(separatorChars || 0));
@@ -15289,7 +15587,7 @@ ${dialogueText}`;
     const eligible = autoRecallVisibleLogBlocks(blocks, room).filter(b => !excludedKeys.has(b.key));
     const skip = new Set([...excludedKeys, ...pinnedKeys, ...manualKeys]);
     const recentKeys = new Set(recentContinuityLogBlocks(room, eligible, excludedKeys).map(block => String(block.key)));
-    const candidates = eligibleRelatedLogScores(room, eligible, contextText, skip).filter(entry => !recentKeys.has(String(entry.block.key))).slice(0, 5);
+    const candidates = eligibleRelatedLogScores(room, eligible, contextText, skip).filter(entry => !recentKeys.has(String(entry.block.key))).slice(0, relatedLogInjectionCount(room));
     const byKey = new Map(candidates.map((scored, index) => [String(scored.block.key), { scored, rank:index + 1 }]));
     let changed = false;
 
@@ -17652,7 +17950,9 @@ ${dialogueText}`;
       }
       if (!String(slot.content || '').trim()) slot.content = String(src.content || '');
       if (!Array.isArray(slot.aliases) || !slot.aliases.length) slot.aliases = Array.isArray(src.aliases) ? [...src.aliases] : [];
+      if (slot.manualInjectionOverride === 'off') continue;
       slot.enabled = true;
+      slot.autoChosenByRp = true;
       slot.lastAutoMatch = matched;
       slot.lastAutoConfidence = Number(evidence.confidence || 0);
       slot.lastAutoReason = String(evidence.reason || '실제 RP 본문 감지');
@@ -17670,6 +17970,16 @@ ${dialogueText}`;
         next.recallReason = `신뢰도 ${slot.lastAutoConfidence}% · 감지: ${slot.lastAutoReason}`;
         if (idx < 0) items.push(next);
         else if (room.autoCharacterResetOnReappear || matched === '사용자 고정') { items[idx] = next; reset++; }
+      }
+    }
+
+    // Clear previous auto-selection when the character has left the recent scene.
+    const currentIds = new Set(detected.map(entry => entry.slot.id));
+    for (const slot of (room.slots || []).filter(s => s.group === 'character')) {
+      if (slot.autoPinned || slot.manualInjectionOverride === 'on' || !rpAutomaticSlot(room,slot)) continue;
+      if (!currentIds.has(slot.id)) {
+        slot.enabled = false;
+        if (room.pending) room.pending.items = (room.pending.items || []).filter(item => item.slotId !== slot.id);
       }
     }
 
@@ -17703,7 +18013,9 @@ ${dialogueText}`;
       if (slot.autoExcluded || !String(slot.content || '').trim()) continue;
       const evidence = text ? importantItemRpDetectionEvidence(text, slot) : { accepted:false };
       if (!evidence.accepted) continue;
+      if (slot.manualInjectionOverride === 'off') continue;
       slot.enabled = true;
+      slot.autoChosenByRp = true;
       slot.lastAutoMatch = evidence.matched;
       slot.lastAutoConfidence = Number(evidence.confidence || 0);
       slot.lastAutoReason = String(evidence.reason || '실제 RP 본문 물품 언급 감지');
@@ -17721,6 +18033,15 @@ ${dialogueText}`;
         next.recallReason = `신뢰도 ${slot.lastAutoConfidence}% · 감지: ${slot.lastAutoReason}`;
         if (idx < 0) items.push(next);
         else if (room.autoItemResetOnReappear) { items[idx] = next; reset++; }
+      }
+    }
+
+    const currentIds = new Set(detected.map(entry => entry.slot.id));
+    for (const slot of (room.slots || []).filter(s => s.group === 'item')) {
+      if (slot.autoPinned || slot.manualInjectionOverride === 'on' || !rpAutomaticSlot(room,slot)) continue;
+      if (!currentIds.has(slot.id)) {
+        slot.enabled = false;
+        if (room.pending) room.pending.items = (room.pending.items || []).filter(item => item.slotId !== slot.id);
       }
     }
 
@@ -17959,7 +18280,7 @@ ${dialogueText}`;
 
     let selected;
     try {
-      const reranked = await aiRerankRelatedLogCandidates(room, contextText, relatedCandidates, Math.min(12, relatedCandidates.length));
+      const reranked = await aiRerankRelatedLogCandidates(room, contextText, relatedCandidates, Math.min(12, relatedLogInjectionCount(room), relatedCandidates.length));
       selected = [...reranked, ...relatedCandidates.filter(entry => !reranked.includes(entry))];
     } catch (error) {
       const fallback = relatedCandidates;
@@ -17971,7 +18292,7 @@ ${dialogueText}`;
 
     const nonLogs = (items || []).filter(item => item.sourceSlotId !== 'logSummary' && item.group !== 'log-auto' && item.slotId !== 'logSummary');
     const fixedLogs = (items || []).filter(item => (item.sourceSlotId === 'logSummary' || item.group === 'log-auto' || item.slotId === 'logSummary') && item.autoType !== 'related-log');
-    const aiRelated = selected.slice(0, 5).map((scored, index) => makeLogRecallItem(
+    const aiRelated = selected.slice(0, relatedLogInjectionCount(room)).map((scored, index) => makeLogRecallItem(
       scored.block,
       slot,
       'related-log',
@@ -18006,9 +18327,9 @@ ${dialogueText}`;
     const allEligible = eligibleRelatedLogScores(room, eligible, contextText, new Set([...excludedKeys, ...occupied]));
     const relatedCandidates = allEligible.filter(entry => !latestKeys.has(String(entry.block.key)));
     let related = relatedCandidates;
-    if (room.aiContextLogRerankEnabled && relatedCandidates.length) {
+    if (room.aiContextLogRerankEnabled && relatedLogInjectionCount(room) > 0 && relatedCandidates.length) {
       try {
-        const reranked = await aiRerankRelatedLogCandidates(room, contextText, relatedCandidates, Math.min(12, relatedCandidates.length));
+        const reranked = await aiRerankRelatedLogCandidates(room, contextText, relatedCandidates, Math.min(12, relatedLogInjectionCount(room), relatedCandidates.length));
         related = [...reranked, ...relatedCandidates.filter(entry => !reranked.includes(entry))];
       } catch (error) {
         const fallback = relatedCandidates;
@@ -18030,7 +18351,7 @@ ${dialogueText}`;
     room.pending.items = items.filter(item => item?.autoType !== 'related-log');
     const nextItems = room.pending.items;
     let added = 0;
-    for (let relatedIndex = 0; relatedIndex < Math.min(5, related.length); relatedIndex++) {
+    for (let relatedIndex = 0; relatedIndex < Math.min(relatedLogInjectionCount(room), related.length); relatedIndex++) {
       const scored = related[relatedIndex];
       const b = scored.block;
       // 최초 주입 경로와 자동 갱신 경로가 같은 메타데이터 구조를 사용하게 해서
@@ -18279,7 +18600,8 @@ ${dialogueText}`;
     if (!room.pending) return found.map(item => item.personName);
     const items = Array.isArray(room.pending.items) ? room.pending.items : (room.pending.items = []);
     const removedKeys = new Set(quickRemovedPendingItems(room.pending).map(item => item.slotId));
-    room.pending.items = items.filter(item => item.slotId !== 'knowledge:master');
+    const foundIds = new Set(found.map(item => item.slotId));
+    room.pending.items = items.filter(item => !isKnowledgePendingItem(item) || foundIds.has(item.slotId));
     for (const item of found) {
       // 빠른 주입 관리에서 제외한 인물은 이 주입 세션 동안 재선택하지 않습니다.
       if (removedKeys.has(item.slotId)) continue;
@@ -18305,10 +18627,13 @@ ${dialogueText}`;
   async function refreshAutomaticMemories(room, recentMessages, freshMessages = null) {
     const fresh = freshMessages || newMessagesSinceLastScan(room, recentMessages);
     if (!fresh.length) return { detected: [], added: 0, reset: 0, itemDetected: [], itemReset: 0, logAdded: 0, freshCount: 0 };
-    const cleanFreshText = fresh.map(m => stripAutomationNoise(messageTextOf(m))).filter(Boolean).join('\n');
-    if (cleanFreshText) room.autoRecallContextText = cleanFreshText.slice(-12000);
-    const charResult = await autoDetectCharacters(room, fresh);
-    const itemResult = autoDetectImportantItems(room, fresh);
+    // The newest three user/AI exchanges define the active scene. Keep fresh[] for
+    // polling progress, but do not let a one-time historical mention stick forever.
+    const sceneMessages = (recentMessages || []).filter(m => ['user','assistant'].includes(messageRoleOf(m))).slice(0, 6);
+    const cleanFreshText = sceneMessages.map(m => stripAutomationNoise(messageTextOf(m), true)).filter(Boolean).join('\n');
+    room.autoRecallContextText = cleanFreshText.slice(-12000);
+    const charResult = await autoDetectCharacters(room, sceneMessages);
+    const itemResult = autoDetectImportantItems(room, sceneMessages);
     const personDetected = autoDetectPersonProfiles(room, cleanFreshText);
     refreshPendingLoreItems(room, cleanFreshText);
     refreshAutoRecentLogsToPending(room);
@@ -18318,6 +18643,56 @@ ${dialogueText}`;
     return { ...charResult, itemDetected:itemResult.detected, itemReset:itemResult.reset, personDetected, logAdded, freshCount: fresh.length };
   }
 
+  async function refreshInjectionSelectionFromLatestRp(room) {
+    if (!room || state.currentRoom !== room) throw new Error('현재 RP 방이 바뀌었습니다. 다시 열고 시도해 주세요.');
+    const recent = await fetchRecentMessages(apiChatIdOf(room), Math.max(Number(APP.autoScanMessageLimit || 0), 12));
+    const sceneMessages = (recent || []).filter(message => ['user','assistant'].includes(messageRoleOf(message))).slice(0, 6);
+    if (!sceneMessages.length) throw new Error('최신 RP 메시지를 찾지 못했습니다.');
+
+    const cleanText = sceneMessages
+      .map(message => stripAutomationNoise(messageTextOf(message), true))
+      .filter(Boolean)
+      .join('\n\n');
+    if (!cleanText.trim()) throw new Error('최신 RP 본문을 읽지 못했습니다.');
+
+    room.autoRecallContextText = cleanText.slice(-12000);
+    const newest = sceneMessages[0];
+    if (newest) room.autoScanLastMessageId = String(messageIdOf(newest) || room.autoScanLastMessageId || '');
+
+    const charResult = await autoDetectCharacters(room, sceneMessages);
+    const itemResult = autoDetectImportantItems(room, sceneMessages);
+    const personDetected = autoDetectPersonProfiles(room, cleanText);
+
+    let loreCount = 0, logAdded = 0;
+    let slotSync = { added:0, removed:0, updated:0 };
+    if (room.pending) {
+      // 체크박스/자동 판정과 기존 carrier를 먼저 완전히 대조합니다.
+      // 특히 이전 버전에서 남은 기타·OOC/캐릭터/물품 항목이 현재 OFF인데도 carrier에 남는 문제를 제거합니다.
+      slotSync = reconcilePendingSlotsWithCurrentSelection(room);
+      loreCount = refreshPendingLoreItems(room, cleanText);
+      refreshAutoRecentLogsToPending(room);
+      logAdded = await addAutoRelatedLogsToPending(room, cleanText);
+      // 현재 주입에서 사용자가 빠르게 제외한 항목은 새로고침이 임의로 되살리지 않습니다.
+      applyQuickItemSuppression(room.pending);
+      await saveRoom(room);
+      await syncPendingCarrier(room, 'manual-latest-rp-refresh');
+    } else {
+      // 주입 전에도 새 문맥을 저장해 미리보기/다음 주입의 자료집·인물정보·날짜로그 판정이 즉시 최신화됩니다.
+      await saveRoom(room);
+    }
+
+    if (room.chatId === state.currentChatId) state.currentRoom = room;
+    return {
+      characters:charResult.detected?.length || 0,
+      items:itemResult.detected?.length || 0,
+      people:Array.isArray(personDetected) ? personDetected.length : 0,
+      lore:loreCount,
+      logs:logAdded,
+      pending:!!room.pending,
+      slotSync,
+    };
+  }
+
   async function armInjectionNow(room) {
     if (room.pending) throw new Error('이미 자동 유지 컨텍스트가 활성화되어 있습니다. 먼저 지금 해제해 주세요.');
 
@@ -18325,7 +18700,8 @@ ${dialogueText}`;
     await refreshAutomaticMemories(room, recentForAuto, recentForAuto.filter(m => ['user','assistant'].includes(messageRoleOf(m))).slice(0, APP.autoScanMessageLimit));
     const firstAutoMessage = recentForAuto.find(m => ['user','assistant'].includes(messageRoleOf(m)));
     if (firstAutoMessage) room.autoScanLastMessageId = String(messageIdOf(firstAutoMessage) || room.autoScanLastMessageId || '');
-    const recallText = recentForAuto.map(m => stripAutomationNoise(messageTextOf(m))).filter(Boolean).join('\n');
+    const recallText = recentForAuto.filter(m => ['user','assistant'].includes(messageRoleOf(m))).slice(0,6)
+      .map(m => stripAutomationNoise(messageTextOf(m),true)).filter(Boolean).join('\n');
     room.autoRecallContextText = recallText.slice(-12000);
     const recent = await fetchRecentMessages(apiChatIdOf(room), 40);
     if (!recent.length) throw new Error('채팅 메시지를 찾지 못했습니다.');
@@ -18455,6 +18831,13 @@ ${dialogueText}`;
       ? await refreshAutomaticMemories(room, recentForAuto)
       : { detected: [], added: 0, reset: 0, itemDetected: [], itemReset: 0, logAdded: 0, freshCount: 0 };
     if (room.pending) room.pending.items = p.items;
+    // 0.15.27: a legacy pending snapshot may contain auto picks from weeks ago.
+    // Do not retain it without a fresh mention merely because a retention counter remains.
+    p.items = (p.items || []).filter(item => {
+      if (!['item','character'].includes(item.group)) return true;
+      const slot = (room.slots || []).find(s => s.id === item.slotId);
+      return !slot || rpShouldInjectSlot(room,slot);
+    });
     refreshAutoRecentLogsToPending(room);
     const persistenceRepair = ensureDirectReleasePendingItems(room, p);
     if (persistenceRepair.added) console.info('[RP매니저] 직접 해제 항목 유지 복구:', persistenceRepair.added);
@@ -28631,9 +29014,11 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
 
 
   GM_addStyle('\n.rpcm-ltm-result-unified .rpcm-ltm-bulk-tabs,\n.rpcm-ltm-result-unified .rpcm-ltm-bulk-toolbar,\n.rpcm-ltm-result-unified [data-ltm-add-card]{display:none!important}\n.rpcm-ltm-result-unified .rpcm-ltm-review-editor{min-width:0}\n.rpcm-ltm-result-unified .rpcm-ltm-result-paste{margin-bottom:12px}\n.rpcm-ltm-result-unified .rpcm-ltm-existing-group{margin-bottom:14px}\n.rpcm-ltm-result-unified .rpcm-ltm-review-group.is-new{display:block}\n@media(max-width:800px){.rpcm-ltm-result-unified .rpcm-ltm-bulk{width:100%;max-height:100dvh;height:100dvh;border-radius:0}.rpcm-ltm-result-unified .rpcm-ltm-review-layout{overflow:auto}}\n');
-  GM_addStyle('\n/* v0.15.22 — long-term result review visual polish; presentation only */\n.rpcm-ltm-result-unified .rpcm-ltm-bulk{width:min(1080px,calc(100vw - 40px))!important;max-height:min(88vh,880px)!important;border-radius:20px!important;box-shadow:0 22px 75px rgba(45,25,41,.22)!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-bulk-header{padding:20px 24px!important;background:var(--wish-card,#fff)!important;border-bottom:1px solid var(--wish-line,#efdde7)!important;gap:12px!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-bulk-header h3{font-size:19px!important;font-weight:750!important;letter-spacing:-.4px;margin:0 0 6px!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-bulk-header small{font-size:12px!important;line-height:1.6!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-review-layout{grid-template-columns:minmax(0,1.45fr) minmax(275px,.75fr)!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-review-editor{padding:22px 24px 28px!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-review-preview{padding:22px 20px!important;background:var(--wish-card-2,#fff9fc)!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-review-preview>header{top:-22px!important;padding:2px 0 14px!important;background:var(--wish-card-2,#fff9fc)!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-review-preview h4{font-size:15px!important;font-weight:700!important;margin:0 0 5px!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-review-preview small{font-size:12px;line-height:1.6;}\n.rpcm-ltm-result-unified .rpcm-ltm-existing-group{background:var(--wish-card-2,#fff9fc)!important;border-radius:14px!important;padding:0 14px!important;margin:0 0 22px!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-existing-group>summary{padding:15px 4px!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-existing-group>summary h4{font-size:14px!important;font-weight:700!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-existing-group>summary h4 small{font-weight:500;color:var(--wish-fg-2,#907c8c);}\n.rpcm-ltm-result-unified .rpcm-ltm-review-group.is-new{border:0!important;margin:0!important;padding:0!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-review-group.is-new>header{margin:0 0 12px!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-review-group.is-new>header h4{font-size:15px!important;font-weight:750!important;margin:0!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-result-paste{padding:17px!important;border:1px solid var(--wish-line,#efdde7);background:var(--wish-card-2,#fff9fc)!important;border-radius:15px!important;margin-bottom:18px!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-result-paste label{font-size:13px!important;font-weight:700!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-result-paste textarea{min-height:148px!important;max-height:32vh;resize:vertical!important;border-radius:11px!important;margin-top:4px!important;padding:14px!important;font-size:13px!important;line-height:1.7!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-result-paste>div{justify-content:space-between!important;gap:8px!important;}\n.rpcm-ltm-result-unified [data-ltm-paste-file]{flex:1;min-width:0;max-width:260px;font-size:12px!important;}\n.rpcm-ltm-result-unified [data-ltm-paste-add]{background:var(--wish-accent-soft,#fcecf4)!important;border-color:var(--wish-accent-line,#ecc5d9)!important;color:var(--wish-accent-strong,#a14b7a)!important;font-weight:700!important;}\n.rpcm-ltm-result-unified [data-ltm-paste-status]{font-size:12px!important;line-height:1.6!important;overflow-wrap:anywhere;}\n.rpcm-ltm-result-unified .rpcm-ltm-bulk-card{border-radius:13px!important;overflow:hidden;margin-bottom:2px;}\n.rpcm-ltm-result-unified .rpcm-ltm-bulk footer{padding:14px 22px!important;background:var(--wish-card,#fff)!important;border-top:1px solid var(--wish-line,#efdde7)!important;gap:10px!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-bulk footer [data-ltm-bulk-status]{font-size:12px!important;color:var(--wish-fg-2,#907c8c)!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-bulk footer button{min-height:39px!important;border-radius:10px!important;font-weight:650!important;}\n.rpcm-ltm-result-unified :is(button,textarea,input):focus-visible,.rpcm-ltm-result-unified summary:focus-visible{outline:2px solid var(--wish-accent-strong,#b45b8d)!important;outline-offset:2px!important;}\n@media(max-width:800px){.rpcm-ltm-result-unified .rpcm-ltm-bulk{width:100vw!important;max-height:100dvh!important;height:100dvh!important;border-radius:0!important}.rpcm-ltm-result-unified .rpcm-ltm-review-layout{display:block!important;overflow:auto!important}.rpcm-ltm-result-unified .rpcm-ltm-review-editor{padding:16px!important}.rpcm-ltm-result-unified .rpcm-ltm-review-preview{padding:16px!important}.rpcm-ltm-result-unified .rpcm-ltm-bulk-header{padding:15px 16px!important}.rpcm-ltm-result-unified .rpcm-ltm-bulk footer{padding:12px 16px!important}.rpcm-ltm-result-unified [data-ltm-paste-file]{max-width:100%}}\n');
-  GM_addStyle('\n/* v0.15.22: generous paste area for long-term memory imports */\n.rpcm-ltm-result-unified .rpcm-ltm-review-editor .rpcm-ltm-result-paste textarea[data-ltm-paste]{height:clamp(300px,42vh,480px)!important;min-height:300px!important;max-height:none!important;resize:vertical!important;overflow-y:auto!important;box-sizing:border-box!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-review-editor .rpcm-ltm-result-paste{width:100%!important;box-sizing:border-box!important;}\n@media(max-width:800px){.rpcm-ltm-result-unified .rpcm-ltm-review-editor .rpcm-ltm-result-paste textarea[data-ltm-paste]{height:36dvh!important;min-height:240px!important;}}\n');
-  GM_addStyle('\n/* v0.15.22 — single-surface result import, matching manager panels */\n.rpcm-ltm-result-unified .rpcm-ltm-bulk{width:min(980px,calc(100vw - 44px))!important;max-height:min(88dvh,900px)!important;border-radius:18px!important}\n.rpcm-ltm-result-unified .rpcm-ltm-review-layout{display:block!important;overflow-y:auto!important;overflow-x:hidden!important;background:#fff!important}\n.rpcm-ltm-result-unified .rpcm-ltm-review-editor{padding:20px 28px 24px!important;overflow:visible!important;max-width:unset!important}\n.rpcm-ltm-result-unified .rpcm-ltm-review-preview{display:none!important}\n.rpcm-ltm-result-unified.rpcm-ltm-preview-open .rpcm-ltm-review-preview{display:block!important;margin:0 28px 24px!important;padding:18px 20px!important;border:1px solid var(--wish-line,#ecdbe5)!important;border-radius:13px!important;background:var(--wish-card-2,#fff9fc)!important}\n.rpcm-ltm-result-unified .rpcm-ltm-bulk-header{padding:19px 28px!important}\n.rpcm-ltm-result-unified .rpcm-ltm-existing-group{padding:0 16px!important;margin:0 0 18px!important;border:1px solid var(--wish-line,#ecdbe5)!important;background:#fff!important}\n.rpcm-ltm-result-unified .rpcm-ltm-existing-group>summary{display:flex!important;align-items:center!important;justify-content:space-between!important;min-height:46px!important;padding:8px 2px!important}\n.rpcm-ltm-result-unified .rpcm-ltm-existing-group>summary h4{font-size:14px!important}\n.rpcm-ltm-result-unified .rpcm-ltm-review-group.is-new>header{padding:0 2px 9px!important;margin:0!important}\n.rpcm-ltm-result-unified .rpcm-ltm-result-paste{padding:16px 18px!important;border:1px solid var(--wish-line,#ecdbe5)!important;background:var(--wish-card-2,#fff9fc)!important;border-radius:13px!important}\n.rpcm-ltm-result-unified .rpcm-ltm-result-paste textarea[data-ltm-paste]{height:clamp(240px,34dvh,380px)!important;min-height:240px!important;max-height:none!important;width:100%!important;border:1px solid var(--wish-line,#e8d7e2)!important;background:#fff!important;resize:vertical!important;font-size:14px!important;line-height:1.75!important}\n.rpcm-ltm-result-unified .rpcm-ltm-result-paste>div{display:flex!important;align-items:center!important;gap:12px!important;flex-wrap:wrap!important;margin-top:10px!important}\n.rpcm-ltm-result-unified [data-ltm-paste-file]{width:auto!important;max-width:none!important;flex:1 1 240px!important;border-radius:9px!important;background:#fff!important;border:1px solid var(--wish-line,#e8d7e2)!important;padding:6px!important}\n.rpcm-ltm-result-unified [data-ltm-paste-file]::file-selector-button{background:var(--wish-accent-soft,#fcecf4);border:1px solid var(--wish-accent-line,#ecc5d9);border-radius:7px;padding:7px 12px;margin-right:10px;color:var(--wish-accent-strong,#a14b7a);cursor:pointer;font:inherit}\n.rpcm-ltm-result-unified [data-ltm-paste-add]{min-height:39px!important;padding:8px 18px!important;border-radius:9px!important}\n.rpcm-ltm-result-unified .rpcm-ltm-bulk footer{padding:13px 28px!important}\n.rpcm-ltm-result-unified .rpcm-ltm-bulk footer button{min-width:94px!important}\n@media(max-width:700px){.rpcm-ltm-result-unified .rpcm-ltm-bulk{width:100vw!important;max-height:100dvh!important;height:100dvh!important;border-radius:0!important}.rpcm-ltm-result-unified .rpcm-ltm-review-editor{padding:15px!important}.rpcm-ltm-result-unified .rpcm-ltm-bulk-header{padding:15px!important}.rpcm-ltm-result-unified .rpcm-ltm-bulk footer{padding:12px 15px!important}.rpcm-ltm-result-unified.rpcm-ltm-preview-open .rpcm-ltm-review-preview{margin:0 15px 18px!important}.rpcm-ltm-result-unified .rpcm-ltm-result-paste textarea[data-ltm-paste]{height:32dvh!important;min-height:210px!important}}\n');
+  GM_addStyle('\n/* v0.15.27 — long-term result review visual polish; presentation only */\n.rpcm-ltm-result-unified .rpcm-ltm-bulk{width:min(1080px,calc(100vw - 40px))!important;max-height:min(88vh,880px)!important;border-radius:20px!important;box-shadow:0 22px 75px rgba(45,25,41,.22)!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-bulk-header{padding:20px 24px!important;background:var(--wish-card,#fff)!important;border-bottom:1px solid var(--wish-line,#efdde7)!important;gap:12px!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-bulk-header h3{font-size:19px!important;font-weight:750!important;letter-spacing:-.4px;margin:0 0 6px!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-bulk-header small{font-size:12px!important;line-height:1.6!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-review-layout{grid-template-columns:minmax(0,1.45fr) minmax(275px,.75fr)!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-review-editor{padding:22px 24px 28px!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-review-preview{padding:22px 20px!important;background:var(--wish-card-2,#fff9fc)!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-review-preview>header{top:-22px!important;padding:2px 0 14px!important;background:var(--wish-card-2,#fff9fc)!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-review-preview h4{font-size:15px!important;font-weight:700!important;margin:0 0 5px!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-review-preview small{font-size:12px;line-height:1.6;}\n.rpcm-ltm-result-unified .rpcm-ltm-existing-group{background:var(--wish-card-2,#fff9fc)!important;border-radius:14px!important;padding:0 14px!important;margin:0 0 22px!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-existing-group>summary{padding:15px 4px!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-existing-group>summary h4{font-size:14px!important;font-weight:700!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-existing-group>summary h4 small{font-weight:500;color:var(--wish-fg-2,#907c8c);}\n.rpcm-ltm-result-unified .rpcm-ltm-review-group.is-new{border:0!important;margin:0!important;padding:0!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-review-group.is-new>header{margin:0 0 12px!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-review-group.is-new>header h4{font-size:15px!important;font-weight:750!important;margin:0!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-result-paste{padding:17px!important;border:1px solid var(--wish-line,#efdde7);background:var(--wish-card-2,#fff9fc)!important;border-radius:15px!important;margin-bottom:18px!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-result-paste label{font-size:13px!important;font-weight:700!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-result-paste textarea{min-height:148px!important;max-height:32vh;resize:vertical!important;border-radius:11px!important;margin-top:4px!important;padding:14px!important;font-size:13px!important;line-height:1.7!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-result-paste>div{justify-content:space-between!important;gap:8px!important;}\n.rpcm-ltm-result-unified [data-ltm-paste-file]{flex:1;min-width:0;max-width:260px;font-size:12px!important;}\n.rpcm-ltm-result-unified [data-ltm-paste-add]{background:var(--wish-accent-soft,#fcecf4)!important;border-color:var(--wish-accent-line,#ecc5d9)!important;color:var(--wish-accent-strong,#a14b7a)!important;font-weight:700!important;}\n.rpcm-ltm-result-unified [data-ltm-paste-status]{font-size:12px!important;line-height:1.6!important;overflow-wrap:anywhere;}\n.rpcm-ltm-result-unified .rpcm-ltm-bulk-card{border-radius:13px!important;overflow:hidden;margin-bottom:2px;}\n.rpcm-ltm-result-unified .rpcm-ltm-bulk footer{padding:14px 22px!important;background:var(--wish-card,#fff)!important;border-top:1px solid var(--wish-line,#efdde7)!important;gap:10px!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-bulk footer [data-ltm-bulk-status]{font-size:12px!important;color:var(--wish-fg-2,#907c8c)!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-bulk footer button{min-height:39px!important;border-radius:10px!important;font-weight:650!important;}\n.rpcm-ltm-result-unified :is(button,textarea,input):focus-visible,.rpcm-ltm-result-unified summary:focus-visible{outline:2px solid var(--wish-accent-strong,#b45b8d)!important;outline-offset:2px!important;}\n@media(max-width:800px){.rpcm-ltm-result-unified .rpcm-ltm-bulk{width:100vw!important;max-height:100dvh!important;height:100dvh!important;border-radius:0!important}.rpcm-ltm-result-unified .rpcm-ltm-review-layout{display:block!important;overflow:auto!important}.rpcm-ltm-result-unified .rpcm-ltm-review-editor{padding:16px!important}.rpcm-ltm-result-unified .rpcm-ltm-review-preview{padding:16px!important}.rpcm-ltm-result-unified .rpcm-ltm-bulk-header{padding:15px 16px!important}.rpcm-ltm-result-unified .rpcm-ltm-bulk footer{padding:12px 16px!important}.rpcm-ltm-result-unified [data-ltm-paste-file]{max-width:100%}}\n');
+  GM_addStyle('\n/* v0.15.27: generous paste area for long-term memory imports */\n.rpcm-ltm-result-unified .rpcm-ltm-review-editor .rpcm-ltm-result-paste textarea[data-ltm-paste]{height:clamp(300px,42vh,480px)!important;min-height:300px!important;max-height:none!important;resize:vertical!important;overflow-y:auto!important;box-sizing:border-box!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-review-editor .rpcm-ltm-result-paste{width:100%!important;box-sizing:border-box!important;}\n@media(max-width:800px){.rpcm-ltm-result-unified .rpcm-ltm-review-editor .rpcm-ltm-result-paste textarea[data-ltm-paste]{height:36dvh!important;min-height:240px!important;}}\n');
+  GM_addStyle('\n/* v0.15.27 — single-surface result import, matching manager panels */\n.rpcm-ltm-result-unified .rpcm-ltm-bulk{width:min(980px,calc(100vw - 44px))!important;max-height:min(88dvh,900px)!important;border-radius:18px!important}\n.rpcm-ltm-result-unified .rpcm-ltm-review-layout{display:block!important;overflow-y:auto!important;overflow-x:hidden!important;background:#fff!important}\n.rpcm-ltm-result-unified .rpcm-ltm-review-editor{padding:20px 28px 24px!important;overflow:visible!important;max-width:unset!important}\n.rpcm-ltm-result-unified .rpcm-ltm-review-preview{display:none!important}\n.rpcm-ltm-result-unified.rpcm-ltm-preview-open .rpcm-ltm-review-preview{display:block!important;margin:0 28px 24px!important;padding:18px 20px!important;border:1px solid var(--wish-line,#ecdbe5)!important;border-radius:13px!important;background:var(--wish-card-2,#fff9fc)!important}\n.rpcm-ltm-result-unified .rpcm-ltm-bulk-header{padding:19px 28px!important}\n.rpcm-ltm-result-unified .rpcm-ltm-existing-group{padding:0 16px!important;margin:0 0 18px!important;border:1px solid var(--wish-line,#ecdbe5)!important;background:#fff!important}\n.rpcm-ltm-result-unified .rpcm-ltm-existing-group>summary{display:flex!important;align-items:center!important;justify-content:space-between!important;min-height:46px!important;padding:8px 2px!important}\n.rpcm-ltm-result-unified .rpcm-ltm-existing-group>summary h4{font-size:14px!important}\n.rpcm-ltm-result-unified .rpcm-ltm-review-group.is-new>header{padding:0 2px 9px!important;margin:0!important}\n.rpcm-ltm-result-unified .rpcm-ltm-result-paste{padding:16px 18px!important;border:1px solid var(--wish-line,#ecdbe5)!important;background:var(--wish-card-2,#fff9fc)!important;border-radius:13px!important}\n.rpcm-ltm-result-unified .rpcm-ltm-result-paste textarea[data-ltm-paste]{height:clamp(240px,34dvh,380px)!important;min-height:240px!important;max-height:none!important;width:100%!important;border:1px solid var(--wish-line,#e8d7e2)!important;background:#fff!important;resize:vertical!important;font-size:14px!important;line-height:1.75!important}\n.rpcm-ltm-result-unified .rpcm-ltm-result-paste>div{display:flex!important;align-items:center!important;gap:12px!important;flex-wrap:wrap!important;margin-top:10px!important}\n.rpcm-ltm-result-unified [data-ltm-paste-file]{width:auto!important;max-width:none!important;flex:1 1 240px!important;border-radius:9px!important;background:#fff!important;border:1px solid var(--wish-line,#e8d7e2)!important;padding:6px!important}\n.rpcm-ltm-result-unified [data-ltm-paste-file]::file-selector-button{background:var(--wish-accent-soft,#fcecf4);border:1px solid var(--wish-accent-line,#ecc5d9);border-radius:7px;padding:7px 12px;margin-right:10px;color:var(--wish-accent-strong,#a14b7a);cursor:pointer;font:inherit}\n.rpcm-ltm-result-unified [data-ltm-paste-add]{min-height:39px!important;padding:8px 18px!important;border-radius:9px!important}\n.rpcm-ltm-result-unified .rpcm-ltm-bulk footer{padding:13px 28px!important}\n.rpcm-ltm-result-unified .rpcm-ltm-bulk footer button{min-width:94px!important}\n@media(max-width:700px){.rpcm-ltm-result-unified .rpcm-ltm-bulk{width:100vw!important;max-height:100dvh!important;height:100dvh!important;border-radius:0!important}.rpcm-ltm-result-unified .rpcm-ltm-review-editor{padding:15px!important}.rpcm-ltm-result-unified .rpcm-ltm-bulk-header{padding:15px!important}.rpcm-ltm-result-unified .rpcm-ltm-bulk footer{padding:12px 15px!important}.rpcm-ltm-result-unified.rpcm-ltm-preview-open .rpcm-ltm-review-preview{margin:0 15px 18px!important}.rpcm-ltm-result-unified .rpcm-ltm-result-paste textarea[data-ltm-paste]{height:32dvh!important;min-height:210px!important}}\n');
+  GM_addStyle('\n#rpcm-modal .rpcm-log-count-shortcut{grid-column:1 / -1;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;margin:10px 0;border:1px solid var(--wish-line,#ebd3e0);border-radius:12px;background:var(--wish-card,#fff);font-size:12px}\n#rpcm-modal .rpcm-log-count-shortcut strong{color:var(--wish-accent-strong,#a84d81);white-space:nowrap}\n#rpcm-modal .rpcm-log-count-label{white-space:nowrap;display:inline-flex;gap:6px;align-items:center}\n#rpcm-modal .rpcm-log-count-label select{min-width:65px;min-height:32px;border:1px solid var(--wish-line,#ead6e2);border-radius:8px;background:var(--wish-card,#fff);color:var(--wish-fg,#372f35);padding:4px 7px}\n@media(max-width:600px){#rpcm-modal .rpcm-log-count-shortcut{flex-direction:column;align-items:stretch}#rpcm-modal .rpcm-log-count-shortcut button{align-self:flex-end}#rpcm-modal .rpcm-log-count-label{min-width:calc(50% - 6px)}}\n');
+  GM_addStyle('\n#rpcm-modal .rpcm-context-refresh-shortcut{grid-column:1 / -1;display:flex;align-items:center;justify-content:space-between;gap:14px;padding:12px 14px;margin:0 0 10px;border:1px solid var(--wish-line,#ebd3e0);border-radius:12px;background:linear-gradient(135deg,var(--wish-card,#fff),var(--wish-accent-soft,#fff5f9));font-size:12px}\n#rpcm-modal .rpcm-context-refresh-shortcut>span{display:grid;gap:3px;min-width:0}\n#rpcm-modal .rpcm-context-refresh-shortcut b{color:var(--wish-accent-strong,#a84d81);font-size:12px}\n#rpcm-modal .rpcm-context-refresh-shortcut small{color:var(--wish-fg-2,#83747d);line-height:1.5;font-size:11px}\n#rpcm-modal .rpcm-context-refresh-shortcut button{flex:0 0 auto}\n@media(max-width:600px){#rpcm-modal .rpcm-context-refresh-shortcut{align-items:stretch;flex-direction:column}#rpcm-modal .rpcm-context-refresh-shortcut button{align-self:flex-end}}\n');
   function addLongTermStyles() {
     GM_addStyle(`.rpcm-ltm-native-review{border:1px solid var(--wish-line);border-radius:12px;padding:12px;display:grid;gap:8px}.rpcm-ltm-native-review header{display:flex;flex-direction:column;gap:4px}.rpcm-ltm-native-review header small,.rpcm-ltm-native-review [data-ltm-native-state]{color:var(--wish-fg-2)}.rpcm-ltm-native-list{max-height:220px;overflow:auto;display:grid;gap:5px}.rpcm-ltm-native-item{border:1px solid var(--wish-line);border-radius:8px;padding:8px}.rpcm-ltm-native-item summary{cursor:pointer;display:flex;justify-content:space-between;gap:10px}.rpcm-ltm-native-item summary span{min-width:0;overflow-wrap:anywhere}.rpcm-ltm-native-item p{white-space:pre-wrap;overflow-wrap:anywhere;margin:8px 0 0}.rpcm-ltm-native-item.is-deleted{opacity:.65}.rpcm-ltm-native-item.is-deleted summary small{color:#c33}`);
     GM_addStyle(`.rpcm-ltm-simple{padding:18px 22px;display:grid;gap:12px}.rpcm-ltm-simple h3{margin:0;font-size:17px}.rpcm-ltm-simple p{margin:0;color:var(--wish-fg-2)}.rpcm-ltm-simple label{display:grid;gap:7px;font-weight:600}.rpcm-ltm-simple textarea{width:100%;min-height:250px;box-sizing:border-box;resize:vertical;padding:12px;border-radius:10px;border:1px solid var(--wish-line);background:var(--wish-card);color:var(--wish-fg);font:inherit}.rpcm-ltm-simple-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.rpcm-ltm-simple-mode .rpcm-ltm-bulk-tabs,.rpcm-ltm-simple-mode .rpcm-ltm-review-editor>.rpcm-ltm-bulk-pane{display:none!important}.rpcm-ltm-simple-mode .rpcm-ltm-review-layout{grid-template-columns:minmax(0,1fr)!important}.rpcm-ltm-simple-mode .rpcm-ltm-review-preview{border-left:0!important;border-top:1px solid var(--wish-line);max-height:35vh}.rpcm-ltm-backdrop:not(.rpcm-ltm-simple-mode) .rpcm-ltm-simple{display:none!important}@media(max-width:700px){.rpcm-ltm-simple{padding:12px}.rpcm-ltm-simple-actions>*{max-width:100%}.rpcm-ltm-simple-mode .rpcm-ltm-review-preview{max-height:28vh}}`);
@@ -29000,6 +29385,8 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
     const aiExtras=main.querySelector('#rpcm-ai-extras');
     if (aiExtras) main.querySelectorAll('.rpcm-ai-launchbar').forEach(node=>aiExtras.appendChild(node));
     const overview=main.querySelector('.rpcm-overview');
+    const logShortcut=main.querySelector('.rpcm-log-count-shortcut');
+    if (overview && logShortcut) overview.prepend(logShortcut);
     if(overview){const panel=document.createElement('section');panel.id='rpcm-section-overview';overview.before(panel);[main.querySelector('.rpcm-summary'),overview,main.querySelector('.rpcm-update-overview'),main.querySelector('.rpcm-warnings'),main.querySelector('.rpcm-auto-active')].filter(Boolean).forEach(node=>panel.appendChild(node));const aiStatus=document.createElement('div');aiStatus.className='rpcm-pref-card rpcm-ai-memory-overview';aiStatus.innerHTML=aiMemoryOverview(state.currentRoom);panel.appendChild(aiStatus);aiStatus.querySelector('[data-ai-memory-open-settings]')?.addEventListener('click',()=>showWorkView(overlay,'tools',true));}
     bindRpcm74Controls(overlay,state.currentRoom);
     const tools = main.querySelector('#rpcm-section-tools');
@@ -29201,7 +29588,7 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
     const active=new Set(room.pending?activePendingItems(room.pending).filter(item=>item.group==='log-auto'||item.sourceSlotId==='logSummary').map(item=>String(item.sourceKey||'').replace(/^auto-log:/,'')):[]);
     const selected=new Set((room.manualLogSelectedKeys||[]).map(String));
     const pinned=new Set((room.autoLogPinnedKeys||[]).map(String));
-    const candidates=new Set(room.autoLogRecallEnabled?selectTimelineAwareRecentLogBlocks(rows,room,2).map(row=>String(row.key)):[]);
+    const candidates=new Set(room.autoLogRecallEnabled?selectTimelineAwareRecentLogBlocks(rows,room,recentLogInjectionCount(room)).map(row=>String(row.key)):[]);
     const status=row=>active.has(row.key)?'주입 중':pinned.has(row.key)?'항상 주입':selected.has(row.key)?'직접 선택':candidates.has(row.key)?'자동 후보':'보관 중';
     const card=row=>`<details class="rpcm-cal-card"><summary><strong>${esc(row.events||row.fullDate||'제목 없음')}</strong><span>${esc(status(row))}</span><small>${esc(row.fullDate||'날짜 미정')} · ${esc(String(row.body||'본문 없음').slice(0,110))}</small></summary><p>${esc(row.body||'본문 없음')}</p><small>${esc(row.timelineLabel||DEFAULT_LOG_TIMELINE)}</small></details>`;
     const backdrop=document.createElement('div');backdrop.id='rpcm-log-calendar-backdrop';
@@ -29369,7 +29756,7 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
     update:['수동 업데이트','범위 선택 → 작업자료 → 결과 가져오기 → Diff → 확인 후 저장 순서입니다. 생성만으로 기준점은 이동하지 않습니다.'],
     ai:['AI','API 작업은 실제 호출 시 사용량이 기록됩니다. AI가 만든 기억 결과는 검토와 적용을 거쳐야 저장됩니다.'],
     preferences:['설정','Manager 동작을 조절합니다. 각 항목의 적용 범위를 확인하세요. 기억 콘텐츠 자체는 여기서 수정하지 않습니다.'],
-    recall:['날짜로그 회수','활성 시간선의 최근 연속성 2개와 관련 로그 최대 5개를 용량 안에서 선택합니다. 직접 선택과 제외는 기억 화면에서 관리합니다.'],
+    recall:['날짜로그 회수','활성 시간선의 최근 날짜로그와 관련 로그를 설정한 개수만큼 용량 안에서 선택합니다. 직접 선택과 제외는 기억 화면에서 관리합니다.'],
     context:['AI 맥락 검토','관련 날짜로그 후보를 API로 다시 검토합니다. 실패하면 기본 검색을 사용합니다. 현재 방 설정입니다.'],
     guide:['지침','현재 방의 사용자 수정 지침을 우선합니다. 지침 보기나 복사는 저장값을 변경하지 않습니다.'],
   };
@@ -31531,6 +31918,8 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
               <div class="rpcm-overview-card"><small>용량 · 45,000자 / UTF-8 ${formatCount(APP.safeCarrierPayloadBytes)}B</small><strong>${formatCount(capacity.total)}자</strong><span>${esc(st.label)} · ${esc(carrierCapacityDetailText(room, capacity))}</span><div class="rpcm-overview-progress" role="progressbar" aria-label="carrier 글자 용량" aria-valuenow="${Math.max(0, Math.min(45000, capacity.total))}" aria-valuemin="0" aria-valuemax="45000"><i style="width:${Math.max(0, Math.min(100, capacity.total / 45000 * 100))}%"></i></div></div>
               <div class="rpcm-overview-card" data-lore-omitted="${loreOmitted}"><small>확인할 일</small><strong>${duplicateItemGroups.length + duplicateGroups.length + (storyReviewDue ? 1 : 0) + knowledgeConflictCount + (loreOmitted ? 1 : 0) + maintenanceExtraImmediate.length}건</strong><span>${[duplicateItemGroups.length ? '중복 물품 ' + duplicateItemGroups.length : '', duplicateGroups.length ? '중복 로그 ' + duplicateGroups.length : '', storyReviewDue ? '타임라인 검토' : '', knowledgeConflictCount ? '인지 카드 충돌' : '', loreOmitted ? '자료집 용량 제외' : '', ...maintenanceExtraImmediate.map(entry => entry.title)].filter(Boolean).join(' · ') || '현재 표시할 검토 알림 없음'}</span>${duplicateItemGroups.length || duplicateGroups.length || storyReviewDue || knowledgeConflictCount || loreOmitted || maintenanceExtraImmediate.length ? `<div class="rpcm-overview-issues">${duplicateGroups.length ? `<button type="button" data-overview-issue="logs">중복 로그 ${duplicateGroups.length}건</button>` : ''}${duplicateItemGroups.length ? `<button type="button" data-overview-issue="items">중복 물품 ${duplicateItemGroups.length}건</button>` : ''}${storyReviewDue ? '<button type="button" data-overview-issue="timeline">타임라인 검토</button>' : ''}${knowledgeConflictCount ? `<button type="button" data-overview-issue="knowledge">인지 충돌 ${knowledgeConflictCount}건</button>` : ''}${loreOmitted ? `<button type="button" data-overview-issue="lore">자료집 용량 제외 ${loreOmitted}개</button>` : ''}${maintenanceExtraImmediate.map((entry, index) => `<button type="button" data-overview-maintenance="${index}">${esc(entry.title)}</button>`).join('')}</div>` : ''}<div class="rpcm-maintenance-actions"><em data-maintenance-count>정리 추천 ${maintenanceReport.updates.length + maintenanceReport.capacityItems.length}건</em><button type="button" class="rpcm-btn secondary" id="rpcm-maintenance-open">정리 점검</button></div></div>
             </div>
+            <div class="rpcm-context-refresh-shortcut" role="group" aria-label="최신 RP 기준 주입 재검사"><span><b>↻ 최신 RP 기준 주입 재검사</b><small>최근 3회 USER↔AI 흐름을 다시 읽고 인물·물품·자료집·인물정보·날짜로그 선택을 최신화합니다.</small></span><button type="button" class="rpcm-btn secondary" id="rpcm-context-refresh">주입 내용 새로고침</button></div>
+            <div class="rpcm-log-count-shortcut" role="group" aria-label="날짜로그 주입 바로가기"><span>📅 날짜로그 자동 주입 <strong>최근 ${recentLogInjectionCount(room)}개 · 관련 최대 ${relatedLogInjectionCount(room)}개</strong></span><button type="button" class="rpcm-btn secondary" id="rpcm-log-count-quick">개수 조절 ↗</button></div>
             ${renderManualUpdateOverviewHtml(room)}
             ${renderManualUpdateCenterHtml(room)}
             <details class="rpcm-summary">
@@ -31599,7 +31988,7 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
               <section id="rpcm-section-timeline" class="rpcm-timeline-section"><div class="rpcm-story-launchbar${storyReviewDue ? ' is-review-due' : ''}${storyStats.enabled ? '' : ' is-injection-off'}"><div><strong>🕰️ 연속성 타임라인${room.storyTimelineReviewSettings?.menuBadge !== false && storyUnreviewedCount ? ` · ${storyUnreviewedCount}턴` : ''}${storyReviewDue ? ' · 검토 권장' : ''}</strong><span>${storyStats.count ? (storyStats.enabled ? `${storyStats.count}개 카드 · 주입 ${storyStats.injectCount}개 · ${formatCount(storyStats.chars)}자` : `${storyStats.count}개 카드 · 전체 주입 OFF · 카드별 포함 ${storyStats.eligibleCount}개 유지`) : '아직 카드 없음'} · 모든 세계선 통합 관리</span></div><label class="rpcm-story-injection-toggle" title="카드별 주입 설정은 유지하고 타임라인 전체 주입만 켜거나 끅니다."><input type="checkbox" id="rpcm-story-injection-enabled" ${storyStats.enabled ? 'checked' : ''}><span>주입 ${storyStats.enabled ? 'ON' : 'OFF'}</span></label><button type="button" class="rpcm-mini" id="rpcm-story-direct-replace">원문 붙여넣기</button><button type="button" class="rpcm-mini" id="rpcm-story-manage">카드로 이동</button></div>
               ${renderInlineTimelineHtml(room)}</section>
               <section id="rpcm-memory-logs" class="rpcm-memory-pane" data-memory-content="logs" role="tabpanel"><div class="rpcm-memory-pane-head"><div><strong>날짜로그</strong><span>최신 기록과 관련 기록을 골라 주입합니다.</span></div><button type="button" class="rpcm-btn secondary rpcm-guide-entry" data-rpcm-guide="logSummary">${esc(commonGuideButtonLabel(room, 'logSummary'))}</button></div>
-              <div class="rpcm-auto-panel rpcm-log-auto-panel">${hasMultipleLogTimelines ? `<label class="rpcm-active-timeline-picker"><span class="rpcm-active-timeline-label">🗂️ 다음 저장</span><select id="rpcm-active-log-timeline-main" aria-label="다음 로그 저장 시간선">${logTimelineOptions}</select></label>` : ''}<label><input type="checkbox" id="rpcm-auto-log" ${room.autoLogRecallEnabled ? 'checked' : ''}> 최근·관련 로그 자동 선택 ${rpcmHelpButton('recall')}</label><label>관련도 기준 <select id="rpcm-auto-log-relevance"><option value="strict" ${logRelevanceSetting(room)==='strict'?'selected':''}>엄격</option><option value="balanced" ${logRelevanceSetting(room)==='balanced'?'selected':''}>균형</option><option value="broad" ${logRelevanceSetting(room)==='broad'?'selected':''}>넓게</option></select></label><button type="button" class="rpcm-lib-small" id="rpcm-log-date-fix">🛠 날짜 수정</button><button type="button" class="rpcm-lib-small" id="rpcm-log-calendar-open">🗓️ 날짜 달력</button><button type="button" class="rpcm-lib-small" id="rpcm-log-manage">✍️ 로그 관리${manualLogStats.count ? ` (직접 ${manualLogStats.count})` : ''}</button></div>${manualLogStats.count ? `<div class="rpcm-log-help"><b>직접 주입 중</b> ${manualLogStats.count}개 · ${formatCount(manualLogStats.chars)}자 · 즐겨찾기·항상 주입·직접 주입 로그에서 빠르게 넣고 뺄 수 있습니다.</div>` : ''}
+              <div class="rpcm-auto-panel rpcm-log-auto-panel">${hasMultipleLogTimelines ? `<label class="rpcm-active-timeline-picker"><span class="rpcm-active-timeline-label">🗂️ 다음 저장</span><select id="rpcm-active-log-timeline-main" aria-label="다음 로그 저장 시간선">${logTimelineOptions}</select></label>` : ''}<label><input type="checkbox" id="rpcm-auto-log" ${room.autoLogRecallEnabled ? 'checked' : ''}> 최근·관련 로그 자동 선택 ${rpcmHelpButton('recall')}</label><label class="rpcm-log-count-label">최근 로그 <select id="rpcm-log-recent-count" aria-label="자동 주입할 최근 날짜로그 개수">${logCountOptionsHtml(recentLogInjectionCount(room))}</select></label><label class="rpcm-log-count-label">관련 로그 최대 <select id="rpcm-log-related-count" aria-label="자동 주입할 관련 날짜로그 최대 개수">${logCountOptionsHtml(relatedLogInjectionCount(room))}</select></label><label>관련도 기준 <select id="rpcm-auto-log-relevance"><option value="strict" ${logRelevanceSetting(room)==='strict'?'selected':''}>엄격</option><option value="balanced" ${logRelevanceSetting(room)==='balanced'?'selected':''}>균형</option><option value="broad" ${logRelevanceSetting(room)==='broad'?'selected':''}>넓게</option></select></label><button type="button" class="rpcm-lib-small" id="rpcm-log-date-fix">🛠 날짜 수정</button><button type="button" class="rpcm-lib-small" id="rpcm-log-calendar-open">🗓️ 날짜 달력</button><button type="button" class="rpcm-lib-small" id="rpcm-log-manage">✍️ 로그 관리${manualLogStats.count ? ` (직접 ${manualLogStats.count})` : ''}</button></div>${manualLogStats.count ? `<div class="rpcm-log-help"><b>직접 주입 중</b> ${manualLogStats.count}개 · ${formatCount(manualLogStats.chars)}자 · 즐겨찾기·항상 주입·직접 주입 로그에서 빠르게 넣고 뺄 수 있습니다.</div>` : ''}
               <div id="rpcm-log-summary-slot"></div></section>
             </div>
 
@@ -31629,7 +32018,7 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
             <div class="rpcm-section" id="rpcm-section-item">
               <div class="rpcm-section-head rpcm-item-head"><div><div class="rpcm-section-title">📦 중요 물품</div><details class="rpcm-section-details"><summary>물품 정리 · 사용 방법</summary><div class="rpcm-section-desc">폴더로 물품을 정리하고, RP에서 제목이나 감지어가 등장한 물품만 자동 선택할 수 있습니다. 중복 물품은 확인 후 정리합니다. 삭제 선택은 주입 체크와 별개입니다.</div></details></div><div class="rpcm-charlib-actions"><button class="rpcm-add-btn rpcm-add-primary" id="rpcm-add-item">＋ 물품 추가</button><button type="button" class="rpcm-add-btn" id="rpcm-items-direct-replace">전체 원문 붙여넣기</button><button type="button" class="rpcm-add-btn" id="rpcm-item-ai-folder">AI 폴더 정리</button><details class="rpcm-section-more"><summary>물품 도구</summary><div><button class="rpcm-add-btn" id="rpcm-import-items">목록 붙여넣기</button><button class="rpcm-add-btn" id="rpcm-item-collapse-all">모두 접기</button><button class="rpcm-add-btn" id="rpcm-items-raw-preview">전체 원문 보기</button><button class="rpcm-add-btn" id="rpcm-items-copy-all">전체 원문 복사</button></div></details></div></div>
               <details class="rpcm-item-bulkbar"><summary>삭제 선택 관리 <span id="rpcm-item-selected-count" role="status">0개</span></summary><div><button type="button" class="rpcm-add-btn" id="rpcm-items-select-all">전체 선택</button><button type="button" class="rpcm-add-btn" id="rpcm-items-clear-selection">선택 해제</button><button type="button" class="rpcm-add-btn rpcm-item-bulk-delete" id="rpcm-items-delete-selected" disabled>선택 삭제</button></div></details>
-              <div class="rpcm-auto-panel"><label><input type="checkbox" id="rpcm-auto-item" ${room.autoItemDetection !== false ? 'checked' : ''}> 물품 언급 자동 주입</label><label><input type="checkbox" id="rpcm-auto-item-reset" ${room.autoItemResetOnReappear !== false ? 'checked' : ''}> 다시 언급되면 유지턴 리셋</label><details class="rpcm-item-import-help"><summary>감지어·붙여넣기 형식 보기</summary><div class="rpcm-auto-note">물품 이름으로 감지어를 만들고, 추가 표현은 각 항목의 ‘감지어·선택 설정’에서 관리합니다. 감지어는 AI 주입 내용에서 제외됩니다.</div><div class="rpcm-item-format-guide"><strong>목록 형식</strong><code>- **물품 이름｜날짜/시점**</code><span>다음 줄에 설명을 적으면 항목별로 나뉩니다.</span></div></details></div>
+              <div class="rpcm-auto-panel"><label><input type="checkbox" id="rpcm-auto-item" ${room.autoItemDetection !== false ? 'checked' : ''}> 물품 언급 자동 주입</label><label><input type="checkbox" id="rpcm-auto-item-reset" ${room.autoItemResetOnReappear !== false ? 'checked' : ''}> 다시 언급되면 유지턴 리셋</label><details class="rpcm-item-import-help"><summary>감지어·붙여넣기 형식 보기</summary><div class="rpcm-auto-note">물품의 정확한 이름 또는 직접 등록한 고유 별칭이 최근 RP에서 언급될 때만 자동 선택합니다. 제목의 일반 단어 조각으로는 선택하지 않습니다. 📌 고정이나 직접 체크는 우선합니다. 감지어는 AI 주입 내용에서 제외됩니다.</div><div class="rpcm-item-format-guide"><strong>목록 형식</strong><code>- **물품 이름｜날짜/시점**</code><span>다음 줄에 설명을 적으면 항목별로 나뉩니다.</span></div></details></div>
               ${duplicateItemGroups.length ? '<div class="rpcm-item-duplicate-notice" role="alert"><div><strong>⚠ 중복 물품 ' + duplicateItemGroups.length + '개 그룹</strong><span>같은 이름의 물품을 확인하고 모두 유지하거나 하나를 남길 수 있습니다.</span></div><button type="button" class="rpcm-btn secondary" id="rpcm-item-review-duplicates">선택 정리</button></div>' : ''}
               <div id="rpcm-item-slots"></div>
             </div>
@@ -31940,7 +32329,7 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
           ${slot.group === 'item' ? `<label class="rpcm-item-folder-field"><span>폴더</span><input class="rpcm-item-folder-input" list="${esc(itemFolderListId)}" value="${esc(slot.itemFolder || '')}" placeholder="폴더 이름 입력 또는 기존 폴더 선택"><datalist id="${esc(itemFolderListId)}">${itemFolderOptions.map(name => `<option value="${esc(name)}"></option>`).join('')}</datalist></label>` : ''}
           ${slot.group === 'extra' ? `<label class="rpcm-extra-category-field"><span>카테고리</span><input class="rpcm-extra-category-input" list="${esc(extraCategoryListId)}" value="${esc(slot.extraCategory || '')}" placeholder="예: OOC · 문체 · 출력 규칙 (비우면 미분류)"><datalist id="${esc(extraCategoryListId)}">${extraCategoryNames.map(name => `<option value="${esc(name)}"></option>`).join('')}</datalist></label>` : ''}
           ${slot.group === 'item' ? `<details class="rpcm-item-advanced"><summary>감지어 · 선택 설정 · 작성 도움</summary>` : ''}
-          ${slot.group === 'character' || slot.group === 'item' ? `<div class="rpcm-auto-terms"><strong>${slot.group === 'item' ? '물품 자동 감지어' : '자동 선택 감지어'}</strong> · ${esc(automaticTerms.slice(0, 10).join(' · ') || (slot.group === 'item' ? '물품 이름을 입력하면 자동 생성됩니다.' : '캐릭터 이름을 입력하면 자동 생성됩니다.'))}${automaticTerms.length > 10 ? ' · …' : ''}</div><div class="rpcm-alias-row"><input class="rpcm-alias-input" value="${esc((slot.aliases || []).join(', '))}" placeholder="${slot.group === 'item' ? '추가 감지어 (주입 안 됨): 별칭·줄임말·관련 표현' : '자동 선택용 별칭 (주입 안 됨): 애칭·약칭·호칭'}"><label class="rpcm-auto-pin" title="RP 언급 여부와 관계없이 현재 주입을 계속 켜둡니다."><input type="checkbox" class="rpcm-auto-pinned" ${slot.autoPinned ? 'checked' : ''}> 📌 항상 주입 선택</label><label class="rpcm-auto-exclude" title="RP에 등장해도 자동으로 선택하지 않습니다. 직접 체크해 주입할 수 있습니다."><input type="checkbox" class="rpcm-auto-excluded" ${slot.autoExcluded ? 'checked' : ''}> 🚫 자동 선택 제외</label></div>` : ''}
+          ${slot.group === 'character' || slot.group === 'item' ? `<div class="rpcm-auto-terms"><strong>${slot.group === 'item' ? '물품 자동 감지어' : '자동 선택 감지어'}</strong> · ${esc(automaticTerms.slice(0, 10).join(' · ') || (slot.group === 'item' ? '물품 이름을 입력하면 자동 생성됩니다.' : '캐릭터 이름을 입력하면 자동 생성됩니다.'))}${automaticTerms.length > 10 ? ' · …' : ''}</div><div class="rpcm-alias-row"><input class="rpcm-alias-input" value="${esc((slot.aliases || []).join(', '))}" placeholder="${slot.group === 'item' ? '추가 감지어 (주입 안 됨): 별칭·줄임말·관련 표현' : '자동 선택용 별칭 (주입 안 됨): 애칭·약칭·호칭'}"><label class="rpcm-auto-pin" title="RP 언급 여부와 관계없이 현재 주입을 계속 켜둡니다."><input type="checkbox" class="rpcm-auto-pinned" ${slot.autoPinned ? 'checked' : ''}> 📌 항상 주입 선택</label><label class="rpcm-auto-exclude" title="RP에 등장해도 자동 선택하지 않습니다. 직접 체크하거나 📌 고정하면 주입할 수 있습니다."><input type="checkbox" class="rpcm-auto-excluded" ${slot.autoExcluded ? 'checked' : ''}> 🚫 자동 선택 제외</label></div>` : ''}
           ${slot.id === 'logSummary' ? `<div class="rpcm-slot-options"><span>선택된 로그 유지 횟수</span><select class="rpcm-slot-retention" title="선택된 날짜로그를 앞으로 몇 번의 AI 응답에 연속 주입할지 설정 · 만료 후 자동 종료 · 주기 반복 아님">${retentionOptionsHtml(slot.retentionTurns)}</select><span>AI 응답마다 1턴 차감 · 만료 후 자동 종료 · 주기 반복 아님</span></div>` : ''}
           ${slot.group === 'item' ? `<div class="rpcm-item-template-guide"><strong>작성 틀</strong><span>내용은 = 뒤에 입력합니다. 작성 내용은 해당 물품의 주입 문구로 보관됩니다.</span><small data-item-template-example>예: 보관 위치=서랍 · 정보 범위=주인공 KNOWS</small></div></details>` : ''}
           <div class="rpcm-editor-actions">${slot.group === 'item' ? `<span class="rpcm-item-edit-count">${formatCount(String(slot.content || '').length)}자</span>` : ''}${slot.group === 'item' ? '<button type="button" class="rpcm-editor-action rpcm-item-template-button" data-item-template>작성 틀 넣기</button>' : ''}<button type="button" class="rpcm-editor-action" data-editor-copy>복사</button><button type="button" class="rpcm-editor-action" data-editor-select>전체 선택</button><button type="button" class="rpcm-editor-action" data-editor-clean>붙여넣기 정리</button><span class="rpcm-editor-hint">Ctrl+Z 되돌리기</span>${slot.group !== 'extra' ? `<button type="button" class="rpcm-editor-action rpcm-focus-toggle" data-editor-focus>크게 편집</button>` : ''}</div>
@@ -32301,14 +32690,16 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
         if (titleInput) slot.title = titleInput.value.trim() || fallbackTitle;
         if (retentionInput) slot.retentionTurns = normalizeRetentionTurns(retentionInput.value);
         const desired = cb.checked;
+        const previousManualOverride = slot.manualInjectionOverride;
+        if (slot.group === 'character' || slot.group === 'item') slot.manualInjectionOverride = desired ? 'on' : 'off';
         if (!room.pending) { slot.enabled = desired; await saveRoom(room); refreshStatsOnly(); return; }
         const question = desired
           ? `현재 컨텍스트가 주입 중입니다.\n‘${slot.title}’ 항목을 현재 주입에 추가할까요?\n확인하면 이 항목의 ${retentionLabel(slot.retentionTurns)} 유지 주기가 지금부터 새로 시작됩니다.`
           : `현재 컨텍스트가 주입 중입니다.\n‘${slot.title}’ 항목을 현재 주입에서 제거할까요?`;
-        if (!confirm(question)) { cb.checked = !desired; slot.enabled = !desired; refreshStatsOnly(); return; }
+        if (!confirm(question)) { cb.checked = !desired; slot.enabled = !desired; slot.manualInjectionOverride = previousManualOverride; refreshStatsOnly(); return; }
         cb.disabled = true;
         try { await setSlotEnabledDuringPending(room, slot, desired); }
-        catch (e) { cb.checked = !desired; notify(`주입 변경 실패: ${e.message}`, 'error', 6500); }
+        catch (e) { cb.checked = !desired; slot.manualInjectionOverride = previousManualOverride; notify(`주입 변경 실패: ${e.message}`, 'error', 6500); }
         finally { cb.disabled = false; renderModalIfOpen(); }
       };
       if (retentionInput) retentionInput.onchange = async () => {
@@ -33133,6 +33524,40 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
 
     const autoLogCb = overlay.querySelector('#rpcm-auto-log');
     const autoLogRelevance = overlay.querySelector('#rpcm-auto-log-relevance');
+    overlay.querySelector('#rpcm-log-count-quick')?.addEventListener('click', () => showWorkView(overlay,'logs',true));
+    overlay.querySelector('#rpcm-context-refresh')?.addEventListener('click', async event => {
+      const button = event.currentTarget;
+      const original = button.textContent;
+      button.disabled = true;
+      button.textContent = '최신 RP 읽는 중…';
+      try {
+        const result = await refreshInjectionSelectionFromLatestRp(room);
+        const sync = result.slotSync || {added:0,removed:0,updated:0};
+        notify(`주입 재검사 완료 · 캐릭터 ${result.characters} · 중요 물품 ${result.items} · 인물정보 ${result.people}${result.pending ? ` · 현재 주입 정리 +${sync.added}/−${sync.removed}/갱신 ${sync.updated}` : ' · 다음 주입 후보 갱신'}`, 'success', 5600);
+        renderModalIfOpen();
+      } catch (error) {
+        notify(`주입 내용 새로고침 실패: ${error.message}`, 'error', 6500);
+        if (button.isConnected) { button.disabled = false; button.textContent = original; }
+      }
+    });
+    for (const [id,field,defaultCount] of [['rpcm-log-recent-count','autoLogRecentBlocks',2],['rpcm-log-related-count','autoLogRelatedBlocks',APP.defaultRelatedLogBlocks]]) {
+      const select=overlay.querySelector('#'+id);
+      if (!select) continue;
+      select.onchange=async()=>{
+        const old=room[field];
+        const next=Math.max(0,Math.min(10,Number(select.value)||0));
+        if(room.pending && room.autoLogRecallEnabled && !confirm(`현재 RP 주입 중입니다. 날짜로그 ${field==='autoLogRecentBlocks'?'최근':'관련'} 자동 개수를 ${next}개로 바꾸어 주입문에 반영할까요?\n직접 주입하거나 고정한 날짜로그는 그대로 유지됩니다.`)){
+          select.value=String(old??defaultCount);return;
+        }
+        room[field]=next;
+        try{
+          if(room.pending && room.autoLogRecallEnabled) await rebuildPendingLogItems(room,'log-count-change');
+          await saveRoom(room);
+          notify(`날짜로그 자동 선택: 최근 ${recentLogInjectionCount(room)}개 · 관련 최대 ${relatedLogInjectionCount(room)}개`, 'success',3500);
+          renderModalIfOpen();
+        }catch(error){room[field]=old;select.value=String(old??defaultCount);notify(`날짜로그 개수 저장/반영 실패: ${error.message}`, 'error',6500);}
+      };
+    }
     if (autoLogCb) autoLogCb.onchange = async () => {
       const previous = !!room.autoLogRecallEnabled;
       const desired = autoLogCb.checked;
@@ -33568,17 +33993,16 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
         readModalIntoRoom();
         await saveRoom(room);
         const available = extraSlotsForLibrary(room);
-        if (!available.length) { notify('내용이 입력된 기타 항목이 없습니다.', 'warn'); return; }
+        const folders = extraRoomFolderNames(room);
+        if (!folders.length) { notify('저장할 기타 폴더가 없습니다.', 'warn'); return; }
 
-        const choice = await openCharacterSelectionDialog({
-          title: '설정집에 저장할 기타 항목 선택',
-          description: '체크한 기타 항목만 선택한 설정집에 저장/갱신합니다.',
+        const choice = await openExtraFolderSelectionDialog({
+          title: '저장할 설정집 폴더 선택',
+          description: '성인지침·문체·유저노트 등 폴더별로 체크하세요. 폴더를 펼치면 하위 항목 원문도 확인할 수 있습니다.',
           items: available,
-          confirmText: '선택 항목 저장',
+          folders,
+          confirmText: '선택 폴더 저장',
           preserveOption: true,
-          preserveDefault: true,
-          itemFallback: '기타',
-          preserveText: '설정집에 이미 있는 미선택 기타 항목은 그대로 유지',
         });
         if (!choice) return;
 
@@ -33595,6 +34019,7 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
         if (!existing && lastLib && normalizedLibraryLabel(extraLibraryDisplayName(lastLib)) === nameKey) existing = lastLib;
         const scopeId = existing?.scopeId || extraPresetScopeIdFromName(presetName);
         const merged = mergeExtraLibraryItems(existing?.extras || [], choice.items, choice.preserve);
+        const mergedFolders = [...new Set([...(choice.preserve ? extraSavedFolderNames(existing) : []), ...choice.folders, ...extraLibraryFolderGroups(merged).keys()])];
         await saveCharacterLibrary({
           ...(existing || {}),
           scopeId,
@@ -33604,11 +34029,12 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
           sourceLabel: room.label || existing?.sourceLabel || '',
           sourceLabels: [...new Set([...(existing?.sourceLabels || []), room.label].filter(Boolean))],
           extras: merged,
+          folders: mergedFolders,
           createdAt: existing?.createdAt || nowIso(),
         });
         room.lastExtraLibraryId = scopeId;
         await saveRoom(room);
-        notify(`기타 설정집 ‘${presetName}’ 저장 완료 · 선택 ${choice.items.length}개 · 총 ${merged.length}개`, 'success', 5500);
+        notify(`기타 설정집 ‘${presetName}’ 저장 완료 · 폴더 ${mergedFolders.length}개 · 항목 ${merged.length}개`, 'success', 5500);
       } catch (e) { notify(`기타 설정집 저장 실패: ${e.message}`, 'error', 6000); }
     };
 
@@ -33623,18 +34049,18 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
         const library = await openLibraryPickerDialog(libraries, { title: '불러올 기타 설정집 선택', confirmText: '선택한 설정집 열기', mode: 'extra' });
         if (!library) return;
 
-        const choice = await openCharacterSelectionDialog({
-          title: '현재 방으로 불러올 기타 항목 선택',
-          description: `${extraLibraryDisplayName(library)} · 체크한 항목만 현재 방에 추가/갱신합니다.`,
-          items: library.extras,
-          confirmText: '선택 항목 불러오기',
-          itemFallback: '기타',
+        const choice = await openExtraFolderSelectionDialog({
+          title: '현재 방으로 불러올 설정집 폴더 선택',
+          description: `${extraLibraryDisplayName(library)} · 선택한 폴더와 내부 항목을 원래 카테고리에 그대로 불러옵니다.`,
+          items: library.extras || [],
+          folders: extraSavedFolderNames(library),
+          confirmText: '선택 폴더 불러오기',
         });
         if (!choice) return;
-        const result = applySelectedExtraLibraryToRoom(room, choice.items);
+        const result = applySelectedExtraLibraryToRoom(room, choice.items, choice.folders);
         room.lastExtraLibraryId = library.scopeId;
         await saveRoom(room);
-        notify(`‘${extraLibraryDisplayName(library)}’ 불러오기 완료 · ${result.count}개 (추가 ${result.added}, 갱신 ${result.updated}) · 체크 해제 상태`, 'success', 6000);
+        notify(`‘${extraLibraryDisplayName(library)}’ 불러오기 완료 · 폴더 ${choice.folders.length}개 · 항목 ${result.count}개 (추가 ${result.added}, 갱신 ${result.updated})`, 'success', 6000);
         renderModalIfOpen();
       } catch (e) { notify(`기타 설정집 불러오기 실패: ${e.message}`, 'error', 6000); }
     };
