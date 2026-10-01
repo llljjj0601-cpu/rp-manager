@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🪽위시 RP Manager
 // @namespace    local.rp.context.manager
-// @version      0.15.27
+// @version      0.16.2
 // @description  장기 RP용 현재상태·날짜로그·연속성 타임라인·캐릭터 설정을 관리하고, 검수형 AI 생성과 필요한 컨텍스트 자동 주입을 지원합니다.
 // @author       User
 // @license      All Rights Reserved
@@ -43,13 +43,13 @@
   // 버전별 키를 쓰면 구버전과 신버전이 동시에 설치됐을 때 둘 다 실행될 수 있습니다.
   // 모든 버전이 공유하는 고정 키로 중복 실행을 막습니다.
   if (window.__WISH_RP_MANAGER_LOADED__) return;
-  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.15.27', loadedAt: Date.now() };
+  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.16.2', loadedAt: Date.now() };
   // 같은 페이지에 남아 있는 v0.8.10 복사본이 뒤늦게 시작되는 경우도 차단합니다.
   window.__RP_MANAGER_0810_LOADED__ = true;
 
   const APP = {
     name: '🪽위시 RP Manager',
-    version: '0.15.27',
+    version: '0.16.2',
     dbName: 'RPContextManagerDB',
     dbVersion: 2,
     storeName: 'rooms',
@@ -4662,7 +4662,7 @@ USER 캐릭터의 다음 항목은 직접 RP, USER의 명시적 서술 또는 �
   }
 
   function aiFeatureStatusLabel(feature) {
-    return feature === 'longTermManualFirst' ? '장기기억 1차 수동' : feature === 'longTermAutoFirst' ? '장기기억 1차 자동' : feature === 'longTermSecond' ? '장기기억 2차' : feature === 'longTermNative' ? 'native 장기기억 정리' : feature === 'timeline' ? '연속성 타임라인' : feature === 'context' ? 'AI 맥락 검토' : feature === 'itemFolder' ? '중요 물품 폴더 정리' : feature === 'utility' ? 'AI 어시스턴트' : feature === 'responseRefiner' ? '응답교정' : 'AI 요약';
+    return feature === 'semanticIndex' ? '의미 검색 준비' : feature === 'semanticQuery' ? '의미 검색 query' : feature === 'longTermManualFirst' ? '장기기억 1차 수동' : feature === 'longTermAutoFirst' ? '장기기억 1차 자동' : feature === 'longTermSecond' ? '장기기억 2차' : feature === 'longTermNative' ? 'native 장기기억 정리' : feature === 'timeline' ? '연속성 타임라인' : feature === 'context' ? 'AI 맥락 검토' : feature === 'itemFolder' ? '중요 물품 폴더 정리' : feature === 'utility' ? 'AI 어시스턴트' : feature === 'responseRefiner' ? '응답교정' : 'AI 요약';
   }
 
   function classifyAiFailure(error) {
@@ -4802,7 +4802,7 @@ USER 캐릭터의 다음 항목은 직접 RP, USER의 명시적 서술 또는 �
     const source = hasStoredUsage ? room.aiApiUsage : {};
     const sourceFeatures = source.features && typeof source.features === 'object' ? source.features : {};
     const features = {};
-    for (const feature of ['summary','timeline','context','itemFolder','utility','responseRefiner','longTermManualFirst','longTermAutoFirst','longTermSecond','longTermNative']) {
+    for (const feature of ['summary','timeline','context','itemFolder','utility','responseRefiner','longTermManualFirst','longTermAutoFirst','longTermSecond','longTermNative','semanticIndex','semanticQuery']) {
       const saved = sourceFeatures[feature] && typeof sourceFeatures[feature] === 'object' ? sourceFeatures[feature] : {};
       features[feature] = {
         calls:Math.max(0, Number(saved.calls) || 0),
@@ -4814,7 +4814,7 @@ USER 캐릭터의 다음 항목은 직접 RP, USER의 명시적 서술 또는 �
       };
     }
     let history = (Array.isArray(source.history) ? source.history : []).filter(item => item && typeof item === 'object').slice(0, AI_ROOM_USAGE_HISTORY_LIMIT).map(item => ({
-      id:String(item.id || ''), at:String(item.at || ''), feature:['summary','timeline','context','itemFolder','utility','responseRefiner','longTermManualFirst','longTermAutoFirst','longTermSecond','longTermNative'].includes(item.feature) ? item.feature : 'summary',
+      id:String(item.id || ''), at:String(item.at || ''), feature:['summary','timeline','context','itemFolder','utility','responseRefiner','longTermManualFirst','longTermAutoFirst','longTermSecond','longTermNative','semanticIndex','semanticQuery'].includes(item.feature) ? item.feature : 'summary',
       provider:String(item.provider || ''), model:String(item.model || ''), inputTokens:Math.max(0, Number(item.inputTokens) || 0), outputTokens:Math.max(0, Number(item.outputTokens) || 0),
       costUsd:item.costUsd == null || !Number.isFinite(Number(item.costUsd)) ? null : Math.max(0, Number(item.costUsd)), estimated:!!item.estimated, callCount:Math.max(1, Number(item.callCount) || 1),
     }));
@@ -4871,13 +4871,14 @@ USER 캐릭터의 다음 항목은 직접 RP, USER의 명시적 서술 또는 �
 
   function recordRoomAiUsage(room, feature, provider, model, usage = {}, pricing = {}, source = {}) {
     if (!room || typeof room !== 'object') return null;
-    const normalizedFeature = ['summary','timeline','context','itemFolder','utility','responseRefiner','longTermManualFirst','longTermAutoFirst','longTermSecond','longTermNative'].includes(feature) ? feature : 'summary';
+    const normalizedFeature = ['summary','timeline','context','itemFolder','utility','responseRefiner','longTermManualFirst','longTermAutoFirst','longTermSecond','longTermNative','semanticIndex','semanticQuery'].includes(feature) ? feature : 'summary';
     const reportedInput = Math.max(0, Number(usage.inputTokens) || 0);
     const reportedOutput = Math.max(0, Number(usage.outputTokens) || 0);
     const inputEstimated = reportedInput <= 0;
-    const outputEstimated = reportedOutput <= 0;
+    const embedding=['semanticIndex','semanticQuery'].includes(normalizedFeature);
+    const outputEstimated = !embedding && reportedOutput <= 0;
     const inputTokens = inputEstimated ? Math.max(1, Math.ceil((String(source.systemInstruction || '').length + String(source.prompt || '').length) / 3)) : reportedInput;
-    const outputTokens = outputEstimated ? Math.max(1, Math.ceil(String(source.text || '').length / 3)) : reportedOutput;
+    const outputTokens = embedding ? 0 : outputEstimated ? Math.max(1, Math.ceil(String(source.text || '').length / 3)) : reportedOutput;
     const estimated = inputEstimated || outputEstimated;
     const costUsd = estimateAiCostUsd({ inputTokens, outputTokens }, pricing);
     const state = normalizeRoomAiUsage(room);
@@ -4901,7 +4902,7 @@ USER 캐릭터의 다음 항목은 직접 RP, USER의 명시적 서술 또는 �
   function renderRoomAiUsageHtml(room) {
     const usage = normalizeRoomAiUsage(room);
     const total = roomAiUsageTotals(room);
-    const featureHtml = ['summary','timeline','context','itemFolder','utility','responseRefiner','longTermManualFirst','longTermAutoFirst','longTermSecond','longTermNative'].map(feature => {
+    const featureHtml = ['summary','timeline','context','itemFolder','utility','responseRefiner','longTermManualFirst','longTermAutoFirst','longTermSecond','longTermNative','semanticIndex','semanticQuery'].map(feature => {
       const item = usage.features[feature];
       const estimated = item.estimatedCalls ? ' · 예상 토큰 포함' : '';
       const unpriced = item.unpricedCalls ? ` · 비용 미산정 ${formatCount(item.unpricedCalls)}회` : '';
@@ -11146,6 +11147,8 @@ ${dialogueText}`;
       text: merged,
       tokens: new Set(tokenizeRecallText(merged)),
       titleLower: String(block.events || '').toLowerCase(),
+      localCompact:localCompactTerm(merged),
+      localTokens:[...new Set(tokenizeRecallText(merged).map(localCompactTerm))],
       phrases: String(block.events || '').split(/[·|｜,/]+/).map(x => x.trim().toLowerCase()).filter(x => x.length >= 2),
     };
     // 장기방에서도 캐시가 끝없이 커지지 않게 가볍게 상한을 둡니다.
@@ -11154,7 +11157,318 @@ ${dialogueText}`;
     return doc;
   }
 
-  function scoreRelatedLogBlocks(blocks, contextText, excludedKeys = new Set(), room = state.currentRoom) {
+  // Optional derived data only. Original logs, packs, room DB schema and save/merge are unchanged.
+  const SEMANTIC_SEARCH = Object.freeze({model:'gemini-embedding-001',dimensions:256,threshold:0.34,weight:8,batchSize:16,queryCacheLimit:30,chunkChars:1600,queryChars:3200,timeoutMs:4500,indexTimeoutMs:45000});
+  const semanticRuntime={db:null,rooms:new Map(),queries:new Map(),queryRequests:new Map(),cooldowns:new Map(),activeRoom:''};
+  function semanticEnabled(room){return room?.semanticSearchEnabled===true;}
+  function semanticRecallSortScore(room,item){
+    // Previously prepared items may survive the toggle; their semantic contribution
+    // must stop affecting fitting immediately without deleting maintained items.
+    if(!semanticEnabled(room)&&item.recallKeywordScore!=null&&Number.isFinite(Number(item.recallKeywordScore)))return Number(item.recallKeywordScore)+Number(item.recallContextScore||0)+Number(item.recallAliasScore||0)+Number(item.recallFuzzyScore||0)+Number(item.recallCompoundScore||0)-Number(item.recallDuplicatePenalty||0);
+    return Number(item.recallScore||0);
+  }
+  function semanticManualMode(){
+    let provider=String(loadAiSummarySettings().provider||'');
+    // Inspect the stored choice before existing provider normalization defaults it.
+    try{const raw=localStorage.getItem(AI_SUMMARY_SETTINGS_KEY)||GM_getValue(AI_SUMMARY_SETTINGS_KEY,'');provider=String(JSON.parse(raw||'null')?.provider||provider);}catch(_){}
+    return /^(manual|external|clipboard)$/.test(provider);
+  }
+  // Existing Gemini credentials remain usable until a dedicated search key is saved.
+  function readSemanticApiKey(){return readAiSecret('semanticGemini').trim()||readAiSecret('gemini').trim();}
+  function semanticSecret(){return semanticManualMode()?'':readSemanticApiKey();}
+  function saveSemanticApiKey(value){
+    const key=String(value||'').trim();if(!key)throw new Error('의미검색용 Gemini API 키를 입력해 주세요.');
+    const old=readSemanticApiKey();
+    if(!writeAiSecret('semanticGemini',key)||readAiSecret('semanticGemini').trim()!==key)throw new Error('검색용 키를 저장하지 못했습니다. 다시 시도해 주세요.');
+    if(old!==key){
+      for(const runtime of semanticRuntime.rooms.values()){runtime.epoch++;runtime.query=null;runtime.error='';runtime.retryAt=0;}
+      semanticRuntime.queries.clear();semanticRuntime.queryRequests.clear();semanticRuntime.cooldowns.clear();
+    }
+    if(state.currentRoom)semanticRefreshUi(state.currentRoom);
+  }
+  function semanticRoom(room){
+    const id=String(room.chatId);let runtime=semanticRuntime.rooms.get(id);
+    if(!runtime){runtime={rows:new Map(),loaded:false,loading:null,indexing:null,rerun:false,timer:null,epoch:0,query:null,status:'의미 검색 준비 필요',error:'',retryAt:0};semanticRuntime.rooms.set(id,runtime);}
+    return runtime;
+  }
+  function semanticSourceHash(text){return `${String(text).length}:${simpleHash(text)}:${simpleHash([...String(text)].reverse().join(''))}`;}
+  function semanticDocuments(room){
+    const logs=parseDatedLogBlocks((room.slots||[]).find(slot=>slot.id==='logSummary')?.content||'').map(block=>{
+      const source=JSON.stringify([logTimelineLabelOfBlock(block),block.titleText,block.events,block.body,block.raw]);
+      return {kind:'log',key:String(block.key),id:'log:'+block.key,source,sourceHash:semanticSourceHash(source),text:`시간선: ${logTimelineLabelOfBlock(block)}\n날짜·제목: ${block.titleText}\n사건: ${block.events||''}\n${block.body||block.raw}`};
+    });
+    const lore=[];
+    for(const pack of lorePacksFor(room))for(const card of pack.cards||[]){
+      if(!card.id||pack.enabled===false||card.enabled===false||card.mode!=='auto')continue;
+      const fields=loreCardContentFields(card);
+      const source=JSON.stringify([String(pack.id),card.title,card.type,card.aliases||[],card.triggers||[],card.entities||[],fields]);
+      lore.push({kind:'lore',key:`${pack.id}:${card.id}`,id:`lore:${pack.id}:${card.id}`,source,sourceHash:semanticSourceHash(source),text:`제목: ${card.title||''}\n유형: ${card.type||''}\n별칭: ${(card.aliases||[]).join(' · ')}\n감지어: ${(card.triggers||[]).join(' · ')}\n연결 대상: ${(card.entities||[]).join(' · ')}\n${JSON.stringify(fields)}`});
+    }
+    return logs.concat(lore);
+  }
+  function semanticValidRow(row,doc){return !!row&&row.sourceHash===doc.sourceHash&&row.source===doc.source&&row.model===SEMANTIC_SEARCH.model&&row.dimensions===SEMANTIC_SEARCH.dimensions&&Array.isArray(row.vector)&&row.vector.length===SEMANTIC_SEARCH.dimensions&&row.vector.every(Number.isFinite);}
+  function semanticNormalizeVector(vector){
+    if(!Array.isArray(vector)||vector.length!==SEMANTIC_SEARCH.dimensions||!vector.every(Number.isFinite))throw new Error('임베딩 차원 또는 값이 올바르지 않습니다.');
+    const length=Math.hypot(...vector);if(!Number.isFinite(length)||length<=0)throw new Error('비어 있는 임베딩입니다.');return vector.map(value=>value/length);
+  }
+  function semanticCosine(a,b){if(a.length!==b.length)return 0;return Math.max(-1,Math.min(1,a.reduce((sum,value,index)=>sum+value*b[index],0)));}
+  function semanticOpenDb(){
+    if(semanticRuntime.db)return semanticRuntime.db;
+    semanticRuntime.db=new Promise((resolve,reject)=>{const request=indexedDB.open('wish-rp-semantic-derived-v1',1);request.onupgradeneeded=()=>{const store=request.result.createObjectStore('vectors',{keyPath:'id'});store.createIndex('roomId','roomId');};request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error);request.onblocked=()=>reject(new Error('의미 검색 저장소가 다른 탭에서 준비 중입니다.'));});
+    semanticRuntime.db.catch(()=>{semanticRuntime.db=null;});return semanticRuntime.db;
+  }
+  async function semanticLoad(room,refresh=false){
+    const runtime=semanticRoom(room);if(runtime.loading)return runtime.loading;if(refresh)runtime.loaded=false;if(runtime.loaded)return;
+    runtime.loading=(async()=>{const db=await semanticOpenDb();const rows=await new Promise((resolve,reject)=>{const tx=db.transaction('vectors','readonly'),request=tx.objectStore('vectors').index('roomId').getAll(String(room.chatId));request.onsuccess=()=>resolve(request.result||[]);request.onerror=()=>reject(request.error);});
+      const docs=new Map(semanticDocuments(room).map(doc=>[doc.id,doc]));for(const row of rows)if(semanticValidRow(row,docs.get(row.documentId)||{}))runtime.rows.set(row.documentId,row);runtime.loaded=true;
+    })().finally(()=>{runtime.loading=null;});return runtime.loading;
+  }
+  async function semanticStoreRows(room,rows){
+    if(!rows.length)return;const db=await semanticOpenDb();await new Promise((resolve,reject)=>{const tx=db.transaction('vectors','readwrite');for(const row of rows)tx.objectStore('vectors').put(row);tx.oncomplete=resolve;tx.onabort=()=>reject(tx.error||new Error('검색 인덱스 저장 실패'));tx.onerror=()=>reject(tx.error);});
+  }
+  function semanticApiRequest(secret,texts,taskType,timeout){
+    const model=SEMANTIC_SEARCH.model,list=texts.map(String),base={outputDimensionality:SEMANTIC_SEARCH.dimensions,taskType};
+    const body=list.length===1?{...base,content:{parts:[{text:list[0]}]}}:{requests:list.map(text=>({...base,model:`models/${model}`,content:{parts:[{text}]}}))};
+    return new Promise((resolve,reject)=>{
+      GM_xmlhttpRequest({method:'POST',url:`https://generativelanguage.googleapis.com/v1beta/models/${model}:${list.length===1?'embedContent':'batchEmbedContents'}`,headers:{'Content-Type':'application/json','x-goog-api-key':secret},data:JSON.stringify(body),timeout,
+        onload(response){let data;try{data=JSON.parse(response.responseText);}catch(_){reject(new Error('임베딩 응답 형식 오류'));return;}
+          if(response.status<200||response.status>=300){reject(new Error(`Gemini 의미검색 오류 ${response.status}`));return;}
+          try{const embeddings=list.length===1?[data.embedding]:data.embeddings;if(!Array.isArray(embeddings)||embeddings.length!==list.length)throw new Error('임베딩 결과 개수가 맞지 않습니다.');resolve({vectors:embeddings.map(row=>semanticNormalizeVector(row?.values)),tokens:Number(data.usageMetadata?.promptTokenCount)||0});}catch(error){reject(error);}},
+        ontimeout:()=>reject(new Error('의미검색 요청 시간 초과 · 키워드 검색 사용')),onerror:()=>reject(new Error('의미검색 네트워크 오류 · 키워드 검색 사용'))});
+    });
+  }
+  async function semanticEmbed(room,texts,taskType,timeout){
+    const key=semanticSecret(),epoch=semanticRoom(room).epoch,started=Date.now();if(!key)throw new Error('Gemini API Key 필요');
+    // Encode every field of long documents without relying on silent API truncation.
+    const chunks=[],owners=[],sums=texts.map(()=>Array(SEMANTIC_SEARCH.dimensions).fill(0));
+    texts.forEach((text,owner)=>{const chars=Array.from(String(text));for(let start=0;start<Math.max(1,chars.length);start+=SEMANTIC_SEARCH.chunkChars){chunks.push(chars.slice(start,start+SEMANTIC_SEARCH.chunkChars).join('')||' ');owners.push(owner);}});
+    for(let start=0;start<chunks.length;start+=SEMANTIC_SEARCH.batchSize){
+      if(!semanticEnabled(room)||state.currentRoom!==room||semanticRoom(room).epoch!==epoch||semanticSecret()!==key)throw new Error('의미 검색이 중지되었습니다.');
+      const remaining=taskType==='RETRIEVAL_QUERY'?timeout-(Date.now()-started):timeout;
+      if(remaining<=0)throw new Error('의미검색 요청 시간 초과 · 키워드 검색 사용');
+      const batch=chunks.slice(start,start+SEMANTIC_SEARCH.batchSize),response=await semanticApiRequest(key,batch,taskType,remaining);
+      recordRoomAiUsage(room,taskType==='RETRIEVAL_QUERY'?'semanticQuery':'semanticIndex','gemini',SEMANTIC_SEARCH.model,{inputTokens:response.tokens,outputTokens:0},{},{prompt:batch.join('')});
+      response.vectors.forEach((vector,index)=>vector.forEach((value,dimension)=>sums[owners[start+index]][dimension]+=value));
+      refreshAiRoomUsageUi(room);queueRoomAutoSave(room,800);
+    }
+    return sums.map(semanticNormalizeVector);
+  }
+  function semanticStatus(room){
+    if(!semanticEnabled(room))return '의미 검색 OFF';
+    if(semanticManualMode())return '외부 AI 복붙 모드 · 키워드 검색 사용';
+    if(!semanticSecret())return '의미검색용 Gemini 키 필요 · 로컬 검색 사용';
+    const runtime=semanticRoom(room);if(runtime.indexing)return runtime.status;
+    const docs=semanticDocuments(room),stale=docs.filter(doc=>!semanticValidRow(runtime.rows.get(doc.id),doc)).length;
+    if(runtime.error)return runtime.error+' · 키워드 검색 병행';
+    return !runtime.loaded?'의미 검색 준비 필요':stale?`변경된 ${stale}개 재준비 필요`:'의미 검색 최신';
+  }
+  function semanticRefreshUi(room){if(state.currentRoom!==room)return;state.modal?.querySelectorAll('[data-semantic-status]').forEach(node=>node.textContent=semanticStatus(room));state.modal?.querySelectorAll('[data-semantic-enabled]').forEach(node=>node.checked=semanticEnabled(room));}
+  function semanticUiHtml(room){return `<article class="rpcm-pref-card rpcm-semantic-settings"><header><h3>의미 검색</h3><span class="rpcm-pref-scope">현재 방</span></header><label class="rpcm-pref-row"><span>의미 검색 사용<small>키워드 검색에 의미가 가까운 로그·자동 자료집을 더합니다. AI 맥락 검토는 별도로 적용됩니다.</small></span><input type="checkbox" data-semantic-enabled aria-label="의미 검색 사용" ${semanticEnabled(room)?'checked':''}></label><div class="rpcm-pref-row"><button type="button" class="rpcm-btn secondary" data-semantic-prepare>검색 인덱스 재확인</button><span data-semantic-status role="status">${esc(semanticStatus(room))}</span></div><small>AI → API·모델 설정의 의미검색 전용 연결에서 Gemini 키를 저장하세요. 다른 AI 기능은 공용 연결을 사용합니다.</small></article>`;}
+  function semanticClearQueries(room){const id=String(room.chatId);semanticRoom(room).query=null;semanticRoom(room).epoch++;for(const [key,row]of semanticRuntime.queries)if(row.roomId===id)semanticRuntime.queries.delete(key);}
+  async function semanticSetEnabled(room,enabled){
+    const old=room.semanticSearchEnabled;room.semanticSearchEnabled=enabled;semanticClearQueries(room);
+    try{await saveRoom(room);}catch(error){room.semanticSearchEnabled=old;semanticRefreshUi(room);throw error;}
+    semanticRefreshUi(room);if(enabled)queueSemanticIndexRefresh(room,'enabled');
+  }
+  function bindSemanticUi(overlay,room){
+    overlay.querySelectorAll('[data-semantic-enabled]').forEach(node=>node.onchange=()=>{void semanticSetEnabled(room,node.checked).catch(error=>notify('의미검색 설정 저장 실패: '+error.message,'error'));});
+    overlay.querySelectorAll('[data-semantic-prepare]').forEach(node=>node.onclick=async()=>{node.disabled=true;try{if(!semanticEnabled(room))await semanticSetEnabled(room,true);await prepareSemanticSearchIndex(room,true);}catch(error){semanticRoom(room).error=error.message;semanticRefreshUi(room);}finally{node.disabled=false;}});
+    if(semanticEnabled(room))void semanticLoad(room).then(()=>semanticRefreshUi(room)).catch(()=>{});
+  }
+  function queueSemanticIndexRefresh(room,reason='change'){
+    if(!room||!semanticEnabled(room)){if(room)semanticClearQueries(room);return;}
+    const runtime=semanticRoom(room);if(runtime.indexing){runtime.rerun=true;return;}
+    clearTimeout(runtime.timer);runtime.timer=setTimeout(()=>{runtime.timer=null;if(state.currentRoom!==room||!semanticEnabled(room))return;void prepareSemanticSearchIndex(room).catch(error=>{runtime.error=error.message;semanticRefreshUi(room);});},1800);
+  }
+  async function prepareSemanticSearchIndex(room,force=false){
+    const runtime=semanticRoom(room);if(runtime.indexing){runtime.rerun=true;return runtime.indexing;}
+    if(!semanticEnabled(room)||state.currentRoom!==room)return;
+    if(!semanticSecret()){semanticRefreshUi(room);return;}
+    if(!force&&Date.now()<runtime.retryAt)return;
+    const epoch=runtime.epoch,roomId=String(room.chatId);runtime.error='';
+    const current=()=>state.currentRoom===room&&semanticEnabled(room)&&runtime.epoch===epoch&&String(room.chatId)===roomId;
+    const runIndex=async()=>{
+      await semanticLoad(room,true);if(!current())return;
+      const docs=semanticDocuments(room),ids=new Set(docs.map(doc=>doc.id));for(const id of runtime.rows.keys())if(!ids.has(id))runtime.rows.delete(id);
+      const stale=docs.filter(doc=>!semanticValidRow(runtime.rows.get(doc.id),doc));let done=0;
+      for(let index=0;index<stale.length;index+=SEMANTIC_SEARCH.batchSize){
+        if(!current())return;runtime.status=`검색 준비 중 ${done}/${stale.length}`;semanticRefreshUi(room);
+        const batch=stale.slice(index,index+SEMANTIC_SEARCH.batchSize),vectors=await semanticEmbed(room,batch.map(doc=>stripAutomationNoise(doc.text)),'RETRIEVAL_DOCUMENT',SEMANTIC_SEARCH.indexTimeoutMs);
+        if(!current())return;const latest=new Map(semanticDocuments(room).map(doc=>[doc.id,doc])),rows=[];
+        batch.forEach((doc,i)=>{const fresh=latest.get(doc.id);if(!fresh||fresh.source!==doc.source){runtime.rerun=true;return;}rows.push({id:JSON.stringify([roomId,doc.id,doc.sourceHash,SEMANTIC_SEARCH.model,SEMANTIC_SEARCH.dimensions]),roomId,documentId:doc.id,key:doc.key,kind:doc.kind,source:doc.source,sourceHash:doc.sourceHash,model:SEMANTIC_SEARCH.model,dimensions:SEMANTIC_SEARCH.dimensions,vector:vectors[i],updatedAt:nowIso()});});
+        await semanticStoreRows(room,rows);if(!current())return;
+        const stillCurrent=new Map(semanticDocuments(room).map(doc=>[doc.id,doc]));for(const row of rows){if(semanticValidRow(row,stillCurrent.get(row.documentId)||{}))runtime.rows.set(row.documentId,row);else runtime.rerun=true;}
+        done+=batch.length;runtime.status=`검색 준비 중 ${done}/${stale.length}`;semanticRefreshUi(room);
+      }
+      runtime.status=stale.length?'의미 검색 준비 완료':'이미 최신 상태';runtime.retryAt=0;
+    };
+    // Tabs share only the derived index lock; the Manager's save locks are untouched.
+    const work=navigator.locks?.request?navigator.locks.request('wish-semantic-index:'+roomId,{mode:'exclusive'},async()=>{if(current())return runIndex();}):runIndex();runtime.indexing=work;
+    try{await work;}catch(error){if(current()){runtime.error=String(error.message||error);runtime.retryAt=Date.now()+60000;throw error;}}
+    finally{runtime.indexing=null;semanticRefreshUi(room);if(runtime.rerun){runtime.rerun=false;if(current())queueSemanticIndexRefresh(room,'changed-during-indexing');}}
+  }
+  function buildSemanticQueryText(userText,previousAssistant=''){
+    const user=stripAutomationNoise(String(userText||''),true).trim().slice(0,1800);
+    if(!user)return '';
+    const short=user.length<90||/(그거|그때|걔|아까|그 사람|그곳|그걸|그 일이|그 물건)/.test(user);
+    const previous=short?stripAutomationNoise(String(previousAssistant||''),true).trim().slice(-1800):'';
+    return `CURRENT_USER:\n${user}${previous?'\n\nPREVIOUS_ASSISTANT_CONTEXT:\n'+previous:''}`.slice(0,SEMANTIC_SEARCH.queryChars);
+  }
+  function semanticQueryForContext(context,messages=null){
+    if(messages){const list=messages.filter(message=>['user','assistant'].includes(messageRoleOf(message))),at=list.findIndex(message=>messageRoleOf(message)==='user');if(at>=0){const previous=list.slice(at+1).find(message=>messageRoleOf(message)==='assistant');return buildSemanticQueryText(messageTextOf(list[at]),messageTextOf(previous));}}
+    return buildSemanticQueryText(String(context||'').slice(-1800));
+  }
+  function semanticContextHash(context){return semanticSourceHash(stripAutomationNoise(String(context||'')));}
+  async function prepareSemanticRecall(room,context,messages=null){
+    const runtime=semanticRoom(room);if(!semanticEnabled(room)){semanticClearQueries(room);return;}
+    if(semanticRuntime.activeRoom!==String(room.chatId)){semanticRuntime.queries.clear();semanticRuntime.activeRoom=String(room.chatId);}
+    if(!semanticSecret()){runtime.query=null;semanticRefreshUi(room);return;}
+    const epoch=runtime.epoch,contextHash=semanticContextHash(context);
+    if(!messages&&runtime.query?.contextHash===contextHash)return;
+    const queryText=semanticQueryForContext(context,messages);
+    if(!queryText)return;
+    try{
+      await semanticLoad(room);if(!semanticEnabled(room)||runtime.epoch!==epoch||state.currentRoom!==room)return;
+      // Validate sources on every read; partial fresh indexes can already serve a query.
+      const docs=semanticDocuments(room);if(docs.some(doc=>!semanticValidRow(runtime.rows.get(doc.id),doc)))queueSemanticIndexRefresh(room,'search-stale');
+      if(!docs.some(doc=>semanticValidRow(runtime.rows.get(doc.id),doc))){runtime.query=null;return;}
+      const key=JSON.stringify([String(room.chatId),SEMANTIC_SEARCH.model,SEMANTIC_SEARCH.dimensions,semanticSourceHash(queryText)]);
+      let cached=semanticRuntime.queries.get(key);
+      if(cached?.text!==queryText){
+        if(Date.now()<(semanticRuntime.cooldowns.get(String(room.chatId))||0)){runtime.query=null;return;}
+        let request=semanticRuntime.queryRequests.get(key);
+        if(!request){request=semanticEmbed(room,[queryText],'RETRIEVAL_QUERY',SEMANTIC_SEARCH.timeoutMs).then(vectors=>({roomId:String(room.chatId),text:queryText,vector:vectors[0]}));semanticRuntime.queryRequests.set(key,request);request.finally(()=>{if(semanticRuntime.queryRequests.get(key)===request)semanticRuntime.queryRequests.delete(key);}).catch(()=>{});}
+        cached=await request;
+        if(!semanticEnabled(room)||runtime.epoch!==epoch||state.currentRoom!==room)return;
+        semanticRuntime.queries.set(key,cached);while(semanticRuntime.queries.size>SEMANTIC_SEARCH.queryCacheLimit)semanticRuntime.queries.delete(semanticRuntime.queries.keys().next().value);
+      }else{semanticRuntime.queries.delete(key);semanticRuntime.queries.set(key,cached);}
+      if(!semanticEnabled(room)||runtime.epoch!==epoch||state.currentRoom!==room)return;
+      runtime.query={contextHash,vector:cached.vector};runtime.error='';
+    }catch(error){if(runtime.epoch===epoch){runtime.query=null;runtime.error=String(error.message||error);semanticRuntime.cooldowns.set(String(room.chatId),Date.now()+60000);semanticRefreshUi(room);}}
+  }
+  function semanticScoresForContext(room,context,kind){
+    const scores=new Map();if(!semanticEnabled(room)||!semanticSecret())return scores;const runtime=semanticRoom(room),query=runtime.query;
+    if(!query||query.contextHash!==semanticContextHash(context))return scores;
+    for(const doc of semanticDocuments(room)){if(doc.kind!==kind)continue;const row=runtime.rows.get(doc.id);if(semanticValidRow(row,doc))scores.set(doc.key,semanticCosine(query.vector,row.vector));}
+    return scores;
+  }
+
+  // Read-through cache: raw completed turns only; gates/cursors/counts are recalculated.
+  const aiMemoryHistoryCache=new Map();
+  const AI_MEMORY_HISTORY_AUDIT_MS=120000;
+  function invalidateAiMemoryHistory(){aiMemoryHistoryCache.clear();}
+  function aiMemoryCacheBasis(room){return JSON.stringify([apiChatIdOf(room),room.aiMemoryAutomation,room.manualUpdateCheckpoints,room.slots,room.knowledgeCards,room.personStateRecords,room.lorePacks,room.storyTimelineCards,room.activeLogTimeline]);}
+  async function aiMemoryPlanningTurns(room,force=false){
+    const roomId=String(room.chatId),recent=await fetchRecentMessages(apiChatIdOf(room),30);
+    if(state.currentRoom!==room)throw new Error('RP 조회 중 채팅방이 바뀌었습니다.');
+    const signature=JSON.stringify(recent.map(message=>[messageIdOf(message),messageRoleOf(message),messageTextOf(message),message.status,message.updatedAt,message.generationStatus]));
+    const basis=aiMemoryCacheBasis(room),cached=aiMemoryHistoryCache.get(roomId),now=Date.now();
+    // Empty/pending responses and forced checks use the original full-history path.
+    const certain=recent.length>0&&!recent.some(message=>isIncompleteAiSourceMessage(message));
+    if(!force&&certain&&cached&&cached.signature===signature&&cached.basis===basis&&now-cached.at<AI_MEMORY_HISTORY_AUDIT_MS)return settledAutomaticTurns(cached.turns);
+    const turns=await loadManualCompletedTurns(room);
+    if(state.currentRoom!==room)throw new Error('RP 조회 중 채팅방이 바뀌었습니다.');
+    aiMemoryHistoryCache.clear(); // Keep at most the current room's full history.
+    if(certain)aiMemoryHistoryCache.set(roomId,{signature,basis:aiMemoryCacheBasis(room),at:Date.now(),turns});
+    return settledAutomaticTurns(turns);
+  }
+
+  // Local precision layer. Never changes the legacy eligibility gate or the budget.
+  const LOCAL_RECALL = Object.freeze({contextChars:1200,contextWeight:.3,contextCap:2.2,aliasWeight:.35,aliasCap:1.6,fuzzyCap:.8,compoundCap:2.4,duplicateCap:2.4});
+  const localRecallCache=new WeakMap(),localRecallQueries=new WeakMap();
+  const LOCAL_OBJECT_TERMS=new Set(['목걸이','군번줄','도그태그','반지','시계','손목시계','열쇠','편지','상자','권총','칼','사진','휴대폰','지갑']);
+  const LOCAL_LOCATION_TERMS=new Set(['호숫가','호수','해변','숙소','기지','병원','식당','사무실','은행','공항','창고','복도','부두','학교','저택']);
+  function localRecallClean(value){return stripAutomationNoise(String(value||''),true).replace(/```[^\n]*\n\s*\[(?:속마음|INFO|상태|상태창|HUD)[^\]]*\][\s\S]*?```/gi,'').replace(/<(?:info|hud|status)\b[^>]*>[\s\S]*?<\/(?:info|hud|status)>/gi,'').replace(/^\s*(?:CURRENT_USER|PREVIOUS_ASSISTANT_CONTEXT|system|assistant|user)\s*:\s*/gim,'').trim();}
+  function buildLocalRecallQueryText(currentUserText,previousAssistantText=''){
+    const primary=localRecallClean(currentUserText),tokens=tokenizeRecallText(primary);
+    const references=(primary.match(/그거|그걸|그때|걔|아까|그 사람|그곳|그 물건|그 일/g)||[]).length;
+    // A long, concrete USER message always wins, even when it contains a pronoun.
+    const concrete=tokens.filter(t=>!/(그거|그걸|그때|누구|어디|아까|있어|있었|걔)/.test(t));
+    const assisted=!!primary&&(primary.length<=40||(primary.length<=90&&references>0&&concrete.length<=4));
+    const context=assisted?localRecallClean(previousAssistantText).slice(-LOCAL_RECALL.contextChars):'';
+    return {primary,context,primaryTokens:tokens,contextTokens:tokenizeRecallText(context).filter(t=>!tokens.includes(t)),contextWeight:LOCAL_RECALL.contextWeight};
+  }
+  function prepareLocalRecall(room,context,messages=null){
+    if(!room)return;const hash=semanticContextHash(context),existing=localRecallQueries.get(room);
+    if(!messages&&existing?.hash===hash)return;
+    let user=context,previous='';
+    if(messages){const list=messages.filter(m=>['user','assistant'].includes(messageRoleOf(m))),at=list.findIndex(m=>messageRoleOf(m)==='user');if(at>=0){user=messageTextOf(list[at]);previous=messageTextOf(list.slice(at+1).find(m=>messageRoleOf(m)==='assistant'));}}
+    localRecallQueries.set(room,{hash,...buildLocalRecallQueryText(user,previous)});
+  }
+  function localRecallQuery(room,context){const row=room&&localRecallQueries.get(room);return row?.hash===semanticContextHash(context)?row:buildLocalRecallQueryText(context);}
+  function localCompactTerm(value){return normalizedRecallTerm(value).normalize('NFKC').replace(/[\s\-‐‑–—]+/g,'');}
+  function localRecallIndex(room){
+    if(!room)return {groups:[],categories:new Map()};
+    const slots=(room.slots||[]).filter(s=>['character','item'].includes(s.group));
+    const packs=lorePacksFor(room),basis=JSON.stringify([slots.map(s=>[s.id,s.group,s.title,s.aliases,s.content]),packs.map(p=>[p.id,p.cards.map(c=>[c.id,c.title,c.type,c.aliases,c.triggers,c.entities])])]);
+    const cached=localRecallCache.get(room);if(cached?.basis===basis)return cached;
+    const groups=[],categories=new Map();
+    const register=(words,category)=>{const terms=[...new Set(words.map(normalizedRecallTerm).filter(t=>t.length>=2&&t.length<=60))];if(terms.length>1)groups.push(terms);for(const term of terms){if(category)categories.set(term,category);for(const token of tokenizeRecallText(term))if(category)categories.set(token,category);}};
+    for(const slot of slots)register(slot.group==='character'?characterDetectionTerms(slot):[slot.title,...(slot.aliases||[])],slot.group==='character'?'entity':'object');
+    const generic=new Set(['인물','세계관','장소','사건','물건','설정','가족','과거','현재','정보']);
+    const registeredNames=new Set([...categories.keys()].map(localCompactTerm));
+    for(const pack of packs)for(const card of pack.cards||[]){const category=/장소/.test(card.type)?'location':/물품|물건|복장/.test(card.type)?'object':/인물/.test(card.type)?'entity':'event';
+      const explicitNames=[card.title,...(card.aliases||[]),...(card.entities||[])].map(localCompactTerm);
+      const names=(card.triggers||[]).filter(t=>/^[\p{L}\p{N} .'-]{2,32}$/u.test(String(t))&&!generic.has(t)&&!/[?!。！？]|(?:했|하는|있는|했다|할 때|이후)/.test(t)&&(registeredNames.has(localCompactTerm(t))||explicitNames.includes(localCompactTerm(t))||/^[A-Z][A-Za-z0-9'-]*(?: [A-Z][A-Za-z0-9'-]*)*$/.test(t)));
+      register([card.title,...(card.aliases||[]),...names],category);
+    }
+    const value={basis,groups,categories};localRecallCache.set(room,value);return value;
+  }
+  function localAliasTerms(index,query){const expanded=new Set();for(const group of index.groups)if(group.some(term=>aliasAppears(query.primary,term)))for(const term of group)if(!aliasAppears(query.primary,term))expanded.add(term);return [...expanded].slice(0,40);}
+  function localOneTypo(a,b){
+    if(a.length<5||b.length<5||Math.abs(a.length-b.length)>1)return false;
+    let i=0,j=0,edits=0;while(i<a.length&&j<b.length){if(a[i]===b[j]){i++;j++;continue;}if(++edits>1)return false;if(a.length>=b.length)i++;if(b.length>=a.length)j++;}return edits+(i<a.length||j<b.length?1:0)===1;
+  }
+  function localClueGroup(term,index,characters,rare=false){if(characters.has(term))return 'entity';return index.categories.get(term)||(LOCAL_OBJECT_TERMS.has(term)?'object':LOCAL_LOCATION_TERMS.has(term)?'location':rare?'rare':'event');}
+  function localRecallAdjust(entry,doc,query,index,characters,N,df,averageLength){
+    const bodyFactor=Math.max(.65,Math.min(1.08,1/(.8+.2*Math.max(1,String(doc.block.body||'').length)/Math.max(1,averageLength))));
+    const direct=query.primaryTokens,groups=new Set(),matches=[];let keyword=0,character=0,context=0,alias=0,fuzzy=0;
+    for(const token of direct){if(!doc.text.includes(token))continue;const idf=1+Math.log((N+1)/((df.get(token)||0)+1)),inTitle=doc.titleLower.includes(token);
+      if(characters.has(token))character+=(inTitle?.95:.28)*idf;else keyword+=(inTitle?6.4:1.45*bodyFactor)*idf;
+      groups.add(localClueGroup(token,index,characters,!inTitle&&idf>=1.75));matches.push(token);
+    }
+    for(const phrase of doc.phrases)if(query.primary.toLowerCase().includes(phrase)){const tokens=tokenizeRecallText(phrase),char=characters.has(phrase)||(tokens.length&&tokens.every(t=>characters.has(t)));if(char)character+=1.6;else keyword+=11;groups.add(char?'entity':localClueGroup(phrase,index,characters));}
+    keyword+=Math.min(2.6,character);
+    // These terms do NOT participate in legacy eligibility or character-only gates.
+    for(const token of query.contextTokens)if(doc.text.includes(token))context+=(doc.titleLower.includes(token)?6.4:1.45*bodyFactor)*LOCAL_RECALL.contextWeight;
+    for(const term of (query.aliasTerms||localAliasTerms(index,query)))if(aliasAppears(doc.text,term)){alias+=(doc.titleLower.includes(term)?2:1)*LOCAL_RECALL.aliasWeight;groups.add(localClueGroup(term,index,characters));}
+    const anchored=matches.some(t=>!characters.has(t))||entry.matchedTitleTokens.length||alias>0;
+    if(anchored){const exact=new Set(matches),compactTokens=direct.filter(t=>!exact.has(t)&&localCompactTerm(t).length>=3).slice(0,32),words=(query.primary.match(/[\p{L}\p{N}]+/gu)||[]).slice(0,24),pairs=words.flatMap((_,i)=>[words.slice(i,i+2).join(' '),words.slice(i,i+3).join(' ')]).filter(t=>t.includes(' '));
+      for(const term of [...compactTokens,...pairs]){const normalized=localCompactTerm(term);if(normalized.length>=3&&!doc.text.includes(term.toLowerCase())&&doc.localCompact.includes(normalized)){fuzzy+=.2;continue;}
+        if(normalized.length>=5&&doc.localTokens.slice(0,180).some(t=>localOneTypo(normalized,t)))fuzzy+=.15;
+      }
+    }
+    const compound=groups.size>=2?Math.min(LOCAL_RECALL.compoundCap,(groups.size-1)*.8):0;
+    entry.keywordScore=keyword;entry.contextScore=Math.min(LOCAL_RECALL.contextCap,context);entry.aliasScore=Math.min(LOCAL_RECALL.aliasCap,alias);entry.fuzzyScore=Math.min(LOCAL_RECALL.fuzzyCap,fuzzy);entry.compoundScore=compound;entry.lengthFactor=bodyFactor;entry.clueGroups=[...groups];
+    entry.score=keyword+entry.contextScore+entry.aliasScore+entry.fuzzyScore+compound+(entry.semanticScore>=SEMANTIC_SEARCH.threshold?entry.semanticScore*SEMANTIC_SEARCH.weight:0);
+    return entry;
+  }
+  function localEventNearlySame(a,b){
+    if(a===b)return true;
+    if(Math.min(a.length,b.length)<12||Math.min(a.length,b.length)/Math.max(a.length,b.length)<.9)return false;
+    if((a.match(/\d+/g)||[]).join('|')!==(b.match(/\d+/g)||[]).join('|'))return false;
+    const grams=value=>new Set(Array.from({length:value.length-1},(_,i)=>value.slice(i,i+2))),left=grams(a),right=grams(b);
+    return 2*[...left].filter(x=>right.has(x)).length/(left.size+right.size)>=.92;
+  }
+  function localRecallDiversity(entries){
+    // Compare only within date + timeline buckets of at most 60 ranked results.
+    const shortlist=entries.slice(0,60),buckets=new Map();
+    for(const entry of shortlist){const block=entry.block,title=localCompactTerm(block.events),key=[normalizedLogTimelineKey(logTimelineLabelOfBlock(block)),block.fullDate].join('|');
+      if(!title||!block.fullDate||block.isUnknown||timelineBranchHint(block.events+' '+block.body))continue;
+      const terms=new Set(entry.matchedCoreTokens),prior=buckets.get(key)||[],duplicate=prior.some(row=>{const overlap=[...terms].filter(t=>row.terms.has(t)).length;return localEventNearlySame(title,row.title)&&terms.size>0&&overlap/Math.max(terms.size,row.terms.size)>=.85;});
+      entry.duplicatePenalty=duplicate?Math.min(LOCAL_RECALL.duplicateCap,entry.score*.2):0;entry.score-=entry.duplicatePenalty;prior.push({title,terms});buckets.set(key,prior);
+    }
+    return entries.sort((a,b)=>a.coreTier-b.coreTier||b.score-a.score||b.block.index-a.block.index);
+  }
+  function localRecallReason(entry){if(!entry)return '';return [entry.compoundScore>0?'복합 단서':null,entry.contextScore>0?'직전 문맥 보조':null,entry.aliasScore>0?'등록 별칭 보조':null,entry.fuzzyScore>0?'표기 보정':null,entry.duplicatePenalty>0?'동일 사건 중복 감점':null].filter(Boolean).join(' · ');}
+  function localRecallExtras(entry){return {contextScore:entry.contextScore,aliasScore:entry.aliasScore,fuzzyScore:entry.fuzzyScore,compoundScore:entry.compoundScore,duplicatePenalty:entry.duplicatePenalty};}
+  function localLoreRankBonus(card,evidence,room,context){
+    if(!evidence)return 0;const query=localRecallQuery(room,context),entities=Array.isArray(card.entities)?card.entities:[];
+    return Math.min(3,entities.filter(name=>aliasAppears(query.primary,String(name))).length);
+  }
+
+  function scoreRelatedLogBlocks(blocks, contextText, excludedKeys = new Set(), room = state.currentRoom, semanticScores = null) {
+    semanticScores=semanticEnabled(room)?(semanticScores||semanticScoresForContext(room,contextText,'log')):new Map();
     const query = stripAutomationNoise(contextText);
     if (!query || !blocks.length) return [];
     const queryLower = query.toLowerCase();
@@ -11168,6 +11482,9 @@ ${dialogueText}`;
       df.set(t, n);
     }
     const N = Math.max(1, blocks.length);
+    const localQuery=localRecallQuery(room,contextText),localIndex=localRecallIndex(room);
+    localQuery.aliasTerms=localAliasTerms(localIndex,localQuery);
+    const averageLength=docs.reduce((sum,d)=>sum+String(d.block.body||'').length,0)/N;
     const scored = [];
     for (const d of docs) {
       if (excludedKeys.has(d.block.key)) continue;
@@ -11212,23 +11529,27 @@ ${dialogueText}`;
 
       // 인물명 여러 개가 겹쳐도 핵심 사건 키워드보다 앞서지 못하도록 보조점수 상한을 둡니다.
       const cappedCharacterScore = Math.min(characterScore, 2.6);
-      const score = coreScore + cappedCharacterScore;
+      const keywordScore = coreScore + cappedCharacterScore;
+      const semanticScore=Number(semanticScores.get(String(d.block.key))||0);
+      const semanticMatch=semanticScore>=SEMANTIC_SEARCH.threshold;
+      const score=keywordScore+(semanticMatch?semanticScore*SEMANTIC_SEARCH.weight:0);
       const hasCoreMatch = coreScore >= 1.8;
       const hasCharacterOnlyMatch = !hasCoreMatch && cappedCharacterScore >= 1.8;
-      if (hasCoreMatch || hasCharacterOnlyMatch) {
-        scored.push({
+      if (hasCoreMatch || hasCharacterOnlyMatch || semanticMatch) {
+        scored.push(localRecallAdjust({
           block: d.block,
           score,
           coreScore,
           characterScore: cappedCharacterScore,
-          coreTier: hasCoreMatch ? 0 : 1,
+          keywordScore, semanticScore,
+          coreTier: hasCoreMatch ? 0 : semanticMatch ? 1 : semanticScores.size ? 2 : 1,
           matchedTokens:[...new Set([...matchedCoreTokens, ...matchedCharacterTerms])],
           matchedCoreTokens:[...new Set(matchedCoreTokens)],
           matchedTitleTokens:[...new Set(matchedTitleTokens)],
           matchedRareTokens:[...new Set(matchedRareTokens)],
           matchedCharacterTerms:[...new Set(matchedCharacterTerms)],
           matchedPhrases:[...new Set(matchedPhrases)],
-        });
+        },d,localQuery,localIndex,characterTerms,N,df,averageLength));
       }
     }
     // 핵심 키워드가 하나라도 맞는 로그를 항상 인물명-only 로그보다 앞세웁니다.
@@ -11236,6 +11557,14 @@ ${dialogueText}`;
   }
 
   function relatedLogReason(scored) {
+    const reason=relatedLogKeywordReason(scored),local=localRecallReason(scored);
+    const keyword=reason+(local?' / '+local:'');
+    if(Number(scored?.semanticScore||0)<SEMANTIC_SEARCH.threshold)return keyword;
+    const similarity=`의미 유사 ${Math.round(scored.semanticScore*100)}%`;
+    return Number(scored.keywordScore||0)<1.8?`표현은 달라도 ${similarity}`:`${keyword} / ${similarity}`;
+  }
+
+  function relatedLogKeywordReason(scored) {
     if (!scored) return '현재 RP와 관련';
     const coreTerms = [...new Set([
       ...(scored.matchedPhrases || []),
@@ -11273,7 +11602,7 @@ ${dialogueText}`;
     const active = normalizedLogTimelineKey(activeLogTimelineLabel(room));
     const latest = selectRecentLogBlocks(blocks.filter(block => normalizedLogTimelineKey(logTimelineLabelOfBlock(block)) === active), 1)[0];
     const setting = logRelevanceSetting(room);
-    return scoreRelatedLogBlocks(blocks, contextText, skip, room).filter(entry => {
+    return localRecallDiversity(scoreRelatedLogBlocks(blocks, contextText, skip, room).filter(entry => {
       const core = Number(entry.coreScore || 0);
       const title = (entry.matchedTitleTokens || []).length > 0;
       const phrase = (entry.matchedPhrases || []).length > 0;
@@ -11282,11 +11611,12 @@ ${dialogueText}`;
       if (normalizedLogTimelineKey(logTimelineLabelOfBlock(entry.block)) !== active) {
         return phrase || (title && core >= 8) || (rare && multiple && core >= 8);
       }
+      if(Number(entry.semanticScore||0)>=SEMANTIC_SEARCH.threshold)return true;
       if (setting === 'strict') return phrase || (title && core >= 8) || (rare && multiple && core >= 8);
       if (setting === 'broad') return phrase || title || (core >= 2.2 && (rare || multiple));
       if (phrase || title || (core >= 2.8 && multiple) || (core >= 2.2 && rare)) return true;
       return entry.block.key === latest?.key && core >= 2.2 && (rare || multiple);
-    });
+    }));
   }
 
   function logItemPriority(item) {
@@ -11314,6 +11644,11 @@ ${dialogueText}`;
       usedTurns: 0,
       recallReason: reason,
       recallScore: extra.score ?? null,
+      recallKeywordScore: extra.keywordScore ?? null,
+      recallSemanticScore: extra.semanticScore ?? null,
+      recallContextScore:extra.contextScore ?? null, recallAliasScore:extra.aliasScore ?? null,
+      recallFuzzyScore:extra.fuzzyScore ?? null, recallCompoundScore:extra.compoundScore ?? null,
+      recallDuplicatePenalty:extra.duplicatePenalty ?? null,
       recallCoreScore: extra.coreScore ?? null,
       recallCharacterScore: extra.characterScore ?? null,
       recallRank: extra.rank ?? null,
@@ -11331,7 +11666,7 @@ ${dialogueText}`;
       ? `최근 연속성 + 관련도 일치 · ${logTimelineLabelOfBlock(block)} · ${relatedLogReason(scored)}`
       : `최근이라 포함 · ${logTimelineLabelOfBlock(block)}의 직전 흐름`;
     return makeLogRecallItem(block, slot, 'recent-log', '최근 연속성', reason, scored ? {
-      score:scored.score, coreScore:scored.coreScore, characterScore:scored.characterScore,
+      score:scored.score, coreScore:scored.coreScore, keywordScore:scored.keywordScore, semanticScore:scored.semanticScore, ...localRecallExtras(scored), characterScore:scored.characterScore,
       rank, candidateCount,
       matchedTerms:[...(scored.matchedPhrases || []), ...(scored.matchedCoreTokens || []), ...(scored.matchedCharacterTerms || [])],
       matchedCoreTerms:[...(scored.matchedPhrases || []), ...(scored.matchedCoreTokens || []), ...(scored.matchedRareTokens || [])],
@@ -11383,6 +11718,7 @@ ${dialogueText}`;
         put(makeLogRecallItem(scored.block, slot, 'related-log', '관련로그', `${logTimelineLabelOfBlock(scored.block)} · ${relatedLogReason(scored)}`, {
           score: scored.score,
           coreScore: scored.coreScore,
+          keywordScore: scored.keywordScore, semanticScore: scored.semanticScore, ...localRecallExtras(scored),
           characterScore: scored.characterScore,
           rank: relatedIndex + 1,
           candidateCount: relatedHistory.length,
@@ -11507,7 +11843,7 @@ ${dialogueText}`;
       if (pa !== pb) return pa - pb;
       if (pa === 3) return room.aiContextLogRerankEnabled
         ? Number(a.recallRank || 9999) - Number(b.recallRank || 9999)
-        : Number(b.recallScore || 0) - Number(a.recallScore || 0);
+        : (semanticEnabled(room) ? Number(Number(b.recallCoreScore||0)>=1.8)-Number(Number(a.recallCoreScore||0)>=1.8) : 0) || semanticRecallSortScore(room,b) - semanticRecallSortScore(room,a);
       return Number(a.logIndex || 0) - Number(b.logIndex || 0);
     });
     const chosen = [];
@@ -11539,7 +11875,7 @@ ${dialogueText}`;
       if (pa !== pb) return pa - pb;
       if (pa === 3) return room.aiContextLogRerankEnabled
         ? Number(a.recallRank || 9999) - Number(b.recallRank || 9999)
-        : Number(b.recallScore || 0) - Number(a.recallScore || 0);
+        : (semanticEnabled(room) ? Number(Number(b.recallCoreScore||0)>=1.8)-Number(Number(a.recallCoreScore||0)>=1.8) : 0) || semanticRecallSortScore(room,b) - semanticRecallSortScore(room,a);
       return Number(a.logIndex || 0) - Number(b.logIndex || 0);
     });
     const chosenLogs = [];
@@ -12082,7 +12418,7 @@ ${dialogueText}`;
   }
 
   // 기타·OOC 설정집은 항목의 category를 그대로 보존하고 폴더를 선택 단위로 다룹니다.
-  GM_addStyle('\n/* v0.15.27 · 기타 설정집 폴더별 선택·원문 미리보기 */\n.rpcm-extra-library-select{width:min(690px,calc(100vw - 24px))!important;max-width:690px!important}\n.rpcm-extra-folder-select-list{display:grid;gap:9px;padding:14px!important}\n.rpcm-extra-choice-folder,.rpcm-extra-library-folder,.rpcm-extra-manager-folder{border:1px solid #e9d7e3;border-radius:11px;background:rgba(222,115,165,.035);overflow:hidden}\n.rpcm-extra-choice-head{display:flex;align-items:center;gap:8px;justify-content:space-between;padding:10px 12px}\n.rpcm-extra-choice-head>label,.rpcm-extra-choice-item>label{display:flex;gap:9px;align-items:center;min-width:0;flex:1;cursor:pointer}\n.rpcm-extra-choice-head strong,.rpcm-extra-choice-item strong{font-size:13px;overflow-wrap:anywhere}\n.rpcm-extra-choice-head small,.rpcm-extra-choice-item small,.rpcm-extra-library-folder small,.rpcm-extra-manager-folder small{color:#a18b99;font-size:11px;margin-left:auto;white-space:nowrap}\n.rpcm-extra-choice-head input,.rpcm-extra-choice-item input{width:16px;height:16px;flex:0 0 auto;accent-color:#c36298}\n.rpcm-extra-choice-head button{background:transparent;border:0;cursor:pointer;padding:8px;color:#a84b7c;font:inherit;font-size:12px;white-space:nowrap}\n.rpcm-extra-choice-body{padding:2px 12px 12px 34px;display:grid;gap:7px}\n.rpcm-extra-choice-body[hidden]{display:none!important}\n.rpcm-extra-choice-item{border-top:1px solid #eddde6;padding:9px 4px 3px;min-width:0}\n.rpcm-extra-choice-item>details{margin:7px 0 0 24px}\n.rpcm-extra-choice-item>details summary{cursor:pointer;color:#9a6080;font-size:12px}\n.rpcm-extra-library-card pre,.rpcm-extra-choice-item pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;line-height:1.65;margin:9px 0 0;padding:12px;border:1px solid #ead9e3;border-radius:9px;background:rgba(242,211,229,.14);max-height:260px;overflow-y:auto;color:inherit;font-family:inherit}\n.rpcm-extra-folder-empty{padding:10px;font-size:12px;opacity:.7}\n.rpcm-extra-library-picker-row{flex-wrap:wrap!important}\n.rpcm-extra-picker-preview{flex:1 0 100%;min-width:0;border-top:1px solid #ebdce5;padding:9px 3px 3px}\n.rpcm-extra-picker-preview>summary{cursor:pointer;font-size:12px;color:#b45889;font-weight:600;list-style:revert}\n.rpcm-extra-picker-preview>div{display:grid;gap:7px;max-height:300px;overflow-y:auto;padding:10px 2px}\n.rpcm-extra-library-folder>summary,.rpcm-extra-manager-folder>summary{cursor:pointer;padding:10px 12px;display:flex;align-items:center;gap:8px;font-size:12px}\n.rpcm-extra-library-folder-body{padding:0 10px 10px;display:grid;gap:7px}\n.rpcm-extra-library-card{padding:8px 10px;border:1px solid #ead9e3;border-radius:8px}\n.rpcm-extra-library-card>summary{cursor:pointer;display:flex;gap:8px;align-items:center;font-size:12px}\n.rpcm-extra-manager-folder{margin:8px}\n.rpcm-extra-manager-folder>div{padding:0 8px 8px}\n@media(max-width:680px){.rpcm-extra-folder-select-list{padding:10px!important}.rpcm-extra-choice-head{padding:8px}.rpcm-extra-choice-body{padding-left:18px}.rpcm-extra-choice-item>details{margin-left:8px}.rpcm-extra-library-select{width:100vw!important;max-width:none!important}}\n');
+  GM_addStyle('\n/* v0.16.2 · 기타 설정집 폴더별 선택·원문 미리보기 */\n.rpcm-extra-library-select{width:min(690px,calc(100vw - 24px))!important;max-width:690px!important}\n.rpcm-extra-folder-select-list{display:grid;gap:9px;padding:14px!important}\n.rpcm-extra-choice-folder,.rpcm-extra-library-folder,.rpcm-extra-manager-folder{border:1px solid #e9d7e3;border-radius:11px;background:rgba(222,115,165,.035);overflow:hidden}\n.rpcm-extra-choice-head{display:flex;align-items:center;gap:8px;justify-content:space-between;padding:10px 12px}\n.rpcm-extra-choice-head>label,.rpcm-extra-choice-item>label{display:flex;gap:9px;align-items:center;min-width:0;flex:1;cursor:pointer}\n.rpcm-extra-choice-head strong,.rpcm-extra-choice-item strong{font-size:13px;overflow-wrap:anywhere}\n.rpcm-extra-choice-head small,.rpcm-extra-choice-item small,.rpcm-extra-library-folder small,.rpcm-extra-manager-folder small{color:#a18b99;font-size:11px;margin-left:auto;white-space:nowrap}\n.rpcm-extra-choice-head input,.rpcm-extra-choice-item input{width:16px;height:16px;flex:0 0 auto;accent-color:#c36298}\n.rpcm-extra-choice-head button{background:transparent;border:0;cursor:pointer;padding:8px;color:#a84b7c;font:inherit;font-size:12px;white-space:nowrap}\n.rpcm-extra-choice-body{padding:2px 12px 12px 34px;display:grid;gap:7px}\n.rpcm-extra-choice-body[hidden]{display:none!important}\n.rpcm-extra-choice-item{border-top:1px solid #eddde6;padding:9px 4px 3px;min-width:0}\n.rpcm-extra-choice-item>details{margin:7px 0 0 24px}\n.rpcm-extra-choice-item>details summary{cursor:pointer;color:#9a6080;font-size:12px}\n.rpcm-extra-library-card pre,.rpcm-extra-choice-item pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;line-height:1.65;margin:9px 0 0;padding:12px;border:1px solid #ead9e3;border-radius:9px;background:rgba(242,211,229,.14);max-height:260px;overflow-y:auto;color:inherit;font-family:inherit}\n.rpcm-extra-folder-empty{padding:10px;font-size:12px;opacity:.7}\n.rpcm-extra-library-picker-row{flex-wrap:wrap!important}\n.rpcm-extra-picker-preview{flex:1 0 100%;min-width:0;border-top:1px solid #ebdce5;padding:9px 3px 3px}\n.rpcm-extra-picker-preview>summary{cursor:pointer;font-size:12px;color:#b45889;font-weight:600;list-style:revert}\n.rpcm-extra-picker-preview>div{display:grid;gap:7px;max-height:300px;overflow-y:auto;padding:10px 2px}\n.rpcm-extra-library-folder>summary,.rpcm-extra-manager-folder>summary{cursor:pointer;padding:10px 12px;display:flex;align-items:center;gap:8px;font-size:12px}\n.rpcm-extra-library-folder-body{padding:0 10px 10px;display:grid;gap:7px}\n.rpcm-extra-library-card{padding:8px 10px;border:1px solid #ead9e3;border-radius:8px}\n.rpcm-extra-library-card>summary{cursor:pointer;display:flex;gap:8px;align-items:center;font-size:12px}\n.rpcm-extra-manager-folder{margin:8px}\n.rpcm-extra-manager-folder>div{padding:0 8px 8px}\n@media(max-width:680px){.rpcm-extra-folder-select-list{padding:10px!important}.rpcm-extra-choice-head{padding:8px}.rpcm-extra-choice-body{padding-left:18px}.rpcm-extra-choice-item>details{margin-left:8px}.rpcm-extra-library-select{width:100vw!important;max-width:none!important}}\n');
 
   function extraLibraryFolderGroups(items = [], folderNames = []) {
     const groups = new Map();
@@ -13646,6 +13982,7 @@ ${dialogueText}`;
       });
       if(!committedRoom)throw new Error('저장 결과를 만들지 못했습니다.');
       rpcmReplaceRoomObject(room,committedRoom);rpcmRememberRoomBaseline(room);
+      try{queueSemanticIndexRefresh(room,'saved');}catch(error){console.warn('[Wish semantic] index scheduling',error);}
       traceRoomWrite(room,writer,'committed',priorRevision,room._rpcmRevision,'',{startedAt,before:storedForTrace||{},after:room});
       const editTasks=manualExplicitEdits.get(key);for(const [task,version] of stampedEdits)if(editTasks?.get(task)===version)editTasks.delete(task);
       if(room.chatId===state.currentChatId){state.lastSavedAt=Date.now();updateSaveStatusUi('saved');}
@@ -13939,6 +14276,7 @@ ${dialogueText}`;
   // ---------------------------------------------------------------------------
 
   async function apiRequest(method, url, body = undefined) {
+    if(String(method).toUpperCase()!=='GET')invalidateAiMemoryHistory();
     let token=getCookie('access_token');
     // 로그인 초기화/갱신 중 잠깐 비어 있는 쿠키만 기다립니다. 인증 정보는 외부로 노출하지 않습니다.
     for(let attempt=0;!token&&attempt<4;attempt++){await sleep(250);token=getCookie('access_token');}
@@ -15161,24 +15499,30 @@ ${dialogueText}`;
   function loreInjectionCandidates(room, contextText) {
     const result = [];
     const cleanContext = stripAutomationNoise(contextText);
+    const semanticScores=semanticScoresForContext(room,contextText,'lore');
     for (const pack of lorePacksFor(room)) {
       if (pack?.enabled === false) continue;
       for (const card of (Array.isArray(pack?.cards) ? pack.cards : [])) {
         if (!card?.id || card.enabled === false || !LORE_MODES.includes(card.mode) || card.mode === 'off' || (card.mode === 'manual' && card.manualSelected === false)) continue;
         const evidence = card.mode === 'auto' ? loreMatchEvidence(card, cleanContext) : null;
-        if (card.mode === 'auto' && !evidence) continue;
+        const semanticScore=card.mode==='auto'?Number(semanticScores.get(`${pack.id}:${card.id}`)||0):0;
+        const semanticMatch=semanticScore>=SEMANTIC_SEARCH.threshold;
+        if (card.mode === 'auto' && !evidence && !semanticMatch) continue;
         if (!loreCardContentFields(card).full && !loreCardContentFields(card).compact) continue;
         const content = loreCardText(card, 'DETAIL');
         if (!content.trim()) continue;
         const matchKind = evidence?.kind === 'title' ? '제목' : evidence?.kind === 'alias' ? '별칭' : '감지어';
-        const reason = evidence ? `${matchKind} “${evidence.word}” 일치` : card.mode === 'always' ? '항상 주입' : '직접 선택';
+        const baseReason = evidence ? `${matchKind} “${evidence.word}” 일치` : card.mode === 'always' ? '항상 주입' : card.mode==='manual'?'직접 선택':'표현은 달라도 의미가 유사함';
+        const localBonus=card.mode==='auto'?localLoreRankBonus(card,evidence,room,contextText):0;
+        const reason=baseReason+(localBonus?' · 연결 인물 보조':'')+(semanticMatch?` · 의미 유사 ${Math.round(semanticScore*100)}%`:'');
         result.push({
           slotId:`lore:${card.id}`, lorePackId:String(pack.id || ''), loreCardId:String(card.id),
           title:`${String(pack.title || '자료집')} · ${String(card.title || '제목 없음')}`,
           group:'lore', autoType:'lore', loreMode:card.mode,
           content, totalTurns:0, usedTurns:0,
           loreDensity:'DETAIL', loreBaseReason:reason,
-          loreMatchScore:evidence?.score || 0, loreMatchKind:evidence?.kind || '',
+          loreKeywordScore:evidence?.score||0, loreSemanticScore:semanticScore,
+          loreLocalScore:localBonus, loreMatchScore:(evidence?.score||0)+localBonus+(semanticMatch?semanticScore*80:0), loreMatchKind:evidence?.kind || (semanticMatch?'semantic':''),
           matchedAlias:evidence?.word || '', recallReason:`${reason} · DETAIL`,
         });
       }
@@ -18157,7 +18501,7 @@ ${dialogueText}`;
       const block = entry.block;
       return `[후보 ${index + 1}]\nKEY=${block.key}\n시간선=${logTimelineLabelOfBlock(block)}\n제목=${block.heading}\n내용=${String(block.body || '').slice(0, 2200)}`;
     }).join('\n\n');
-    const prompt = `먼저 [현재 RP]만 읽고, 지금 진행 중인 상황을 확인된 사실만으로 한국어 1~2문장(최대 220자)으로 정리한다. 누가 누구에게 무엇을 하고 있으며 어떤 사건·대화·쟁점이 진행 중인지 구체적으로 쓴다. 감정·의도·행동을 추측하거나 아직 발생하지 않은 일을 확정하지 않는다. [키워드 검색 후보]의 과거 내용을 현재 상황에 섞지 않는다.\n\n그다음 현재 RP 맥락과 실제로 이어지는 날짜로그를 고른다. 인물 이름만 겹치는 로그보다 사건·장소·물건·관계 변화·미해결 단서가 이어지는 로그를 우선한다. 후보에 없는 KEY는 만들지 않는다. 최대 ${count}개를 관련도순으로 고른다. 적합한 로그가 없으면 keys는 빈 배열로 반환한다.\n\n[현재 RP]\n${String(contextText || '').slice(-12000)}\n\n[키워드 검색 후보]\n${candidateText}\n\nJSON 한 줄만 출력:\n{"situation":"현재 RP에서 확인된 상황","keys":["후보의 KEY"]}`;
+    const prompt = `먼저 [현재 RP]만 읽고, 지금 진행 중인 상황을 확인된 사실만으로 한국어 1~2문장(최대 220자)으로 정리한다. 누가 누구에게 무엇을 하고 있으며 어떤 사건·대화·쟁점이 진행 중인지 구체적으로 쓴다. 감정·의도·행동을 추측하거나 아직 발생하지 않은 일을 확정하지 않는다. [${semanticEnabled(room)?"하이브리드 검색 후보":"키워드 검색 후보"}]의 과거 내용을 현재 상황에 섞지 않는다.\n\n그다음 현재 RP 맥락과 실제로 이어지는 날짜로그를 고른다. 인물 이름만 겹치는 로그보다 사건·장소·물건·관계 변화·미해결 단서가 이어지는 로그를 우선한다. 후보에 없는 KEY는 만들지 않는다. 최대 ${count}개를 관련도순으로 고른다. 적합한 로그가 없으면 keys는 빈 배열로 반환한다.\n\n[현재 RP]\n${String(contextText || '').slice(-12000)}\n\n[${semanticEnabled(room)?"하이브리드 검색 후보":"키워드 검색 후보"}]\n${candidateText}\n\nJSON 한 줄만 출력:\n{"situation":"현재 RP에서 확인된 상황","keys":["후보의 KEY"]}`;
     const systemInstruction = '현재 RP 상황을 사실대로 정리하고 날짜로그 후보를 맥락 기준으로 재정렬하는 선택기다. 설명 없이 지정된 JSON만 출력한다.';
     const callOptions = { feature:'context', room, responseJsonSchema:AI_CONTEXT_RESPONSE_SCHEMA, allowEmptyText:true, thinkingLevel:'low' };
     let result = await callAiSummaryProvider(provider, settings, secret, systemInstruction, prompt, 2048, () => {}, callOptions);
@@ -18237,6 +18581,8 @@ ${dialogueText}`;
       .slice(-12000);
     if (!contextText) throw new Error('현재 RP 맥락을 불러오지 못했습니다.');
     room.autoRecallContextText = contextText;
+    prepareLocalRecall(room,contextText,recent);
+    await prepareSemanticRecall(room,contextText,recent);
     room.aiContextReviewReport = null;
 
     if (room.pending) {
@@ -18286,7 +18632,7 @@ ${dialogueText}`;
       const fallback = relatedCandidates;
       const failure = recordAiContextFallback(room, error, relatedCandidates, fallback);
       console.warn('[RP Manager] 최초 주입 AI 맥락 검토 실패, 키워드 결과를 사용합니다.', error);
-      notify(`AI 맥락 검토 실패 · ${failure.category}\n기본 키워드 방식으로 대체됨`, 'warn', 6500);
+      notify(`AI 맥락 검토 실패 · ${failure.category}\n${semanticEnabled(room)?'하이브리드 검색':'기본 키워드 방식'}으로 대체됨`, 'warn', 6500);
       return items;
     }
 
@@ -18297,10 +18643,10 @@ ${dialogueText}`;
       slot,
       'related-log',
       '관련로그',
-      `${logTimelineLabelOfBlock(scored.block)} · AI 맥락 검토`,
+      `${logTimelineLabelOfBlock(scored.block)} · AI 맥락 검토 · ${relatedLogReason(scored)}`,
       {
         score:scored.score,
-        coreScore:scored.coreScore,
+        coreScore:scored.coreScore, keywordScore:scored.keywordScore, semanticScore:scored.semanticScore, ...localRecallExtras(scored),
         characterScore:scored.characterScore,
         rank:index + 1,
         candidateCount:relatedCandidates.length,
@@ -18313,6 +18659,7 @@ ${dialogueText}`;
   }
 
   async function addAutoRelatedLogsToPending(room, contextText) {
+    if(room){prepareLocalRecall(room,contextText);await prepareSemanticRecall(room,contextText);}
     if (!room.pending || !room.autoLogRecallEnabled) return 0;
     const slot = (room.slots || []).find(s => s.id === 'logSummary');
     if (!slot?.enabled || !String(slot.content || '').trim()) return 0;
@@ -18336,7 +18683,7 @@ ${dialogueText}`;
         const failure = recordAiContextFallback(room, error, relatedCandidates, fallback);
         related = fallback;
         console.warn('[RP Manager] AI 맥락 검토 실패, 키워드 결과를 사용합니다.', error);
-        notify(`AI 맥락 검토 실패 · ${failure.category}\n기본 키워드 방식으로 대체됨`, 'warn', 6500);
+        notify(`AI 맥락 검토 실패 · ${failure.category}\n${semanticEnabled(room)?'하이브리드 검색':'기본 키워드 방식'}으로 대체됨`, 'warn', 6500);
       }
     }
 
@@ -18357,11 +18704,12 @@ ${dialogueText}`;
       // 최초 주입 경로와 자동 갱신 경로가 같은 메타데이터 구조를 사용하게 해서
       // 총점만 있고 핵심/인물 점수·매칭어·후보순위가 사라지는 현상을 막습니다.
       const selectionMethod = room.aiContextLogRerankEnabled
-        ? (room.aiContextReviewReport?.state === 'success' ? 'AI 맥락 검토로 선정' : 'AI 검토 실패 후 키워드 선정')
-        : 'AI 맥락 검토 OFF · 기본 검색';
+        ? (room.aiContextReviewReport?.state === 'success' ? 'AI 맥락 검토로 선정' : (semanticEnabled(room)?'AI 검토 실패 후 하이브리드 선정':'AI 검토 실패 후 키워드 선정'))
+        : (semanticEnabled(room)?'AI 맥락 검토 OFF · 하이브리드 검색':'AI 맥락 검토 OFF · 기본 검색');
       const next = makeLogRecallItem(b, slot, 'related-log', '관련로그', `${logTimelineLabelOfBlock(b)} · ${selectionMethod} · ${relatedLogReason(scored)}`, {
         score: scored.score,
         coreScore: scored.coreScore,
+          keywordScore: scored.keywordScore, semanticScore: scored.semanticScore, ...localRecallExtras(scored),
         characterScore: scored.characterScore,
         rank: relatedIndex + 1,
         candidateCount: relatedCandidates.length,
@@ -18560,6 +18908,7 @@ ${dialogueText}`;
   }
 
   async function replacePendingRelatedLog(room, identity) {
+    if(room){prepareLocalRecall(room,room.autoRecallContextText||'');await prepareSemanticRecall(room,room.autoRecallContextText||'');}
     const pending = room?.pending;
     if (!pending) throw new Error('현재 주입 중인 항목이 없습니다.');
     const current = activePendingItems(pending).find(item => pendingItemIdentity(item) === identity && item.autoType === 'related-log');
@@ -18578,10 +18927,10 @@ ${dialogueText}`;
     const scored = candidates[0];
     if (!scored) throw new Error('현재 맥락에 맞는 다른 관련로그 후보가 없습니다.');
     const rerollMethod = room.aiContextLogRerankEnabled
-      ? (room.aiContextReviewReport?.state === 'success' ? 'AI 맥락 검토로 선정' : 'AI 검토 실패 후 키워드 선정')
-      : 'AI 맥락 검토 OFF · 기본 검색';
+      ? (room.aiContextReviewReport?.state === 'success' ? 'AI 맥락 검토로 선정' : (semanticEnabled(room)?'AI 검토 실패 후 하이브리드 선정':'AI 검토 실패 후 키워드 선정'))
+      : (semanticEnabled(room)?'AI 맥락 검토 OFF · 하이브리드 검색':'AI 맥락 검토 OFF · 기본 검색');
     const next = makeLogRecallItem(scored.block, slot, 'related-log', '관련로그', `${logTimelineLabelOfBlock(scored.block)} · ${rerollMethod} · ${relatedLogReason(scored)}`, {
-      score:scored.score, coreScore:scored.coreScore, characterScore:scored.characterScore, rank:1, candidateCount:candidates.length,
+      score:scored.score, coreScore:scored.coreScore, keywordScore:scored.keywordScore, semanticScore:scored.semanticScore, ...localRecallExtras(scored), characterScore:scored.characterScore, rank:1, candidateCount:candidates.length,
       matchedTerms:[...(scored.matchedPhrases || []), ...(scored.matchedCoreTokens || []), ...(scored.matchedCharacterTerms || [])],
       matchedCoreTerms:[...(scored.matchedPhrases || []), ...(scored.matchedCoreTokens || []), ...(scored.matchedRareTokens || [])],
       matchedCharacterTerms:[...(scored.matchedCharacterTerms || [])],
@@ -18632,6 +18981,8 @@ ${dialogueText}`;
     const sceneMessages = (recentMessages || []).filter(m => ['user','assistant'].includes(messageRoleOf(m))).slice(0, 6);
     const cleanFreshText = sceneMessages.map(m => stripAutomationNoise(messageTextOf(m), true)).filter(Boolean).join('\n');
     room.autoRecallContextText = cleanFreshText.slice(-12000);
+    prepareLocalRecall(room,cleanFreshText,sceneMessages);
+    await prepareSemanticRecall(room,cleanFreshText,sceneMessages);
     const charResult = await autoDetectCharacters(room, sceneMessages);
     const itemResult = autoDetectImportantItems(room, sceneMessages);
     const personDetected = autoDetectPersonProfiles(room, cleanFreshText);
@@ -18656,6 +19007,8 @@ ${dialogueText}`;
     if (!cleanText.trim()) throw new Error('최신 RP 본문을 읽지 못했습니다.');
 
     room.autoRecallContextText = cleanText.slice(-12000);
+    prepareLocalRecall(room,cleanText,sceneMessages);
+    await prepareSemanticRecall(room,cleanText,sceneMessages);
     const newest = sceneMessages[0];
     if (newest) room.autoScanLastMessageId = String(messageIdOf(newest) || room.autoScanLastMessageId || '');
 
@@ -18703,6 +19056,8 @@ ${dialogueText}`;
     const recallText = recentForAuto.filter(m => ['user','assistant'].includes(messageRoleOf(m))).slice(0,6)
       .map(m => stripAutomationNoise(messageTextOf(m),true)).filter(Boolean).join('\n');
     room.autoRecallContextText = recallText.slice(-12000);
+    prepareLocalRecall(room,recallText,recentForAuto);
+    await prepareSemanticRecall(room,recallText,recentForAuto);
     const recent = await fetchRecentMessages(apiChatIdOf(room), 40);
     if (!recent.length) throw new Error('채팅 메시지를 찾지 못했습니다.');
     const newest = recent[0];
@@ -18831,7 +19186,7 @@ ${dialogueText}`;
       ? await refreshAutomaticMemories(room, recentForAuto)
       : { detected: [], added: 0, reset: 0, itemDetected: [], itemReset: 0, logAdded: 0, freshCount: 0 };
     if (room.pending) room.pending.items = p.items;
-    // 0.15.27: a legacy pending snapshot may contain auto picks from weeks ago.
+    // 0.16.1: a legacy pending snapshot may contain auto picks from weeks ago.
     // Do not retain it without a fresh mention merely because a retention counter remains.
     p.items = (p.items || []).filter(item => {
       if (!['item','character'].includes(item.group)) return true;
@@ -19272,6 +19627,7 @@ ${dialogueText}`;
         const roots = new Set();
         for (const m of mutations) {
           if (isManagerUiNode(m.target)) continue;
+          invalidateAiMemoryHistory();
           if (m.type === 'characterData') {
             if (nodeContainsRenderedContextMarker(m.target)) roots.add(m.target.parentElement || m.target);
             continue;
@@ -19435,11 +19791,24 @@ ${dialogueText}`;
     `);
   }
 
+  function responseRefinerConnectionInfo(){
+    const shared=aiFeatureSettings(loadAiSummarySettings(),'utility');
+    let stored={};try{stored=JSON.parse(GM_getValue('wish-rp-core-response-refiner-settings-v3','')||'{}');}catch(_){}
+    const live=window.__WISH_RP_MANAGER_REFINER__?.connectionInfo?.();
+    return {...shared,provider:shared.provider,model:String(live?.model||stored.responseRefinerModels?.[shared.provider]||shared.models?.[shared.provider]||''),thinkingLevel:live?.thinkingLevel||stored.responseRefinerThinkingLevel||'medium',enabled:live?.enabled??stored.enabled??true};
+  }
+
   function openUnifiedApiSettingsDialog(room, mount = null) {
     return new Promise(resolve => {
       if (!mount) document.querySelector('#rpcm-api-settings-backdrop')?.remove();
       let settings = loadAiSummarySettings();
       let provider = settings.provider;
+      let semanticKeyDraft=readSemanticApiKey(),semanticResult=null,semanticBusy=false;
+      const rememberSemantic=()=>{const input=backdrop.querySelector('#rpcm-api-semantic-key');if(input)semanticKeyDraft=input.value.trim();};
+      const semanticFeedback=(kind,message)=>{
+        const node=backdrop.querySelector('#rpcm-api-semantic-status');if(!node)return;
+        node.dataset.state=kind;node.textContent=message;
+      };
       const draftSecrets = new Map(AI_SUMMARY_PROVIDERS.map(id => [id, readAiSecret(id)]));
       const backdrop = mount || document.createElement('div');
       if (!mount) { backdrop.id = 'rpcm-api-settings-backdrop'; backdrop.className = 'rpcm-unified-api-backdrop'; document.body.appendChild(backdrop); }
@@ -19451,13 +19820,15 @@ ${dialogueText}`;
         return `<span class="rpcm-api-state ${esc(status.state || 'idle')}">${label}</span>${status.message ? `<small>${esc(status.message)}</small>` : ''}${status.state === 'error' && detail ? `<small class="rpcm-api-error-detail" title="${esc(detail)}">${esc(detail.slice(0, 600))}</small>` : ''}`;
       };
       const rememberForm = () => {
+        rememberSemantic();
         const providerEl = backdrop.querySelector('#rpcm-api-provider');
         const formProvider = provider;
         const secretEl = backdrop.querySelector('#rpcm-api-secret');
         if (secretEl) draftSecrets.set(formProvider, secretEl.value);
         const featureModels = { ...(settings.featureModels || {}) };
-        for (const feature of ['summary','timeline','context','itemFolder','utility','longTermManualFirst','longTermAutoFirst','longTermSecond','longTermNative']) {
-          const model = String(backdrop.querySelector(`[data-api-feature-model="${feature}"]`)?.value || settings.models?.[formProvider] || AI_SUMMARY_PROVIDER_DEFAULTS[formProvider]?.model || '');
+        for (const feature of ['summary','timeline','context','itemFolder','utility']) {
+          const control=backdrop.querySelector(`[data-api-feature-model="${feature}"]`);if(!control)continue;
+          const model = String(control.value || settings.models?.[formProvider] || AI_SUMMARY_PROVIDER_DEFAULTS[formProvider]?.model || '');
           featureModels[feature] = { provider:formProvider, model };
         }
         settings.featureModels = featureModels;
@@ -19475,6 +19846,7 @@ ${dialogueText}`;
       };
       const persist = async () => {
         rememberForm();
+        if(semanticKeyDraft)saveSemanticApiKey(semanticKeyDraft);
         settings = saveAiSummarySettings(settings);
         // 빈 draft 값 때문에 이미 저장된 인증정보가 삭제되지 않도록 보호합니다.
         // 인증정보 삭제는 별도 UI가 생기기 전까지 자동으로 수행하지 않습니다.
@@ -19501,6 +19873,11 @@ ${dialogueText}`;
             : `<select data-api-feature-model="${feature}">${modelOptions(selected)}</select>`;
           return `<div class="rpcm-api-feature-row"><div><strong>${esc(aiFeatureStatusLabel(feature))}</strong><small>${esc(description)}</small></div>${modelControl}<div class="rpcm-api-feature-status">${statusText(feature === 'context' && !room.aiContextLogRerankEnabled ? { state:'off' } : status)}</div></div>`;
         };
+        const refiner=responseRefinerConnectionInfo();
+        const refinerStatus=settings.featureStatus?.responseRefiner;
+        const refinerStatusCurrent=refinerStatus?.provider===refiner.provider&&refinerStatus?.model===refiner.model?refinerStatus:null;
+        const refinerRow=`<div class="rpcm-api-feature-row"><div><strong>AI 응답교정</strong><small>실제 교정 연결 · ${refiner.enabled?'자동 검토 ON':'자동 검토 OFF · 수동 검토 가능'}</small></div><div><span>${esc(refiner.provider)} · ${esc(refiner.model)}</span><small>추론 ${esc(refiner.thinkingLevel)} · 짧은 연결 테스트는 교정 품질 검사가 아닙니다.</small><button type="button" class="rpcm-ai-btn" data-api-act="refiner-settings">교정 설정</button></div><div class="rpcm-api-feature-status">${statusText(refinerStatusCurrent)}</div></div>`;
+        const semanticCard=`<section class="rpcm-ai-card" data-semantic-connection><h3>의미검색 전용 연결</h3><p class="rpcm-ai-help">의미 검색용 Gemini API Key. Firebase 방식은 검색 준비용 별도 키가 필요합니다. <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer">Google AI Studio에서 무료 키 발급 가능</a>.</p><label class="rpcm-ai-field"><span>검색용 Gemini API 키</span><input id="rpcm-api-semantic-key" type="password" autocomplete="new-password" spellcheck="false" value="${esc(semanticKeyDraft)}" placeholder="의미검색에만 사용할 키" aria-label="의미검색용 Gemini API 키"></label><p class="rpcm-ai-help">검색용 키는 공용 연결과 따로 저장됩니다. AI 요약·응답교정 등은 위의 공용 연결을 사용합니다. 키 발급은 무료이며 API 이용 한도·요금은 프로젝트 설정에 따라 달라집니다.</p><div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" class="rpcm-ai-btn" data-api-act="semantic-save" ${semanticBusy?'disabled':''}>검색용 키 저장</button><button type="button" class="rpcm-ai-btn" data-api-act="semantic-test" ${semanticBusy?'disabled':''}>의미검색 연결 테스트</button></div><div id="rpcm-api-semantic-status" class="rpcm-ai-status" role="status" aria-live="polite"></div></section>`;
         const openAiModelList = provider === 'openai'
           ? `<datalist id="rpcm-openai-model-list">${models.map(item => `<option value="${esc(item.value)}">${esc(item.label)}</option>`).join('')}</datalist>`
           : '';
@@ -19512,7 +19889,11 @@ ${dialogueText}`;
         const secretInput = provider === 'firebase' || provider === 'vertex'
           ? `<textarea id="rpcm-api-secret" spellcheck="false" placeholder="${esc(secretLabel)}">${esc(draftSecrets.get(provider) || '')}</textarea>`
           : `<input id="rpcm-api-secret" type="password" autocomplete="new-password" value="${esc(draftSecrets.get(provider) || '')}" placeholder="${esc(secretLabel)}">`;
-        backdrop.innerHTML = `<div class="rpcm-ai-dialog rpcm-unified-api-dialog"><div class="rpcm-ai-head"><div><h2>⚙ API 설정</h2><p>AI 요약·연속성 타임라인·AI 맥락 검토·중요 물품 폴더 정리·AI 어시스턴트를 관리합니다.</p></div><div class="rpcm-ai-spacer"></div><button type="button" class="rpcm-ai-close" data-api-act="close" aria-label="닫기" data-rpcm-close="icon">✕</button></div><div class="rpcm-ai-body"><section class="rpcm-ai-card"><h3>공통 연결</h3><div class="rpcm-ai-grid"><label class="rpcm-ai-field"><span>연결 방식</span><select id="rpcm-api-provider">${providerOptions}</select></label>${provider === 'openai' ? `<label class="rpcm-ai-field"><span>OpenAI / 호환 API 주소</span><input id="rpcm-api-openai-url" value="${esc(settings.openaiBaseUrl || '')}" placeholder="https://api.openai.com/v1"></label>` : ''}${provider === 'vertex' ? `<label class="rpcm-ai-field"><span>Vertex 위치</span><input id="rpcm-api-vertex-location" value="${esc(settings.vertexLocation || 'global')}"></label><label class="rpcm-ai-field"><span>프로젝트 ID</span><input id="rpcm-api-vertex-project" value="${esc(settings.vertexProjectId || '')}"></label>` : ''}<label class="rpcm-ai-field rpcm-ai-secret" style="grid-column:1/-1"><span>${secretLabel}</span>${secretInput}</label></div><p class="rpcm-ai-help">인증 정보는 이 브라우저에만 저장되며 전체 백업에는 포함되지 않습니다.</p></section><section class="rpcm-ai-card"><h3>기능별 모델과 상태</h3><div class="rpcm-api-feature-list">${featureRow('summary','날짜요약·현재상태 생성')}${featureRow('timeline','전체 타임라인 초안 생성')}${featureRow('context','관련 날짜로그 후보 검토')}${featureRow('itemFolder','중요 물품 폴더 제안')}${featureRow('utility','검색·검수·제안 기능 공통')}</div>${openAiModelList}${openAiModelHelp}<label class="rpcm-api-context-toggle"><span><strong>AI 맥락 검토 사용</strong><small>실패하면 기본 키워드 방식으로 자동 대체합니다.</small></span><input id="rpcm-api-context-enabled" type="checkbox" ${room.aiContextLogRerankEnabled ? 'checked' : ''}></label></section>${renderRoomAiUsageHtml(room)}<div class="rpcm-ai-status" id="rpcm-api-settings-status"></div></div><div class="rpcm-ai-foot"><button type="button" class="rpcm-ai-btn" data-api-act="test">기능별 연결 테스트</button><button type="button" class="rpcm-ai-btn" data-api-act="close">취소</button><button type="button" class="rpcm-ai-btn primary" data-api-act="save">설정 저장</button></div></div>`;
+        backdrop.innerHTML = `<div class="rpcm-ai-dialog rpcm-unified-api-dialog"><div class="rpcm-ai-head"><div><h2>⚙ API 설정</h2><p>기능별 AI 연결과 응답교정의 실제 모델·상태를 확인합니다.</p></div><div class="rpcm-ai-spacer"></div><button type="button" class="rpcm-ai-close" data-api-act="close" aria-label="닫기" data-rpcm-close="icon">✕</button></div><div class="rpcm-ai-body"><section class="rpcm-ai-card"><h3>공통 연결</h3><div class="rpcm-ai-grid"><label class="rpcm-ai-field"><span>연결 방식</span><select id="rpcm-api-provider">${providerOptions}</select></label>${provider === 'openai' ? `<label class="rpcm-ai-field"><span>OpenAI / 호환 API 주소</span><input id="rpcm-api-openai-url" value="${esc(settings.openaiBaseUrl || '')}" placeholder="https://api.openai.com/v1"></label>` : ''}${provider === 'vertex' ? `<label class="rpcm-ai-field"><span>Vertex 위치</span><input id="rpcm-api-vertex-location" value="${esc(settings.vertexLocation || 'global')}"></label><label class="rpcm-ai-field"><span>프로젝트 ID</span><input id="rpcm-api-vertex-project" value="${esc(settings.vertexProjectId || '')}"></label>` : ''}<label class="rpcm-ai-field rpcm-ai-secret" style="grid-column:1/-1"><span>${secretLabel}</span>${secretInput}</label></div><p class="rpcm-ai-help">인증 정보는 이 브라우저에만 저장되며 전체 백업에는 포함되지 않습니다.</p></section>${semanticCard}<section class="rpcm-ai-card"><h3>기능별 모델과 상태</h3><div class="rpcm-api-feature-list">${featureRow('summary','날짜요약·현재상태 생성')}${featureRow('timeline','전체 타임라인 초안 생성')}${featureRow('context','관련 날짜로그 후보 검토')}${featureRow('itemFolder','중요 물품 폴더 제안')}${featureRow('utility','검색·검수·제안 기능 공통')}${refinerRow}</div>${openAiModelList}${openAiModelHelp}<label class="rpcm-api-context-toggle"><span><strong>AI 맥락 검토 사용</strong><small>실패하면 기본 키워드 방식으로 자동 대체합니다.</small></span><input id="rpcm-api-context-enabled" type="checkbox" ${room.aiContextLogRerankEnabled ? 'checked' : ''}></label></section>${renderRoomAiUsageHtml(room)}<div class="rpcm-ai-status" id="rpcm-api-settings-status"></div></div><div class="rpcm-ai-foot"><button type="button" class="rpcm-ai-btn" data-api-act="test">기능별 연결 테스트</button><button type="button" class="rpcm-ai-btn" data-api-act="close">취소</button><button type="button" class="rpcm-ai-btn primary" data-api-act="save">설정 저장</button></div></div>`;
+        backdrop.querySelector('#rpcm-api-semantic-key').oninput=()=>{rememberSemantic();semanticResult=null;semanticFeedback('idle','키를 변경했습니다. 저장하거나 연결을 확인해 주세요.');};
+        if(semanticBusy)semanticFeedback('idle','의미검색 연결을 확인하는 중…');
+        else if(semanticResult&&semanticResult.key===semanticKeyDraft)semanticFeedback(semanticResult.kind,semanticResult.message);
+        else semanticFeedback('idle',semanticKeyDraft?'Gemini 임베딩 · gemini-embedding-001 · 연결 확인 전':'검색용 키를 입력해 주세요. 키가 없으면 로컬 검색을 사용합니다.');
         backdrop.querySelector('#rpcm-api-provider').onchange = event => { rememberForm(); provider = event.target.value; settings.provider = provider; render(); };
       };
       const finish = value => { if(mount){mount.replaceChildren();mount.hidden=true;}else backdrop.remove(); resolve(value); };
@@ -19521,25 +19902,46 @@ ${dialogueText}`;
         const action = event.target.closest('[data-api-act]')?.dataset.apiAct;
         if (!action) return;
         if (action === 'close') { finish(false); return; }
-        if (action === 'save') { await persist(); notify('API 설정을 저장했습니다.', 'success'); finish(true); return; }
+        if (action === 'refiner-settings') { finish(false);window.__WISH_RP_MANAGER_REFINER__?.openSettings();return; }
+        if(action==='semantic-save'||action==='semantic-test'){
+          if(semanticBusy)return;rememberSemantic();const key=semanticKeyDraft;
+          try{
+            if(!key)throw new Error('의미검색용 Gemini API 키를 입력해 주세요.');
+            if(action==='semantic-save'){
+              saveSemanticApiKey(key);semanticResult={key,kind:'ok',message:'검색용 키 저장됨 · 공용 연결 설정은 그대로 유지됩니다.'};
+            }else{
+              semanticBusy=true;backdrop.querySelectorAll('[data-api-act="semantic-save"],[data-api-act="semantic-test"]').forEach(button=>button.disabled=true);
+              semanticFeedback('idle','의미검색 연결을 확인하는 중…');const started=Date.now();
+              const prompt='의미검색 연결 확인',result=await semanticApiRequest(key,[prompt],'RETRIEVAL_QUERY',SEMANTIC_SEARCH.indexTimeoutMs);
+              recordRoomAiUsage(room,'semanticQuery','gemini',SEMANTIC_SEARCH.model,{inputTokens:result.tokens,outputTokens:0},{},{prompt});refreshAiRoomUsageUi(room);queueRoomAutoSave(room,800);
+              semanticResult={key,kind:'ok',message:`연결 정상 · Gemini 임베딩 256차원 · ${((Date.now()-started)/1000).toFixed(1)}초 · ${readAiSecret('semanticGemini').trim()===key?'검색용 키 저장됨':'입력한 키로 테스트했습니다. 사용하려면 검색용 키를 저장해 주세요.'}`};
+            }
+          }catch(error){semanticResult={key,kind:'error',message:`${action==='semantic-save'?'저장':'연결 테스트'} 실패 · ${String(error.message||'다시 시도해 주세요.').replaceAll(key||'__empty_key__','[키 숨김]')}`};}
+          finally{semanticBusy=false;if(backdrop.isConnected){backdrop.querySelectorAll('[data-api-act="semantic-save"],[data-api-act="semantic-test"]').forEach(button=>button.disabled=false);if(semanticKeyDraft===key)semanticFeedback(semanticResult.kind,semanticResult.message);}}
+          return;
+        }
+        if (action === 'save') { try{await persist();notify('API 설정을 저장했습니다.', 'success');finish(true);}catch(error){backdrop.querySelector('#rpcm-api-settings-status').textContent=String(error.message||'설정을 저장하지 못했습니다.');}return; }
         if (action === 'test') {
           const button = event.target.closest('button');
           const status = backdrop.querySelector('#rpcm-api-settings-status');
           try {
             await persist(); button.disabled = true; status.textContent = '기능별 연결을 확인하는 중…';
-            for (const feature of ['summary','timeline','context','itemFolder','utility','longTermManualFirst','longTermAutoFirst','longTermSecond','longTermNative']) {
+            for (const feature of ['summary','timeline','context','itemFolder','utility','responseRefiner']) {
               if (feature === 'context' && !room.aiContextLogRerankEnabled) { setAiFeatureStatus(feature, 'off', provider, settings.featureModels?.[feature]?.model, '사용 안 함'); continue; }
-              const next = aiFeatureSettings(settings, feature);
-              const model = next.models?.[next.provider] || '';
+              const next = feature==='responseRefiner'?responseRefinerConnectionInfo():aiFeatureSettings(settings, feature);
+              const model = feature==='responseRefiner'?next.model:next.models?.[next.provider] || '';
+              const started=Date.now();
               try {
-                const result = await callAiSummaryProvider(next.provider, next, draftSecrets.get(next.provider) || '', '짧게 응답하세요.', '연결 테스트입니다. 정확히 OK만 출력하세요.', 64, () => {}, { feature, room });
-                setAiFeatureStatus(feature, 'ok', next.provider, result.model || model, '연결 및 모델 호출 정상');
+                const result = feature==='responseRefiner'
+                  ? await window.__WISH_RP_MANAGER_AI_BRIDGE__.call('연결 테스트입니다. 정확히 OK만 출력하세요.',{test:true,responseRefiner:true,model,thinkingLevel:next.thinkingLevel})
+                  : await callAiSummaryProvider(next.provider, next, draftSecrets.get(next.provider) || '', '짧게 응답하세요.', '연결 테스트입니다. 정확히 OK만 출력하세요.', 64, () => {}, { feature, room });
+                setAiFeatureStatus(feature, 'ok', next.provider, result.model || model, `연결 및 모델 호출 정상 · ${((Date.now()-started)/1000).toFixed(1)}초`);
               } catch (error) {
                 const failure = classifyAiFailure(error);
                 setAiFeatureStatus(feature, 'error', next.provider, model, failure.category, failure.detail);
               }
             }
-            settings = loadAiSummarySettings(); status.textContent = '기능별 연결 테스트를 마쳤습니다.'; render();
+            settings = loadAiSummarySettings(); render(); backdrop.querySelector('#rpcm-api-settings-status').textContent = '기능별 연결 테스트를 마쳤습니다.';
           } catch (error) { status.textContent = `테스트 실패 · ${friendlyAiErrorMessage(error)}`; }
           finally { button.disabled = false; }
         }
@@ -29014,16 +29416,16 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
 
 
   GM_addStyle('\n.rpcm-ltm-result-unified .rpcm-ltm-bulk-tabs,\n.rpcm-ltm-result-unified .rpcm-ltm-bulk-toolbar,\n.rpcm-ltm-result-unified [data-ltm-add-card]{display:none!important}\n.rpcm-ltm-result-unified .rpcm-ltm-review-editor{min-width:0}\n.rpcm-ltm-result-unified .rpcm-ltm-result-paste{margin-bottom:12px}\n.rpcm-ltm-result-unified .rpcm-ltm-existing-group{margin-bottom:14px}\n.rpcm-ltm-result-unified .rpcm-ltm-review-group.is-new{display:block}\n@media(max-width:800px){.rpcm-ltm-result-unified .rpcm-ltm-bulk{width:100%;max-height:100dvh;height:100dvh;border-radius:0}.rpcm-ltm-result-unified .rpcm-ltm-review-layout{overflow:auto}}\n');
-  GM_addStyle('\n/* v0.15.27 — long-term result review visual polish; presentation only */\n.rpcm-ltm-result-unified .rpcm-ltm-bulk{width:min(1080px,calc(100vw - 40px))!important;max-height:min(88vh,880px)!important;border-radius:20px!important;box-shadow:0 22px 75px rgba(45,25,41,.22)!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-bulk-header{padding:20px 24px!important;background:var(--wish-card,#fff)!important;border-bottom:1px solid var(--wish-line,#efdde7)!important;gap:12px!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-bulk-header h3{font-size:19px!important;font-weight:750!important;letter-spacing:-.4px;margin:0 0 6px!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-bulk-header small{font-size:12px!important;line-height:1.6!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-review-layout{grid-template-columns:minmax(0,1.45fr) minmax(275px,.75fr)!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-review-editor{padding:22px 24px 28px!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-review-preview{padding:22px 20px!important;background:var(--wish-card-2,#fff9fc)!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-review-preview>header{top:-22px!important;padding:2px 0 14px!important;background:var(--wish-card-2,#fff9fc)!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-review-preview h4{font-size:15px!important;font-weight:700!important;margin:0 0 5px!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-review-preview small{font-size:12px;line-height:1.6;}\n.rpcm-ltm-result-unified .rpcm-ltm-existing-group{background:var(--wish-card-2,#fff9fc)!important;border-radius:14px!important;padding:0 14px!important;margin:0 0 22px!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-existing-group>summary{padding:15px 4px!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-existing-group>summary h4{font-size:14px!important;font-weight:700!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-existing-group>summary h4 small{font-weight:500;color:var(--wish-fg-2,#907c8c);}\n.rpcm-ltm-result-unified .rpcm-ltm-review-group.is-new{border:0!important;margin:0!important;padding:0!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-review-group.is-new>header{margin:0 0 12px!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-review-group.is-new>header h4{font-size:15px!important;font-weight:750!important;margin:0!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-result-paste{padding:17px!important;border:1px solid var(--wish-line,#efdde7);background:var(--wish-card-2,#fff9fc)!important;border-radius:15px!important;margin-bottom:18px!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-result-paste label{font-size:13px!important;font-weight:700!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-result-paste textarea{min-height:148px!important;max-height:32vh;resize:vertical!important;border-radius:11px!important;margin-top:4px!important;padding:14px!important;font-size:13px!important;line-height:1.7!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-result-paste>div{justify-content:space-between!important;gap:8px!important;}\n.rpcm-ltm-result-unified [data-ltm-paste-file]{flex:1;min-width:0;max-width:260px;font-size:12px!important;}\n.rpcm-ltm-result-unified [data-ltm-paste-add]{background:var(--wish-accent-soft,#fcecf4)!important;border-color:var(--wish-accent-line,#ecc5d9)!important;color:var(--wish-accent-strong,#a14b7a)!important;font-weight:700!important;}\n.rpcm-ltm-result-unified [data-ltm-paste-status]{font-size:12px!important;line-height:1.6!important;overflow-wrap:anywhere;}\n.rpcm-ltm-result-unified .rpcm-ltm-bulk-card{border-radius:13px!important;overflow:hidden;margin-bottom:2px;}\n.rpcm-ltm-result-unified .rpcm-ltm-bulk footer{padding:14px 22px!important;background:var(--wish-card,#fff)!important;border-top:1px solid var(--wish-line,#efdde7)!important;gap:10px!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-bulk footer [data-ltm-bulk-status]{font-size:12px!important;color:var(--wish-fg-2,#907c8c)!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-bulk footer button{min-height:39px!important;border-radius:10px!important;font-weight:650!important;}\n.rpcm-ltm-result-unified :is(button,textarea,input):focus-visible,.rpcm-ltm-result-unified summary:focus-visible{outline:2px solid var(--wish-accent-strong,#b45b8d)!important;outline-offset:2px!important;}\n@media(max-width:800px){.rpcm-ltm-result-unified .rpcm-ltm-bulk{width:100vw!important;max-height:100dvh!important;height:100dvh!important;border-radius:0!important}.rpcm-ltm-result-unified .rpcm-ltm-review-layout{display:block!important;overflow:auto!important}.rpcm-ltm-result-unified .rpcm-ltm-review-editor{padding:16px!important}.rpcm-ltm-result-unified .rpcm-ltm-review-preview{padding:16px!important}.rpcm-ltm-result-unified .rpcm-ltm-bulk-header{padding:15px 16px!important}.rpcm-ltm-result-unified .rpcm-ltm-bulk footer{padding:12px 16px!important}.rpcm-ltm-result-unified [data-ltm-paste-file]{max-width:100%}}\n');
-  GM_addStyle('\n/* v0.15.27: generous paste area for long-term memory imports */\n.rpcm-ltm-result-unified .rpcm-ltm-review-editor .rpcm-ltm-result-paste textarea[data-ltm-paste]{height:clamp(300px,42vh,480px)!important;min-height:300px!important;max-height:none!important;resize:vertical!important;overflow-y:auto!important;box-sizing:border-box!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-review-editor .rpcm-ltm-result-paste{width:100%!important;box-sizing:border-box!important;}\n@media(max-width:800px){.rpcm-ltm-result-unified .rpcm-ltm-review-editor .rpcm-ltm-result-paste textarea[data-ltm-paste]{height:36dvh!important;min-height:240px!important;}}\n');
-  GM_addStyle('\n/* v0.15.27 — single-surface result import, matching manager panels */\n.rpcm-ltm-result-unified .rpcm-ltm-bulk{width:min(980px,calc(100vw - 44px))!important;max-height:min(88dvh,900px)!important;border-radius:18px!important}\n.rpcm-ltm-result-unified .rpcm-ltm-review-layout{display:block!important;overflow-y:auto!important;overflow-x:hidden!important;background:#fff!important}\n.rpcm-ltm-result-unified .rpcm-ltm-review-editor{padding:20px 28px 24px!important;overflow:visible!important;max-width:unset!important}\n.rpcm-ltm-result-unified .rpcm-ltm-review-preview{display:none!important}\n.rpcm-ltm-result-unified.rpcm-ltm-preview-open .rpcm-ltm-review-preview{display:block!important;margin:0 28px 24px!important;padding:18px 20px!important;border:1px solid var(--wish-line,#ecdbe5)!important;border-radius:13px!important;background:var(--wish-card-2,#fff9fc)!important}\n.rpcm-ltm-result-unified .rpcm-ltm-bulk-header{padding:19px 28px!important}\n.rpcm-ltm-result-unified .rpcm-ltm-existing-group{padding:0 16px!important;margin:0 0 18px!important;border:1px solid var(--wish-line,#ecdbe5)!important;background:#fff!important}\n.rpcm-ltm-result-unified .rpcm-ltm-existing-group>summary{display:flex!important;align-items:center!important;justify-content:space-between!important;min-height:46px!important;padding:8px 2px!important}\n.rpcm-ltm-result-unified .rpcm-ltm-existing-group>summary h4{font-size:14px!important}\n.rpcm-ltm-result-unified .rpcm-ltm-review-group.is-new>header{padding:0 2px 9px!important;margin:0!important}\n.rpcm-ltm-result-unified .rpcm-ltm-result-paste{padding:16px 18px!important;border:1px solid var(--wish-line,#ecdbe5)!important;background:var(--wish-card-2,#fff9fc)!important;border-radius:13px!important}\n.rpcm-ltm-result-unified .rpcm-ltm-result-paste textarea[data-ltm-paste]{height:clamp(240px,34dvh,380px)!important;min-height:240px!important;max-height:none!important;width:100%!important;border:1px solid var(--wish-line,#e8d7e2)!important;background:#fff!important;resize:vertical!important;font-size:14px!important;line-height:1.75!important}\n.rpcm-ltm-result-unified .rpcm-ltm-result-paste>div{display:flex!important;align-items:center!important;gap:12px!important;flex-wrap:wrap!important;margin-top:10px!important}\n.rpcm-ltm-result-unified [data-ltm-paste-file]{width:auto!important;max-width:none!important;flex:1 1 240px!important;border-radius:9px!important;background:#fff!important;border:1px solid var(--wish-line,#e8d7e2)!important;padding:6px!important}\n.rpcm-ltm-result-unified [data-ltm-paste-file]::file-selector-button{background:var(--wish-accent-soft,#fcecf4);border:1px solid var(--wish-accent-line,#ecc5d9);border-radius:7px;padding:7px 12px;margin-right:10px;color:var(--wish-accent-strong,#a14b7a);cursor:pointer;font:inherit}\n.rpcm-ltm-result-unified [data-ltm-paste-add]{min-height:39px!important;padding:8px 18px!important;border-radius:9px!important}\n.rpcm-ltm-result-unified .rpcm-ltm-bulk footer{padding:13px 28px!important}\n.rpcm-ltm-result-unified .rpcm-ltm-bulk footer button{min-width:94px!important}\n@media(max-width:700px){.rpcm-ltm-result-unified .rpcm-ltm-bulk{width:100vw!important;max-height:100dvh!important;height:100dvh!important;border-radius:0!important}.rpcm-ltm-result-unified .rpcm-ltm-review-editor{padding:15px!important}.rpcm-ltm-result-unified .rpcm-ltm-bulk-header{padding:15px!important}.rpcm-ltm-result-unified .rpcm-ltm-bulk footer{padding:12px 15px!important}.rpcm-ltm-result-unified.rpcm-ltm-preview-open .rpcm-ltm-review-preview{margin:0 15px 18px!important}.rpcm-ltm-result-unified .rpcm-ltm-result-paste textarea[data-ltm-paste]{height:32dvh!important;min-height:210px!important}}\n');
+  GM_addStyle('\n/* v0.16.2 — long-term result review visual polish; presentation only */\n.rpcm-ltm-result-unified .rpcm-ltm-bulk{width:min(1080px,calc(100vw - 40px))!important;max-height:min(88vh,880px)!important;border-radius:20px!important;box-shadow:0 22px 75px rgba(45,25,41,.22)!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-bulk-header{padding:20px 24px!important;background:var(--wish-card,#fff)!important;border-bottom:1px solid var(--wish-line,#efdde7)!important;gap:12px!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-bulk-header h3{font-size:19px!important;font-weight:750!important;letter-spacing:-.4px;margin:0 0 6px!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-bulk-header small{font-size:12px!important;line-height:1.6!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-review-layout{grid-template-columns:minmax(0,1.45fr) minmax(275px,.75fr)!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-review-editor{padding:22px 24px 28px!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-review-preview{padding:22px 20px!important;background:var(--wish-card-2,#fff9fc)!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-review-preview>header{top:-22px!important;padding:2px 0 14px!important;background:var(--wish-card-2,#fff9fc)!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-review-preview h4{font-size:15px!important;font-weight:700!important;margin:0 0 5px!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-review-preview small{font-size:12px;line-height:1.6;}\n.rpcm-ltm-result-unified .rpcm-ltm-existing-group{background:var(--wish-card-2,#fff9fc)!important;border-radius:14px!important;padding:0 14px!important;margin:0 0 22px!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-existing-group>summary{padding:15px 4px!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-existing-group>summary h4{font-size:14px!important;font-weight:700!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-existing-group>summary h4 small{font-weight:500;color:var(--wish-fg-2,#907c8c);}\n.rpcm-ltm-result-unified .rpcm-ltm-review-group.is-new{border:0!important;margin:0!important;padding:0!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-review-group.is-new>header{margin:0 0 12px!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-review-group.is-new>header h4{font-size:15px!important;font-weight:750!important;margin:0!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-result-paste{padding:17px!important;border:1px solid var(--wish-line,#efdde7);background:var(--wish-card-2,#fff9fc)!important;border-radius:15px!important;margin-bottom:18px!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-result-paste label{font-size:13px!important;font-weight:700!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-result-paste textarea{min-height:148px!important;max-height:32vh;resize:vertical!important;border-radius:11px!important;margin-top:4px!important;padding:14px!important;font-size:13px!important;line-height:1.7!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-result-paste>div{justify-content:space-between!important;gap:8px!important;}\n.rpcm-ltm-result-unified [data-ltm-paste-file]{flex:1;min-width:0;max-width:260px;font-size:12px!important;}\n.rpcm-ltm-result-unified [data-ltm-paste-add]{background:var(--wish-accent-soft,#fcecf4)!important;border-color:var(--wish-accent-line,#ecc5d9)!important;color:var(--wish-accent-strong,#a14b7a)!important;font-weight:700!important;}\n.rpcm-ltm-result-unified [data-ltm-paste-status]{font-size:12px!important;line-height:1.6!important;overflow-wrap:anywhere;}\n.rpcm-ltm-result-unified .rpcm-ltm-bulk-card{border-radius:13px!important;overflow:hidden;margin-bottom:2px;}\n.rpcm-ltm-result-unified .rpcm-ltm-bulk footer{padding:14px 22px!important;background:var(--wish-card,#fff)!important;border-top:1px solid var(--wish-line,#efdde7)!important;gap:10px!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-bulk footer [data-ltm-bulk-status]{font-size:12px!important;color:var(--wish-fg-2,#907c8c)!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-bulk footer button{min-height:39px!important;border-radius:10px!important;font-weight:650!important;}\n.rpcm-ltm-result-unified :is(button,textarea,input):focus-visible,.rpcm-ltm-result-unified summary:focus-visible{outline:2px solid var(--wish-accent-strong,#b45b8d)!important;outline-offset:2px!important;}\n@media(max-width:800px){.rpcm-ltm-result-unified .rpcm-ltm-bulk{width:100vw!important;max-height:100dvh!important;height:100dvh!important;border-radius:0!important}.rpcm-ltm-result-unified .rpcm-ltm-review-layout{display:block!important;overflow:auto!important}.rpcm-ltm-result-unified .rpcm-ltm-review-editor{padding:16px!important}.rpcm-ltm-result-unified .rpcm-ltm-review-preview{padding:16px!important}.rpcm-ltm-result-unified .rpcm-ltm-bulk-header{padding:15px 16px!important}.rpcm-ltm-result-unified .rpcm-ltm-bulk footer{padding:12px 16px!important}.rpcm-ltm-result-unified [data-ltm-paste-file]{max-width:100%}}\n');
+  GM_addStyle('\n/* v0.16.2: generous paste area for long-term memory imports */\n.rpcm-ltm-result-unified .rpcm-ltm-review-editor .rpcm-ltm-result-paste textarea[data-ltm-paste]{height:clamp(300px,42vh,480px)!important;min-height:300px!important;max-height:none!important;resize:vertical!important;overflow-y:auto!important;box-sizing:border-box!important;}\n.rpcm-ltm-result-unified .rpcm-ltm-review-editor .rpcm-ltm-result-paste{width:100%!important;box-sizing:border-box!important;}\n@media(max-width:800px){.rpcm-ltm-result-unified .rpcm-ltm-review-editor .rpcm-ltm-result-paste textarea[data-ltm-paste]{height:36dvh!important;min-height:240px!important;}}\n');
+  GM_addStyle('\n/* v0.16.2 — single-surface result import, matching manager panels */\n.rpcm-ltm-result-unified .rpcm-ltm-bulk{width:min(980px,calc(100vw - 44px))!important;max-height:min(88dvh,900px)!important;border-radius:18px!important}\n.rpcm-ltm-result-unified .rpcm-ltm-review-layout{display:block!important;overflow-y:auto!important;overflow-x:hidden!important;background:#fff!important}\n.rpcm-ltm-result-unified .rpcm-ltm-review-editor{padding:20px 28px 24px!important;overflow:visible!important;max-width:unset!important}\n.rpcm-ltm-result-unified .rpcm-ltm-review-preview{display:none!important}\n.rpcm-ltm-result-unified.rpcm-ltm-preview-open .rpcm-ltm-review-preview{display:block!important;margin:0 28px 24px!important;padding:18px 20px!important;border:1px solid var(--wish-line,#ecdbe5)!important;border-radius:13px!important;background:var(--wish-card-2,#fff9fc)!important}\n.rpcm-ltm-result-unified .rpcm-ltm-bulk-header{padding:19px 28px!important}\n.rpcm-ltm-result-unified .rpcm-ltm-existing-group{padding:0 16px!important;margin:0 0 18px!important;border:1px solid var(--wish-line,#ecdbe5)!important;background:#fff!important}\n.rpcm-ltm-result-unified .rpcm-ltm-existing-group>summary{display:flex!important;align-items:center!important;justify-content:space-between!important;min-height:46px!important;padding:8px 2px!important}\n.rpcm-ltm-result-unified .rpcm-ltm-existing-group>summary h4{font-size:14px!important}\n.rpcm-ltm-result-unified .rpcm-ltm-review-group.is-new>header{padding:0 2px 9px!important;margin:0!important}\n.rpcm-ltm-result-unified .rpcm-ltm-result-paste{padding:16px 18px!important;border:1px solid var(--wish-line,#ecdbe5)!important;background:var(--wish-card-2,#fff9fc)!important;border-radius:13px!important}\n.rpcm-ltm-result-unified .rpcm-ltm-result-paste textarea[data-ltm-paste]{height:clamp(240px,34dvh,380px)!important;min-height:240px!important;max-height:none!important;width:100%!important;border:1px solid var(--wish-line,#e8d7e2)!important;background:#fff!important;resize:vertical!important;font-size:14px!important;line-height:1.75!important}\n.rpcm-ltm-result-unified .rpcm-ltm-result-paste>div{display:flex!important;align-items:center!important;gap:12px!important;flex-wrap:wrap!important;margin-top:10px!important}\n.rpcm-ltm-result-unified [data-ltm-paste-file]{width:auto!important;max-width:none!important;flex:1 1 240px!important;border-radius:9px!important;background:#fff!important;border:1px solid var(--wish-line,#e8d7e2)!important;padding:6px!important}\n.rpcm-ltm-result-unified [data-ltm-paste-file]::file-selector-button{background:var(--wish-accent-soft,#fcecf4);border:1px solid var(--wish-accent-line,#ecc5d9);border-radius:7px;padding:7px 12px;margin-right:10px;color:var(--wish-accent-strong,#a14b7a);cursor:pointer;font:inherit}\n.rpcm-ltm-result-unified [data-ltm-paste-add]{min-height:39px!important;padding:8px 18px!important;border-radius:9px!important}\n.rpcm-ltm-result-unified .rpcm-ltm-bulk footer{padding:13px 28px!important}\n.rpcm-ltm-result-unified .rpcm-ltm-bulk footer button{min-width:94px!important}\n@media(max-width:700px){.rpcm-ltm-result-unified .rpcm-ltm-bulk{width:100vw!important;max-height:100dvh!important;height:100dvh!important;border-radius:0!important}.rpcm-ltm-result-unified .rpcm-ltm-review-editor{padding:15px!important}.rpcm-ltm-result-unified .rpcm-ltm-bulk-header{padding:15px!important}.rpcm-ltm-result-unified .rpcm-ltm-bulk footer{padding:12px 15px!important}.rpcm-ltm-result-unified.rpcm-ltm-preview-open .rpcm-ltm-review-preview{margin:0 15px 18px!important}.rpcm-ltm-result-unified .rpcm-ltm-result-paste textarea[data-ltm-paste]{height:32dvh!important;min-height:210px!important}}\n');
   GM_addStyle('\n#rpcm-modal .rpcm-log-count-shortcut{grid-column:1 / -1;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;margin:10px 0;border:1px solid var(--wish-line,#ebd3e0);border-radius:12px;background:var(--wish-card,#fff);font-size:12px}\n#rpcm-modal .rpcm-log-count-shortcut strong{color:var(--wish-accent-strong,#a84d81);white-space:nowrap}\n#rpcm-modal .rpcm-log-count-label{white-space:nowrap;display:inline-flex;gap:6px;align-items:center}\n#rpcm-modal .rpcm-log-count-label select{min-width:65px;min-height:32px;border:1px solid var(--wish-line,#ead6e2);border-radius:8px;background:var(--wish-card,#fff);color:var(--wish-fg,#372f35);padding:4px 7px}\n@media(max-width:600px){#rpcm-modal .rpcm-log-count-shortcut{flex-direction:column;align-items:stretch}#rpcm-modal .rpcm-log-count-shortcut button{align-self:flex-end}#rpcm-modal .rpcm-log-count-label{min-width:calc(50% - 6px)}}\n');
   GM_addStyle('\n#rpcm-modal .rpcm-context-refresh-shortcut{grid-column:1 / -1;display:flex;align-items:center;justify-content:space-between;gap:14px;padding:12px 14px;margin:0 0 10px;border:1px solid var(--wish-line,#ebd3e0);border-radius:12px;background:linear-gradient(135deg,var(--wish-card,#fff),var(--wish-accent-soft,#fff5f9));font-size:12px}\n#rpcm-modal .rpcm-context-refresh-shortcut>span{display:grid;gap:3px;min-width:0}\n#rpcm-modal .rpcm-context-refresh-shortcut b{color:var(--wish-accent-strong,#a84d81);font-size:12px}\n#rpcm-modal .rpcm-context-refresh-shortcut small{color:var(--wish-fg-2,#83747d);line-height:1.5;font-size:11px}\n#rpcm-modal .rpcm-context-refresh-shortcut button{flex:0 0 auto}\n@media(max-width:600px){#rpcm-modal .rpcm-context-refresh-shortcut{align-items:stretch;flex-direction:column}#rpcm-modal .rpcm-context-refresh-shortcut button{align-self:flex-end}}\n');
   function addLongTermStyles() {
+    if(document.getElementById('rpcm-longterm-style'))return;
     GM_addStyle(`.rpcm-ltm-native-review{border:1px solid var(--wish-line);border-radius:12px;padding:12px;display:grid;gap:8px}.rpcm-ltm-native-review header{display:flex;flex-direction:column;gap:4px}.rpcm-ltm-native-review header small,.rpcm-ltm-native-review [data-ltm-native-state]{color:var(--wish-fg-2)}.rpcm-ltm-native-list{max-height:220px;overflow:auto;display:grid;gap:5px}.rpcm-ltm-native-item{border:1px solid var(--wish-line);border-radius:8px;padding:8px}.rpcm-ltm-native-item summary{cursor:pointer;display:flex;justify-content:space-between;gap:10px}.rpcm-ltm-native-item summary span{min-width:0;overflow-wrap:anywhere}.rpcm-ltm-native-item p{white-space:pre-wrap;overflow-wrap:anywhere;margin:8px 0 0}.rpcm-ltm-native-item.is-deleted{opacity:.65}.rpcm-ltm-native-item.is-deleted summary small{color:#c33}`);
     GM_addStyle(`.rpcm-ltm-simple{padding:18px 22px;display:grid;gap:12px}.rpcm-ltm-simple h3{margin:0;font-size:17px}.rpcm-ltm-simple p{margin:0;color:var(--wish-fg-2)}.rpcm-ltm-simple label{display:grid;gap:7px;font-weight:600}.rpcm-ltm-simple textarea{width:100%;min-height:250px;box-sizing:border-box;resize:vertical;padding:12px;border-radius:10px;border:1px solid var(--wish-line);background:var(--wish-card);color:var(--wish-fg);font:inherit}.rpcm-ltm-simple-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.rpcm-ltm-simple-mode .rpcm-ltm-bulk-tabs,.rpcm-ltm-simple-mode .rpcm-ltm-review-editor>.rpcm-ltm-bulk-pane{display:none!important}.rpcm-ltm-simple-mode .rpcm-ltm-review-layout{grid-template-columns:minmax(0,1fr)!important}.rpcm-ltm-simple-mode .rpcm-ltm-review-preview{border-left:0!important;border-top:1px solid var(--wish-line);max-height:35vh}.rpcm-ltm-backdrop:not(.rpcm-ltm-simple-mode) .rpcm-ltm-simple{display:none!important}@media(max-width:700px){.rpcm-ltm-simple{padding:12px}.rpcm-ltm-simple-actions>*{max-width:100%}.rpcm-ltm-simple-mode .rpcm-ltm-review-preview{max-height:28vh}}`);
     GM_addStyle("\n.rpcm-ltm-review{width:min(1440px,96vw)!important;max-height:94vh!important;display:flex!important;flex-direction:column!important;overflow:hidden!important}\n.rpcm-ltm-review>.rpcm-ltm-review-layout{display:grid!important;grid-template-columns:minmax(0,1.1fr) minmax(300px,.8fr);flex:1;min-height:0;overflow:hidden;gap:0}\n.rpcm-ltm-review-editor,.rpcm-ltm-review-preview{overflow:auto;min-width:0;padding:24px}\n.rpcm-ltm-review-preview{border-left:1px solid var(--wish-line);background:var(--wish-card-2);padding:24px;}\n.rpcm-ltm-review-preview>header{position:sticky;top:-24px;background:var(--wish-card-2);padding:16px 0;z-index:1}\n.rpcm-ltm-review :is(h4,p){margin:0 0 12px}.rpcm-ltm-review h4{font-size:18px;font-weight:500}\n.rpcm-ltm-review .rpcm-ltm-bulk-pane{padding:0!important;overflow:visible!important}\n.rpcm-ltm-review-group>header{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin:20px 0}\n.rpcm-ltm-review-group.is-new{border-top:1px solid var(--wish-line);margin-top:28px;padding-top:10px}\n.rpcm-ltm-review .rpcm-ltm-bulk-list{overflow:visible!important;padding:0!important}\n.rpcm-ltm-review .rpcm-ltm-bulk-list{display:flex!important;flex-direction:column;gap:16px}\n.rpcm-ltm-review .rpcm-ltm-review-group{display:block!important;width:100%;max-height:none;overflow:visible;border:0!important;padding:0!important;background:none!important}\n.rpcm-ltm-review .rpcm-ltm-review-fields :is(input,textarea){font-size:16px;line-height:1.65}\n.rpcm-ltm-review .rpcm-ltm-review-fields textarea{min-height:145px!important;height:145px}\n.rpcm-ltm-review .rpcm-ltm-bulk-diff{display:block!important;max-height:none!important;overflow:visible!important}\n.rpcm-ltm-review .rpcm-ltm-bulk-diff article{display:block!important;width:100%;box-sizing:border-box}\n.rpcm-ltm-review-fields{display:grid;gap:12px;padding:16px}.rpcm-ltm-review-fields label{display:grid;gap:6px;font-size:13px;color:var(--wish-fg-2)}\n.rpcm-ltm-review-fields :is(input,textarea){width:100%;box-sizing:border-box;color:var(--wish-fg)!important;background:var(--wish-card)!important;border:1px solid var(--wish-line)!important;border-radius:12px;padding:12px;font-size:16px;line-height:1.6}\n.rpcm-ltm-review-fields textarea{min-height:145px;resize:vertical}\n.rpcm-ltm-review .rpcm-ltm-existing-group{border:1px solid var(--wish-line)!important;border-radius:14px;padding:0 14px 14px!important;background:var(--wish-card-2)!important}.rpcm-ltm-review .rpcm-ltm-existing-group>summary{display:flex;align-items:center;justify-content:space-between;gap:12px;list-style:none;cursor:pointer;padding:16px 2px}.rpcm-ltm-review .rpcm-ltm-existing-group>summary::-webkit-details-marker{display:none}.rpcm-ltm-review details.rpcm-ltm-existing-group:not([open])>:not(summary){display:none!important}.rpcm-ltm-review .rpcm-ltm-existing-group>summary h4{margin:0}.rpcm-ltm-review .rpcm-ltm-existing-group>summary>span{color:var(--wish-fg-2);font-size:12px}.rpcm-ltm-review .rpcm-ltm-existing-group>summary:before{content:\"▸\";color:var(--wish-accent-strong);font-size:12px}.rpcm-ltm-review .rpcm-ltm-existing-group[open]>summary:before{content:\"▾\"}.rpcm-ltm-review .rpcm-ltm-bulk-card-title{min-width:0;max-width:min(46vw,520px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--wish-fg-2);font-size:13px}.rpcm-ltm-review .rpcm-ltm-bulk-card.is-folded>header{border-bottom:0}.rpcm-ltm-review .rpcm-ltm-bulk-card-body[hidden]{display:none!important}\n.rpcm-ltm-original{padding:12px 16px;color:var(--wish-fg-2);font-size:13px}.rpcm-ltm-original p{line-height:1.7}\n.rpcm-ltm-charcount{display:block;margin:6px 0 12px;color:var(--wish-fg-2);font-size:12px}.rpcm-ltm-charcount.is-over{color:#d36b6b!important}\n.rpcm-ltm-result-paste{padding:16px;background:var(--wish-card-2);border-radius:16px;margin-bottom:20px}\n.rpcm-ltm-review .rpcm-ltm-result-paste{display:block!important}.rpcm-ltm-review .rpcm-ltm-result-paste label{width:100%}\n.rpcm-ltm-result-paste label{display:grid;gap:8px}.rpcm-ltm-result-paste textarea{min-height:110px;width:100%;box-sizing:border-box;border:1px solid var(--wish-line);border-radius:12px;background:var(--wish-card);color:var(--wish-fg);padding:12px;font:inherit}\n.rpcm-ltm-result-paste>div{display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin-top:12px}.rpcm-ltm-result-paste input{max-width:100%;min-width:0}\n.rpcm-ltm-review .rpcm-ltm-bulk-diff article{padding:16px;background:var(--wish-card);border:1px solid var(--wish-line);border-radius:14px;margin-bottom:12px;overflow-wrap:anywhere}\n.rpcm-ltm-review .rpcm-ltm-bulk-diff article>small:first-child{display:inline-block;padding:3px 9px;border-radius:8px;background:var(--wish-card-2);margin-bottom:8px}\n.rpcm-ltm-review .rpcm-ltm-bulk-diff article>strong{display:block;font-weight:500;margin-bottom:10px}\n.rpcm-ltm-review .rpcm-ltm-bulk-diff article[data-change=\"추가\"]>small:first-child{background:#f8edce;color:#8b641c}\n.rpcm-ltm-review .rpcm-ltm-bulk-diff article[data-change=\"삭제\"]{opacity:.66}\n.rpcm-ltm-review .has-error{border-color:#d36b6b!important}.rpcm-ltm-review .rpcm-ltm-bulk-text textarea{width:100%;min-height:60vh;box-sizing:border-box}\n.rpcm-ltm-draft-counts{max-height:160px;overflow:auto}.rpcm-ltm-draft-counts p{display:flex;flex-wrap:wrap;justify-content:space-between;gap:12px}\n@media(max-width:800px){.rpcm-ltm-review>.rpcm-ltm-review-layout{display:block!important;overflow:auto}.rpcm-ltm-review-editor,.rpcm-ltm-review-preview{overflow:visible;padding:16px}.rpcm-ltm-review-preview{border-left:0;border-top:1px solid var(--wish-line)}.rpcm-ltm-review .rpcm-ltm-bulk-toolbar{flex-wrap:wrap}.rpcm-ltm-review .rpcm-ltm-bulk-toolbar input[type=search]{width:100%}}\n");
-    if(document.getElementById('rpcm-longterm-style'))return;
     const style=document.createElement('style');style.id='rpcm-longterm-style';style.textContent=`
       #rpcm-modal .rpcm-workspace:not([data-view="longterm"]) #rpcm-section-longterm{display:none!important}\n      html.rpcm-mobile-layout #rpcm-section-longterm:not(.rpcm-mobile-section-active){display:none!important}
       html.rpcm-mobile-layout #rpcm-modal .rpcm-mobile-nav-strip{grid-template-columns:repeat(8,minmax(52px,1fr));overflow-x:auto}
@@ -31369,7 +31771,7 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
     aiMemoryRuntime.lastPoll.set(id,Date.now());
     const enabled=Object.keys(AI_MEMORY_AREAS).filter(area=>config.areas[area].enabled);
     try{
-      const turns=settledAutomaticTurns(await loadManualCompletedTurns(room)),counts={lastKey:String(turns.at(-1)?.key||'')};
+      const turns=await aiMemoryPlanningTurns(room,force),counts={lastKey:String(turns.at(-1)?.key||'')};
       for(const area of Object.keys(AI_MEMORY_AREAS)){const row=config.areas[area];try{counts[area]=aiMemoryPending(room,area,turns).count;}catch(error){counts[area]=null;row.error=error.message;}}
       aiMemoryRuntime.lastCounts.set(id,counts);
       aiMemoryRefreshStatusUi(room);
@@ -31688,6 +32090,7 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
         <label class="rpcm-pref-row"><span>최근·관련 날짜로그 자동 선택<small>직접 선택·고정·제외는 기억 화면에서 관리</small></span><input type="checkbox" data-rpcm-pref-field="autoLogRecallEnabled" ${room.autoLogRecallEnabled?'checked':''}></label>
         <label class="rpcm-pref-row"><span>관련도 기준<small>최근 연속성 로그에는 적용되지 않음</small></span><select data-rpcm-pref-field="autoLogRelevance"><option value="strict" ${room.autoLogRelevance==='strict'?'selected':''}>엄격</option><option value="balanced" ${room.autoLogRelevance==='balanced'?'selected':''}>균형</option><option value="broad" ${room.autoLogRelevance==='broad'?'selected':''}>넓게</option></select></label>
         <label class="rpcm-pref-row"><span>AI 맥락 검토 ${rpcmHelpButton('context')}<small>관련 날짜로그 후보만 API로 재검토</small></span><input type="checkbox" data-rpcm-pref-field="aiContextLogRerankEnabled" ${room.aiContextLogRerankEnabled?'checked':''}></label></article>
+      ${semanticUiHtml(room)}
       <article class="rpcm-pref-card"><header><h3>화면·모니터</h3><span class="rpcm-pref-scope">이 기기</span></header><p>상단 WISH 버튼을 짧게 누르면 빠른 관리, 길게 누르면 전체 Manager가 열립니다. 작은 초록색 표시가 있으면 주입이 켜진 상태입니다.</p>
         <label class="rpcm-pref-row"><span>응답교정 바로가기 표시<small>크랙 채팅 상단의 🪽 응답교정 버튼을 표시합니다. 꺼도 Manager의 AI 화면에서 응답교정 설정을 열 수 있습니다.</small></span><input type="checkbox" data-rpcm-refiner-ui-field="showButton" ${refinerDisplay.showButton?'checked':''}></label>
         <label class="rpcm-pref-row"><span>응답교정 검토 알림 표시<small>검토 중·검토 완료 상태를 채팅 화면 상단에 잠시 표시합니다.</small></span><input type="checkbox" data-rpcm-refiner-ui-field="showBadge" ${refinerDisplay.showBadge?'checked':''}></label>
@@ -31801,7 +32204,7 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
     const aiContextReport = room.aiContextReviewReport && typeof room.aiContextReviewReport === 'object' ? room.aiContextReviewReport : null;
     const relatedShown = autoDisplayItems.filter(item => item.autoType === 'related-log').length;
     const aiContextStateText = !room.aiContextLogRerankEnabled
-      ? `관련로그 ${relatedShown}개 · AI 맥락 검토 OFF · 기본 검색 사용`
+      ? `관련로그 ${relatedShown}개 · AI 맥락 검토 OFF · ${semanticEnabled(room)?'하이브리드 검색':'기본 검색'} 사용`
       : aiContextReport?.state === 'success'
         ? `관련로그 ${relatedShown}개 · AI 맥락 검토 완료`
         : aiContextReport?.state === 'fallback'
@@ -31813,13 +32216,13 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
     const aiContextSituationText = !room.aiContextLogRerankEnabled
       ? 'AI 맥락 검토가 꺼져 있습니다.'
       : aiContextReport?.state === 'fallback'
-        ? 'AI 상황 파악 실패 · 기본 키워드 방식 사용'
+        ? (semanticEnabled(room)?'AI 상황 파악 실패 · 하이브리드 검색 사용':'AI 상황 파악 실패 · 기본 키워드 방식 사용')
         : aiContextReport?.situation
           ? String(aiContextReport.situation)
           : aiContextReport?.state === 'success'
             ? '이전 검토 결과에는 상황 설명이 없습니다. AI 다시 검토를 눌러 갱신하세요.'
             : '아직 AI가 현재 상황을 검토하지 않았습니다.';
-    const aiContextReportHtml = `<details class="rpcm-ai-context-report"><summary><span>${esc(aiContextStateText)}</span><b>AI 검토 상세</b></summary><div><div class="rpcm-ai-context-actions"><span>${esc(aiContextRunMeta)}</span><button type="button" class="rpcm-lib-small rpcm-ai-context-refresh" id="rpcm-ai-context-refresh">↻ AI 다시 검토</button></div><p class="rpcm-ai-context-situation"><strong>AI가 파악한 현재 상황</strong><span>${esc(aiContextSituationText)}</span></p><p><strong>전체 로그</strong> ${Number(aiContextReport?.totalLogs || logBlocksForIssues.length)}개 · <strong>1차 후보</strong> ${Number(aiContextReport?.candidateCount || 0)}개 · <strong>API 검토</strong> ${Number(aiContextReport?.inspectedCount || 0)}개 · <strong>최종 선정</strong> ${Number(aiContextReport?.selectedCount ?? relatedShown)}개</p>${aiContextReport?.failureCategory ? `<p class="error"><strong>실패 원인</strong> ${esc(aiContextReport.failureCategory)} · ${esc(aiContextReport.failureDetail || '')}</p><p><strong>fallback</strong> 기본 키워드 방식으로 대체됨</p>` : ''}${aiContextReport?.parseFailure ? `<p><strong>파싱 실패 이유</strong> ${esc(aiContextReport.parseFailure)}</p>` : ''}${aiContextReport?.failureRaw ? `<details class="rpcm-ai-context-raw"><summary>실제 AI 원문 일부</summary><pre>${esc(aiContextReport.failureRaw)}</pre></details>` : ''}${(aiContextReport?.keywords || []).length ? `<p><strong>핵심 키워드</strong> ${esc(aiContextReport.keywords.join(' · '))}</p>` : ''}${(aiContextReport?.characters || []).length ? `<p><strong>인물</strong> ${esc(aiContextReport.characters.join(' · '))}</p>` : ''}${(aiContextReport?.items || []).map(item => `<p><strong>${Number(item.rank || 0)}위</strong> ${esc(item.title || '')} · 관련도 ${Number(item.score || 0).toFixed(1)} · 후보 ${Number(item.candidateRank || 0)}위 · ${esc(item.reason || '')}</p>`).join('') || '<p>아직 저장된 AI 검토 결과가 없습니다.</p>'}</div></details>`;
+    const aiContextReportHtml = `<details class="rpcm-ai-context-report"><summary><span>${esc(aiContextStateText)}</span><b>AI 검토 상세</b></summary><div><div class="rpcm-ai-context-actions"><span>${esc(aiContextRunMeta)}</span><button type="button" class="rpcm-lib-small rpcm-ai-context-refresh" id="rpcm-ai-context-refresh">↻ AI 다시 검토</button></div><p class="rpcm-ai-context-situation"><strong>AI가 파악한 현재 상황</strong><span>${esc(aiContextSituationText)}</span></p><p><strong>전체 로그</strong> ${Number(aiContextReport?.totalLogs || logBlocksForIssues.length)}개 · <strong>1차 후보</strong> ${Number(aiContextReport?.candidateCount || 0)}개 · <strong>API 검토</strong> ${Number(aiContextReport?.inspectedCount || 0)}개 · <strong>최종 선정</strong> ${Number(aiContextReport?.selectedCount ?? relatedShown)}개</p>${aiContextReport?.failureCategory ? `<p class="error"><strong>실패 원인</strong> ${esc(aiContextReport.failureCategory)} · ${esc(aiContextReport.failureDetail || '')}</p><p><strong>fallback</strong> ${semanticEnabled(room)?'하이브리드 검색':'기본 키워드 방식'}으로 대체됨</p>` : ''}${aiContextReport?.parseFailure ? `<p><strong>파싱 실패 이유</strong> ${esc(aiContextReport.parseFailure)}</p>` : ''}${aiContextReport?.failureRaw ? `<details class="rpcm-ai-context-raw"><summary>실제 AI 원문 일부</summary><pre>${esc(aiContextReport.failureRaw)}</pre></details>` : ''}${(aiContextReport?.keywords || []).length ? `<p><strong>핵심 키워드</strong> ${esc(aiContextReport.keywords.join(' · '))}</p>` : ''}${(aiContextReport?.characters || []).length ? `<p><strong>인물</strong> ${esc(aiContextReport.characters.join(' · '))}</p>` : ''}${(aiContextReport?.items || []).map(item => `<p><strong>${Number(item.rank || 0)}위</strong> ${esc(item.title || '')} · 관련도 ${Number(item.score || 0).toFixed(1)} · 후보 ${Number(item.candidateRank || 0)}위 · ${esc(item.reason || '')}</p>`).join('') || '<p>아직 저장된 AI 검토 결과가 없습니다.</p>'}</div></details>`;
     const storyReviewDue = storyUnreviewedCount >= storyReviewThreshold;
     const timelinePreviewCards = storyTimelineCardsFor(room).slice(-8).reverse();
     scheduleStoryReviewCountRefresh(room);
@@ -34231,6 +34634,7 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
 
     bindRpcmHelp(overlay);
     bindRpcmPreferences(overlay,room);
+    bindSemanticUi(overlay,room);
     bindAiMemoryPreferences(overlay,room);
     bindModalDrag();
     updateSaveStatusUi(state.saveStatus);
@@ -34574,9 +34978,11 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
       const settings={...base,models:{...base.models,[base.provider]:String(options.model||base.models?.[base.provider]||'')}};
       const provider=settings.provider,secret=readAiSecret(provider);
       if(provider!=='openai'&&!secret)throw new Error('RP Manager의 AI 탭에서 연결을 설정해 주세요.');
-      return callAiSummaryProvider(provider,settings,secret,
+      const started=Date.now();try{const result=await callAiSummaryProvider(provider,settings,secret,
         'You are an RP continuity checker. Follow the supplied correction contract exactly.',
-        prompt,options.test?2048:(options.responseRefiner?Math.max(16384,Math.min(32768,Number(options.maxOutputTokens)||16384)):32768),()=>{}, {room:state.currentRoom,feature:options.responseRefiner&&!options.test?'responseRefiner':'utility',responseRefiner:options.responseRefiner===true,reviewTimeoutMs:options.reviewTimeoutMs,thinkingLevel:refinerThinkingLevels(provider,settings.models[provider]).includes(options.test?'low':options.thinkingLevel)?(options.test?'low':options.thinkingLevel):undefined,responseJsonSchema:options.test?undefined:options.responseJsonSchema});
+        prompt,options.test?2048:(options.responseRefiner?Math.max(16384,Math.min(32768,Number(options.maxOutputTokens)||16384)):32768),()=>{}, {room:state.currentRoom,feature:options.responseRefiner?'responseRefiner':'utility',responseRefiner:options.responseRefiner===true,reviewTimeoutMs:options.reviewTimeoutMs,thinkingLevel:refinerThinkingLevels(provider,settings.models[provider]).includes(options.test?'low':options.thinkingLevel)?(options.test?'low':options.thinkingLevel):undefined,responseJsonSchema:options.test?undefined:options.responseJsonSchema});
+      if(options.responseRefiner&&options.test)setAiFeatureStatus('responseRefiner','ok',provider,settings.models[provider],`연결 및 모델 호출 정상 · ${((Date.now()-started)/1000).toFixed(1)}초`);
+      return result;}catch(error){if(options.responseRefiner&&options.test){const failure=classifyAiFailure(error);setAiFeatureStatus('responseRefiner','error',provider,settings.models[provider],failure.category,failure.detail);}throw error;}
     },
     async readResponseMessages(chatId,limit=20){
       if(String(chatId)!==String(getChatIdFromPath()))throw new Error('현재 채팅방이 바뀌었습니다. 최신 응답을 다시 검수해 주세요.');
@@ -34790,6 +35196,9 @@ A correction requires a supported contradiction, a materially relevant persisten
   let workerBusy = false;
   let activeReviewTarget = null;
   let activeReviewStartedAt=0;
+  let reviewTiming=null;
+  function reviewTimingSnapshot(){if(!reviewTiming)return null;return {...reviewTiming,totalMs:(reviewTiming.completedAt||Date.now())-reviewTiming.startedAt};}
+  function reviewTimingLabel(t){return t?`준비 ${((t.stableMs||0)/1000).toFixed(1)}초 · 자료 ${((t.referenceMs||0)/1000).toFixed(1)}초 · AI ${((t.requestMs||0)/1000).toFixed(1)}초 · 입력 ${(t.promptChars||0).toLocaleString()}자 · 추론 ${t.thinkingLevel||'-'}`:'';}
   let activeReviewMode='';
   let lastKnownPath = location.href;
 
@@ -35353,10 +35762,11 @@ A correction requires a supported contradiction, a materially relevant persisten
       type: String(type || '오류'),
       details: String(details || ''),
       verdict:meta.verdict|| (REVIEW_VERDICTS.includes(type)?type:''),
+      timing:reviewTimingSnapshot(),
     });
     saveProcessHistory(rows);
     refreshProcessHistoryPanel();
-    window.__WISH_RP_MANAGER_AI_BRIDGE__?.recordRefiner({at:Date.now(),type:String(type),details:String(details),messageId:String(meta.target?.id||activeReviewTarget?.id||''),sourceFingerprint:messageFingerprint(meta.target||activeReviewTarget),sourceLength:String((meta.target||activeReviewTarget)?.content||'').length,startedAt:activeReviewStartedAt,finishedAt:Date.now(),resultType:String(type),correctedFingerprint:messageFingerprint(meta.corrected),provider:window.__WISH_RP_MANAGER_AI_BRIDGE__?.status().provider,model:currentModelId(),verdict:meta.verdict||(REVIEW_VERDICTS.includes(type)?type:'')});
+    window.__WISH_RP_MANAGER_AI_BRIDGE__?.recordRefiner({at:Date.now(),type:String(type),details:String(details),messageId:String(meta.target?.id||activeReviewTarget?.id||''),sourceFingerprint:messageFingerprint(meta.target||activeReviewTarget),sourceLength:String((meta.target||activeReviewTarget)?.content||'').length,startedAt:activeReviewStartedAt,finishedAt:Date.now(),timing:reviewTimingSnapshot(),resultType:String(type),correctedFingerprint:messageFingerprint(meta.corrected),provider:window.__WISH_RP_MANAGER_AI_BRIDGE__?.status().provider,model:currentModelId(),verdict:meta.verdict||(REVIEW_VERDICTS.includes(type)?type:'')});
   }
 
   function formatHistoryTime(value) {
@@ -35410,6 +35820,7 @@ A correction requires a supported contradiction, a materially relevant persisten
         detail.style.cssText = 'margin:7px 0 0;white-space:pre-wrap;word-break:break-word;font:10.5px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--rr-fg2);';
         item.appendChild(detail);
       }
+      if(row.timing){const timing=document.createElement('p');timing.textContent=reviewTimingLabel(row.timing);timing.style.cssText='font-size:11px;color:var(--rr-muted);line-height:1.6;margin:8px 0 0';item.appendChild(timing);}
       panel.appendChild(item);
     }
   }
@@ -36644,9 +37055,11 @@ A correction requires a supported contradiction, a materially relevant persisten
     if (!chatId) { if (force) toast('채팅방 ID 감지 실패', 'error'); return; }
 
     workerBusy = true;activeReviewMode=reviewMode||settings.reviewMode;
+    reviewTiming={startedAt:Date.now(),thinkingLevel:selectedThinkingLevel(),model:currentModelId(),mode:activeReviewMode};
     try {
       setStatus('응답 완료 기다리는 중');
       const target = targetOverride ? normalizeMessage(targetOverride) : await waitStableAssistant();
+      reviewTiming.stableMs=Date.now()-reviewTiming.startedAt;
       if (!target) {setStatus('응답 완료 확인 대기');if(force)showReviewNotice('아직 검토하지 못했어요','응답 완료를 아직 확인하지 못했습니다. 잠시 후 다시 검수해 주세요.','info',5000);return;}
       if(isPendingResponse(target))throw new Error('선택한 응답이 아직 생성 중입니다. 완료된 뒤 다시 검수해 주세요.');
       if(targetOverride)await assertReviewSource(target,chatId);
@@ -36662,6 +37075,7 @@ A correction requires a supported contradiction, a materially relevant persisten
         lastAutoAssistantKey=autoKey;
       }
       setStatus('관련 기억 찾는 중');
+      const referenceStarted=Date.now();
       const latest=targetOverride?await findLastAssistant():target;
       const historical=!!latest&&String(latest.id)!==String(target.id);
       const recent = await fetchRecentMessages(historical?50:truncationOnly()?Math.min(8,Math.max(4,2*Math.min(2,settings.contextTurns)+2)):Math.max(12,2*settings.contextTurns+8));
@@ -36690,14 +37104,20 @@ A correction requires a supported contradiction, a materially relevant persisten
         structuralHints:structuralHintsText(target.content),
         formatReference:buildOutputFormatReference(recent,target),
       });
+      reviewTiming.referenceMs=Date.now()-referenceStarted;
       setStatus('응답 받아오는 중');
       const policy=(settings.exceptions||[]).filter(row=>row.enabled!==false).map(row=>row.text).join('\n');
-      const response = await callModel(prompt+(policy?'\n[USER_APPROVED_REVIEW_POLICY]\n'+policy+'\n[/USER_APPROVED_REVIEW_POLICY]':''),{maxOutputTokens});
+      const reviewPrompt=prompt+(policy?'\n[USER_APPROVED_REVIEW_POLICY]\n'+policy+'\n[/USER_APPROVED_REVIEW_POLICY]':'');
+      reviewTiming.promptChars=reviewPrompt.length;
+      const requestStarted=Date.now();let response;
+      try{response=await callModel(reviewPrompt,{maxOutputTokens});}finally{reviewTiming.requestMs=Date.now()-requestStarted;}
+      reviewTiming.inputTokens=response.usage?.inputTokens||0;reviewTiming.outputTokens=response.usage?.outputTokens||0;
       if(/MAX_TOKENS|LENGTH|BUDGET_EXCEEDED|TOKEN_LIMIT|INCOMPLETE/i.test(String(response.finishReason||'')))throw reviewOutputLimitError(response,{maxOutputTokens});
       await assertReviewSource(target,chatId);
       setStatus('교정 결과 확인 중');
       const text = String(response.text || '').trim();
 
+      reviewTiming.completedAt=Date.now();reviewTiming.validationMs=reviewTiming.completedAt-reviewTiming.startedAt-reviewTiming.stableMs-reviewTiming.referenceMs-reviewTiming.requestMs;
       let parsed=/^PASS\s*$/i.test(text)?{verdict:'PASS',reason:'',replacements:[]}:normalizeReviewResult(parseJsonLoose(text));
       if (!parsed) throw new Error(`응답 해석 실패: ${text.slice(0, 120)}`);
       if(parsed.verdict==='PASS'&&formatAnalysis.missing.length){
@@ -36941,6 +37361,7 @@ A correction requires a supported contradiction, a materially relevant persisten
   }
 
   async function primeBaseline() {
+    if(!settings.enabled){autoPrimeEpoch++;autoBaselineReady=true;autoCheckQueued=false;clearTimeout(debounceTimer);debounceTimer=null;return;}
     const epoch = ++autoPrimeEpoch;
     autoBaselineReady = false;
     try {
@@ -36983,9 +37404,9 @@ A correction requires a supported contradiction, a materially relevant persisten
     setInterval(() => {
       if (location.href !== lastKnownPath) { handleRouteBaselineChange(); return; }
       if(document.hidden||!settings.enabled||!autoBaselineReady)return;
-      const heartbeatDue=Date.now()-lastAutoHeartbeatAt>=6000;
+      const heartbeatDue=Date.now()-lastAutoHeartbeatAt>=(autoCheckQueued||refinerGenerationVisible()?6000:30000);
       if((autoCheckQueued||heartbeatDue)&&!debounceTimer&&!autoScanBusy){lastAutoHeartbeatAt=Date.now();scheduleAutoCheck(autoCheckQueued?0:180);}
-    }, 1500);
+    }, 3000);
     // 백그라운드 탭에서 응답 생성이 끝나면 MutationObserver 콜백이 의도적으로 건너뛰어집니다.
     // 다시 탭을 열 때 큐 플래그가 없더라도 최신 응답을 한 번 확인해 누락을 복구합니다.
     document.addEventListener('visibilitychange',()=>{if(!document.hidden&&settings.enabled&&autoBaselineReady){lastAutoHeartbeatAt=Date.now();scheduleAutoCheck(0);}});
@@ -37413,7 +37834,8 @@ A correction requires a supported contradiction, a materially relevant persisten
     setInterval(() => {
       if (!document.getElementById('wish-rpcore-refiner-button')) injectHeaderButton();
       if (badge?.dataset.room && badge.dataset.room !== chatStateKey()) hideReviewNotice();
-    }, 1000);
+    }, 15000);
+    document.addEventListener('visibilitychange',()=>{if(!document.hidden&&!document.getElementById('wish-rpcore-refiner-button'))injectHeaderButton();});
     window.addEventListener('resize', positionReviewBadge, { passive:true });
     window.addEventListener('scroll', positionReviewBadge, { passive:true, capture:true });
     window.visualViewport?.addEventListener('resize', positionReviewBadge, { passive:true });
@@ -37439,7 +37861,7 @@ A correction requires a supported contradiction, a materially relevant persisten
     return true;
   }
   function displayPreferences(){return {showButton:settings.showButton!==false,showBadge:settings.showBadge!==false};}
-  window.__WISH_RP_MANAGER_REFINER__ = { openSettings, openFromNotice, canUseTurn:canUseReviewTurn, reviewLatest: () => runRefiner({ force:true }), setDisplayPreference, displayPreferences };
+  window.__WISH_RP_MANAGER_REFINER__ = { connectionInfo:()=>({model:currentModelId(),thinkingLevel:selectedThinkingLevel(),enabled:settings.enabled}), openSettings, openFromNotice, canUseTurn:canUseReviewTurn, reviewLatest: () => runRefiner({ force:true }), setDisplayPreference, displayPreferences };
 
   try {
     GM_registerMenuCommand('🪽 응답교정 설정 열기', openSettings);
