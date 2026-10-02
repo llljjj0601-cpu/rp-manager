@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🪽위시 RP Manager
 // @namespace    local.rp.context.manager
-// @version      0.17.9
+// @version      0.17.11
 // @description  장기 RP용 현재상태·날짜로그·연속성 타임라인·캐릭터 설정을 관리하고, 검수형 AI 생성과 필요한 컨텍스트 자동 주입을 지원합니다.
 // @author       User
 // @license      All Rights Reserved
@@ -47,13 +47,13 @@
   // 버전별 키를 쓰면 구버전과 신버전이 동시에 설치됐을 때 둘 다 실행될 수 있습니다.
   // 모든 버전이 공유하는 고정 키로 중복 실행을 막습니다.
   if (window.__WISH_RP_MANAGER_LOADED__) return;
-  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.17.9', loadedAt: Date.now() };
+  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.17.11', loadedAt: Date.now() };
   // 같은 페이지에 남아 있는 v0.8.10 복사본이 뒤늦게 시작되는 경우도 차단합니다.
   window.__RP_MANAGER_0810_LOADED__ = true;
 
   const APP = {
     name: '🪽위시 RP Manager',
-    version: '0.17.9',
+    version: '0.17.11',
     dbName: 'RPContextManagerDB',
     dbVersion: 2,
     storeName: 'rooms',
@@ -6738,7 +6738,7 @@ ${dialogueText}`;
     const used = new Set();
     library.extras = library.extras.map((raw, index) => {
       const item = raw && typeof raw === 'object' ? raw : {};
-      let itemId = String(item.itemId || '').trim();
+      let itemId = String(item.itemId || item.libraryItemId || '').trim();
       if (!/^extra-item-[A-Za-z0-9_-]+$/.test(itemId) || used.has(itemId)) {
         const base = `${library.scopeId || 'legacy'}|${index}|${String(item.title || '')}|${String(item.content || '')}`;
         itemId = makeExtraLibraryItemId(base);
@@ -12714,6 +12714,7 @@ ${dialogueText}`;
   }
 
   function openExtraFolderSelectionDialog({ title, description = '', items = [], folders = [], confirmText = '선택 항목 저장', preserveOption = false, preserveDefault = true }) {
+    items = items.map(item => item && typeof item === 'object' ? {...item} : item);
     return new Promise(resolve => {
       document.getElementById('rpcm-lib-dialog-backdrop')?.remove();
       const backdrop = document.createElement('div');
@@ -12765,10 +12766,15 @@ ${dialogueText}`;
       backdrop.querySelector('[data-act="all"]').onclick = () => { folderBoxes().forEach(box => { box.checked = true;box.indeterminate=false; });itemBoxes().forEach(box => {box.checked=true;});refresh(); };
       backdrop.querySelector('[data-act="none"]').onclick = () => { folderBoxes().forEach(box => {box.checked=false;box.indeterminate=false;});itemBoxes().forEach(box => {box.checked=false;});refresh(); };
       backdrop.querySelector('[data-act="confirm"]').onclick = () => {
-        const selected = itemBoxes().filter(box => box.checked).map(box => items[Number(box.dataset.extraItemIndex)]).filter(Boolean);
+        const checked = itemBoxes().filter(box => box.checked);
+        const indexes = checked.map(box => Number(box.dataset.extraItemIndex));
+        if (new Set(indexes).size !== checked.length || indexes.some(index => !Number.isInteger(index) || !items[index] || typeof items[index] !== 'object')) {
+          notify('선택한 기타 항목을 모두 확인하지 못했습니다. 창을 다시 열어 선택해 주세요.', 'error', 6000);return;
+        }
+        const selected = indexes.map(index => ({...items[index]}));
         const selectedFolders = folderBoxes().filter(box => box.checked || box.indeterminate).map(box => names[Number(box.dataset.extraFolderCheck)]);
         if (!selectedFolders.length) { notify('저장하거나 불러올 폴더를 선택해 주세요.', 'warn');return; }
-        finish({items:selected, folders:selectedFolders, preserve:preserveOption ? !!backdrop.querySelector('[data-extra-preserve]')?.checked : false});
+        finish({items:selected, selectedCount:checked.length, folders:selectedFolders, preserve:preserveOption ? !!backdrop.querySelector('[data-extra-preserve]')?.checked : false});
       };
       backdrop.querySelector('.rpcm-lib-close').onclick = backdrop.querySelector('[data-act="cancel"]').onclick = () => finish(null);
       backdrop.onclick = event => { if(event.target === backdrop) finish(null); };
@@ -14356,7 +14362,7 @@ ${dialogueText}`;
     return rpcmRoomClone(live);
   }
 
-  async function saveRoom(room,writer='saveRoom') {
+  async function saveRoom(room,writer='saveRoom',validateBeforeWrite=null) {
     if(writer==='saveRoom')writer=String(new Error().stack?.split('\n')[2]?.match(/at ([^ (]+)/)?.[1]||writer);
     const key=String(room.chatId||'');
     state.roomSaveQueues ||= new Map();
@@ -14369,7 +14375,7 @@ ${dialogueText}`;
       const priorRevision=Number(room._rpcmRevision||0),priorSnapshot=rpcmRoomClone(room),startedAt=nowIso();
       await new Promise((resolve,reject)=>{
         const tx=state.db.transaction(APP.storeName,'readwrite'),store=tx.objectStore(APP.storeName),get=store.get(room.chatId);
-        let abortedForStale=false;
+        let abortedForStale=false,validationError=null;
         get.onsuccess=()=>{
           const stored=get.result;storedForTrace=stored||{};
           const revision=Number(stored?._rpcmRevision||0);
@@ -14382,11 +14388,13 @@ ${dialogueText}`;
             candidate=rebased.room;
             traceRoomWrite(candidate,writer,'stale-rebased',priorRevision,revision,'',{startedAt,before:stored,after:candidate});
           }
+          try { if (validateBeforeWrite) validateBeforeWrite(candidate); }
+          catch (error) { validationError=error;tx.abort();return; }
           candidate._rpcmRevision=revision+1;candidate.updatedAt=nowIso();committedRoom=candidate;store.put(candidate);
         };
         get.onerror=()=>tx.abort();
         tx.oncomplete=()=>resolve();
-        tx.onabort=()=>reject(new Error(abortedForStale?`최신 저장본과 자동 병합하지 못했습니다. ${staleReason} 다른 탭에서 같은 항목을 수정했다면 최신 화면을 다시 열어 주세요.`:`IndexedDB 저장이 취소됐습니다.${tx.error?.name?` (${tx.error.name}: ${tx.error.message||''})`:''}`));
+        tx.onabort=()=>reject(validationError || new Error(abortedForStale?`최신 저장본과 자동 병합하지 못했습니다. ${staleReason} 다른 탭에서 같은 항목을 수정했다면 최신 화면을 다시 열어 주세요.`:`IndexedDB 저장이 취소됐습니다.${tx.error?.name?` (${tx.error.name}: ${tx.error.message||''})`:''}`));
         tx.onerror=()=>{const error=tx.error||new Error('IndexedDB 저장 실패');const name=String(error?.name||'').toLowerCase(),message=String(error?.message||error||'');reject(/quota/.test(name+' '+message.toLowerCase())?new Error(`브라우저 IndexedDB 저장공간 한도를 초과했습니다. RP Manager 데이터가 너무 커졌거나 브라우저가 이 사이트 저장공간을 제한하고 있습니다. (${message||error.name})`):error);};
       });
       if(!committedRoom)throw new Error('저장 결과를 만들지 못했습니다.');
@@ -14606,67 +14614,128 @@ ${dialogueText}`;
     return result;
   }
 
-  function applySelectedExtraLibraryToRoom(room, selectedItems, selectedFolders = []) {
-    const extras = (room.slots || []).filter(slot => slot.group === 'extra');
-    const byId = new Map(extras.filter(slot => slot.libraryItemId).map(slot => [String(slot.libraryItemId), slot]));
-    const selected = (selectedItems || []).map(item => ({ ...item, itemId:String(item.itemId || makeExtraLibraryItemId()) }));
+  function prepareExtraLibraryImport(selectedItems, selectedCount = selectedItems?.length) {
+    if (!Array.isArray(selectedItems) || !Number.isInteger(selectedCount) || selectedCount < 0 || selectedItems.length !== selectedCount) {
+      throw new Error('선택한 기타 항목 수와 전달된 항목 수가 다릅니다. 다시 선택해 주세요.');
+    }
+    const used = new Map(), legacyOccurrences = new Map();
+    return selectedItems.map((item, index) => {
+      if (!item || typeof item !== 'object') throw new Error('선택한 기타 항목 #' + (index + 1) + '의 원본이 없습니다.');
+      const title = String(item.title || '기타').trim() || '기타';
+      const content = String(item.content || '');
+      const category = String(item.category ?? item.extraCategory ?? '').trim();
+      let itemId = String(item.itemId || item.libraryItemId || '').trim();
+      if (!itemId) {
+        const seed = JSON.stringify([title, content, category]);
+        const occurrence = (legacyOccurrences.get(seed) || 0) + 1;
+        legacyOccurrences.set(seed, occurrence);
+        itemId = makeExtraLibraryItemId('legacy-import|' + seed + '|' + occurrence);
+      }
+      if (used.has(itemId)) throw new Error('기타 항목 ID 충돌: ‘' + used.get(itemId) + '’ / ‘' + title + '’ (' + itemId + '). 설정집을 다시 열어 주세요.');
+      used.set(itemId, title);
+      return {...item, itemId, title, content, category, retentionTurns:normalizeRetentionTurns(item.retentionTurns)};
+    });
+  }
+
+  function assertExtraLibraryImport(room, selectedItems, selectedCount = selectedItems?.length) {
+    const selected = prepareExtraLibraryImport(selectedItems, selectedCount);
+    const slots = room?.slots || [], extras = slots.filter(slot => slot.group === 'extra');
+    const failures = [];
+    for (const item of selected) {
+      const matches = extras.filter(slot => String(slot.libraryItemId || '') === item.itemId);
+      const label = '‘' + item.title + '’ (' + item.itemId + ')';
+      if (matches.length !== 1) { failures.push(label + (matches.length ? ': 같은 ID의 슬롯 ' + matches.length + '개' : ': 누락'));continue; }
+      const slot = matches[0];
+      if (!slot.id || slots.filter(other => String(other.id) === String(slot.id)).length !== 1) failures.push(label + ': 방 슬롯 ID 충돌');
+      const differences = [];
+      if (slot.title !== item.title) differences.push('제목');
+      if (slot.content !== item.content) differences.push('내용');
+      if (slot.extraCategory !== item.category) differences.push('카테고리');
+      if (slot.enabled !== false) differences.push('기본 주입 OFF');
+      if (differences.length) failures.push(label + ': ' + differences.join('·') + ' 불일치');
+    }
+    if (failures.length) throw new Error('기타 설정집 반영 검증 실패 — ' + failures.join(' / '));
+    return selected.length;
+  }
+
+  function applySelectedExtraLibraryToRoom(room, selectedItems, selectedFolders = [], selectedCount = selectedItems?.length) {
+    const selected = prepareExtraLibraryImport(selectedItems, selectedCount);
+    // 원본 방은 모든 선택 항목을 검증한 뒤 한 번에 갱신합니다.
+    const candidate = rpcmRoomClone(room);
+    candidate.slots ||= [];
+    const extras = candidate.slots.filter(slot => slot.group === 'extra');
+    const byId = new Map();
+    for (const slot of extras.filter(slot => slot.libraryItemId)) {
+      const id = String(slot.libraryItemId);
+      if (!byId.has(id)) byId.set(id, []);
+      byId.get(id).push(slot);
+    }
+    const legacyKey = item => JSON.stringify([libraryItemKey(item), String(item.category ?? item.extraCategory ?? '').trim()]);
     const selectedTitleCounts = new Map();
     for (const item of selected) {
-      const key = libraryItemKey(item);
+      const key = legacyKey(item);
       selectedTitleCounts.set(key, Number(selectedTitleCounts.get(key) || 0) + 1);
     }
-    const legacyByTitle = new Map();
-    const legacyBySignature = new Map();
+    const legacyByTitle = new Map(), legacyBySignature = new Map();
     for (const slot of extras.filter(slot => !slot.libraryItemId)) {
-      const key = libraryItemKey(slot);
+      const key = legacyKey(slot);
       if (!legacyByTitle.has(key)) legacyByTitle.set(key, []);
       legacyByTitle.get(key).push(slot);
-      const signature = `${key}\n${String(slot.content || '')}`;
+      const signature = JSON.stringify([key, String(slot.content || '')]);
       if (!legacyBySignature.has(signature)) legacyBySignature.set(signature, []);
       legacyBySignature.get(signature).push(slot);
     }
-    const consumedLegacy = new Set();
-    let reusableDefault = extras.find(slot => /^기타(?:\s+\d+)?$/.test(String(slot.title || '').trim()) && !String(slot.content || '').trim() && !slot.enabled) || null;
+    const consumed = new Set();
+    let reusableDefault = extras.find(slot => !slot.libraryItemId && !String(slot.extraCategory || '').trim() && /^기타(?:\s+\d+)?$/.test(String(slot.title || '').trim()) && !String(slot.content || '').trim() && !slot.enabled) || null;
     let added = 0, updated = 0;
     for (const src of selected) {
-      const key = libraryItemKey(src);
-      let slot = byId.get(String(src.itemId)) || null;
+      const key = legacyKey(src), matches = byId.get(src.itemId) || [];
+      if (matches.length > 1) throw new Error('기타 항목 ID 충돌: ‘' + src.title + '’ (' + src.itemId + ')에 연결된 방 슬롯이 ' + matches.length + '개입니다.');
+      let slot = matches[0] || null;
       if (!slot) {
-        const signature = `${key}\n${String(src.content || '')}`;
-        slot = (legacyBySignature.get(signature) || []).find(candidate => !consumedLegacy.has(candidate)) || null;
+        const signature = JSON.stringify([key, src.content]);
+        slot = (legacyBySignature.get(signature) || []).find(other => !consumed.has(other)) || null;
       }
-      // 구버전 방 데이터는 제목이 양쪽에 하나씩일 때만 한 번 연결합니다.
-      if (!slot && key && selectedTitleCounts.get(key) === 1 && (legacyByTitle.get(key) || []).length === 1) slot = legacyByTitle.get(key)[0];
-      if (slot && !slot.libraryItemId) consumedLegacy.add(slot);
-      if (!slot && reusableDefault) {
-        slot = reusableDefault;
-        reusableDefault = null;
-        updated++;
-      } else if (!slot) {
-        slot = makeDynamicSlot('extra', String(src.title || '기타'));
-        room.slots.push(slot);
+      // 구버전 방 데이터는 같은 폴더의 제목이 양쪽에 하나씩일 때만 연결합니다.
+      if (!slot && selectedTitleCounts.get(key) === 1 && (legacyByTitle.get(key) || []).length === 1) {
+        const legacy = legacyByTitle.get(key)[0];
+        if (!consumed.has(legacy)) slot = legacy;
+      }
+      if (!slot && reusableDefault) slot = reusableDefault;
+      if (!slot) {
+        slot = makeDynamicSlot('extra', src.title);
+        candidate.slots.push(slot);
         added++;
-      } else { updated++; }
-      slot.title = String(src.title || '기타').trim() || '기타';
-      slot.libraryItemId = String(src.itemId);
-      slot.content = String(src.content || '');
-      slot.retentionTurns = normalizeRetentionTurns(src.retentionTurns);
-      slot.extraCategory = String(src.category ?? src.extraCategory ?? '').trim();
+      } else {
+        if (consumed.has(slot)) throw new Error('선택한 기타 항목이 같은 방 슬롯에 연결됐습니다: ‘' + src.title + '’.');
+        updated++;
+      }
+      consumed.add(slot);
+      // 제목/구버전 연결로 선택된 기본 슬롯도 이후 재사용하지 않습니다.
+      if (slot === reusableDefault) reusableDefault = null;
+      slot.title = src.title;
+      slot.libraryItemId = src.itemId;
+      slot.content = src.content;
+      slot.retentionTurns = src.retentionTurns;
+      slot.extraCategory = src.category;
       slot.enabled = false; // 다른 방에서 불러온 규칙은 확인 후 직접 체크
-      byId.set(String(src.itemId), slot);
+      byId.set(src.itemId, [slot]);
     }
     // 내용이 비어 있어도 선택한 카테고리는 폴더로 복원합니다. 기존 폴더는 건드리지 않습니다.
     for (const category of selectedFolders) {
       const name = String(category || '').trim();
       if (!name) continue;
       const folderCategory = name === '미분류' ? '' : name;
-      if (room.slots.some(slot => slot.group === 'extra' && String(slot.extraCategory || '').trim() === folderCategory)) continue;
+      if (candidate.slots.some(slot => slot.group === 'extra' && String(slot.extraCategory || '').trim() === folderCategory)) continue;
       const placeholder = makeDynamicSlot('extra','새 기타 항목');
       placeholder.extraCategory = folderCategory;
-      room.slots.push(placeholder);
+      candidate.slots.push(placeholder);
     }
-    normalizeRoomSlots(room);
-    return { count:selected.length, added, updated };
+    normalizeRoomSlots(candidate);
+    assertExtraLibraryImport(candidate, selected, selectedCount);
+    rpcmReplaceRoomObject(room, candidate);
+    assertExtraLibraryImport(room, selected, selectedCount);
+    return { count:selectedCount, added, updated, items:selected };
   }
 
   async function findCharacterLibraryForRoom(room = state.currentRoom) {
@@ -36395,11 +36464,16 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
           confirmText: '선택 폴더 불러오기',
         });
         if (!choice) return;
-        const result = applySelectedExtraLibraryToRoom(room, choice.items, choice.folders);
+        const selectedCount = choice.selectedCount ?? choice.items.length;
+        const result = applySelectedExtraLibraryToRoom(room, choice.items, choice.folders, selectedCount);
         room.lastExtraLibraryId = library.scopeId;
-        await saveRoom(room);
-        notify(`‘${extraLibraryDisplayName(library)}’ 불러오기 완료 · 폴더 ${choice.folders.length}개 · 항목 ${result.count}개 (추가 ${result.added}, 갱신 ${result.updated})`, 'success', 6000);
+        assertExtraLibraryImport(room, result.items, selectedCount);
+        await saveRoom(room, 'extra-library-import', candidate => assertExtraLibraryImport(candidate, result.items, selectedCount));
+        const stored = await readManualStoredRoom(room);
+        assertExtraLibraryImport(stored, result.items, selectedCount);
         renderModalIfOpen();
+        assertExtraLibraryImport(room, result.items, selectedCount);
+        notify(`‘${extraLibraryDisplayName(library)}’ 불러오기 완료 · 폴더 ${choice.folders.length}개 · 항목 ${result.count}개 (추가 ${result.added}, 갱신 ${result.updated})`, 'success', 6000);
       } catch (e) { notify(`기타 설정집 불러오기 실패: ${e.message}`, 'error', 6000); }
     };
 
