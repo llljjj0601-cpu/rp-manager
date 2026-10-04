@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🪽위시 RP Manager
 // @namespace    local.rp.context.manager
-// @version      0.17.11
+// @version      0.17.12
 // @description  장기 RP용 현재상태·날짜로그·연속성 타임라인·캐릭터 설정을 관리하고, 검수형 AI 생성과 필요한 컨텍스트 자동 주입을 지원합니다.
 // @author       User
 // @license      All Rights Reserved
@@ -47,13 +47,13 @@
   // 버전별 키를 쓰면 구버전과 신버전이 동시에 설치됐을 때 둘 다 실행될 수 있습니다.
   // 모든 버전이 공유하는 고정 키로 중복 실행을 막습니다.
   if (window.__WISH_RP_MANAGER_LOADED__) return;
-  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.17.11', loadedAt: Date.now() };
+  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.17.12', loadedAt: Date.now() };
   // 같은 페이지에 남아 있는 v0.8.10 복사본이 뒤늦게 시작되는 경우도 차단합니다.
   window.__RP_MANAGER_0810_LOADED__ = true;
 
   const APP = {
     name: '🪽위시 RP Manager',
-    version: '0.17.11',
+    version: '0.17.12',
     dbName: 'RPContextManagerDB',
     dbVersion: 2,
     storeName: 'rooms',
@@ -25370,7 +25370,7 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
     }};
   }
   async function loadRpcmCompletedRange(room,anchorKeys=[],options={}){
-    const pager=createRpcmTurnPager(room),anchors=[...new Set(anchorKeys.map(String).filter(Boolean))],remaining=new Set(anchors),chunks=[];
+    const pager=createRpcmTurnPager(room,options),anchors=[...new Set(anchorKeys.map(String).filter(Boolean))],remaining=new Set(anchors),chunks=[];
     while(!pager.done){
       const batch=await pager.next();chunks.push(batch);
       for(const turn of batch)for(const alias of [turn.key,...(turn.aliases||[])])remaining.delete(String(alias));
@@ -25482,7 +25482,7 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
   }
 
   async function assertManualFullBuildHistory(room, task, progress) {
-    const turns = await loadManualCompletedTurns(room);
+    const turns = await loadManualCompletedTurns(room,{finalFresh:true});
     const scope=turns.slice(0,progress.totalTurns);
     const hash = await manualFullHistoryHash(scope);
     if (scope.length !== progress.totalTurns || String(turns[0]?.key || '') !== progress.startKey || String(scope.at(-1)?.key || '') !== progress.endKey || hash !== progress.historyHash) {
@@ -26194,7 +26194,7 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
   async function assertIntegratedSource(room,job){
     if(state.currentRoom!==room||room.manualIntegratedJob?.jobId!==job.jobId)throw new Error('방 또는 통합 작업자료가 바뀌었습니다.');
     if(integratedFingerprint(room)!==job.fingerprint)throw new Error('작업자료 생성 후 기억·시작점·지침이 바뀌었습니다. 통합 패킷을 다시 만들어 주세요.');
-    const turns=job.anchorKey?await loadRpcmCompletedRange(room,[job.anchorKey]):await loadManualCompletedTurns(room),index=job.anchorKey?rpcmFindTurnIndex(turns,job.anchorKey):0;
+    const turns=job.anchorKey?await loadRpcmCompletedRange(room,[job.anchorKey],{finalFresh:true}):await loadManualCompletedTurns(room,{finalFresh:true}),index=job.anchorKey?rpcmFindTurnIndex(turns,job.anchorKey):0;
     if(index<0)throw new Error('시작점 RP가 사라졌습니다. 리롤·삭제·분기를 확인하세요.');
     const current=turns.slice(index).map(t=>[String(t.key),String(t.text)]);
     manualAssertSourceSnapshot(current,job.sourceTurns,true);
@@ -26951,13 +26951,13 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
   async function assertManualUpdateSourceCurrent(room, task, draft, options={}) {
     if(draft.stale)throw new Error(draft.staleReason||'원문 변경으로 재검토가 필요합니다.');
     if (state.currentRoom !== room || (!draft.recovery&&manualUpdateRuntime.packets.get(manualPacketKey(room, task)) !== draft)) throw new Error('방 또는 작업자료가 바뀌었습니다. 현재 범위로 다시 만들어 주세요.');
-    if(draft.recoveryJobId){const turns=await loadManualCompletedTurns(room),byKey=new Map(turns.map(turn=>[String(turn.key),String(turn.text)]));if(!(draft.sourceTurns||[]).length||(draft.sourceTurns||[]).some(([key,text])=>byKey.get(String(key))!==String(text)))throw new Error('보관된 작업자료의 원문이 바뀌었습니다. 복구 범위를 다시 확인해 주세요.');return {appended:0};}
+    if(draft.recoveryJobId){const turns=await loadManualCompletedTurns(room,{finalFresh:true}),byKey=new Map(turns.map(turn=>[String(turn.key),String(turn.text)]));if(!(draft.sourceTurns||[]).length||(draft.sourceTurns||[]).some(([key,text])=>byKey.get(String(key))!==String(text)))throw new Error('보관된 작업자료의 원문이 바뀌었습니다. 복구 범위를 다시 확인해 주세요.');return {appended:0};}
     if(draft.recovery&&draft.sourceVerified===false){
       if(!draft.explicitUnknownApproval)throw new Error('원문 범위 미확인 복구를 명시적으로 승인해야 합니다.');
       return {appended:0};
     }
     if (draft.rangeMode === 'full' || draft.rangeMode === 'custom') {
-      const turns = await loadManualCompletedTurns(room);
+      const turns = await loadManualCompletedTurns(room,{finalFresh:true});
       const currentHistory = turns.map(turn => [String(turn.key), String(turn.text)]);
       const source=manualAssertSourceSnapshot(currentHistory,draft.historyTurns,options.allowAppended===true);
       if (JSON.stringify(currentHistory.slice(draft.startIndex, draft.endIndex + 1)) !== JSON.stringify(draft.sourceTurns)) throw new Error('선택한 RP 범위가 바뀌었습니다. 작업자료를 다시 만들어 주세요.');
@@ -28300,7 +28300,7 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
 
   const FULL_REBUILD_FORMAT = 'wish-rp-manager-full-rebuild-1.0';
   const FULL_REBUILD_PART_TARGET = 475000;
-  const fullRebuildRuntime = { files:new Map(), busy:false };
+  const fullRebuildRuntime = { files:new Map(), busy:false, control:null };
 
   async function fullRebuildSha256(value) {
     const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(value)));
@@ -28340,9 +28340,10 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
   async function createFullRebuildFiles(room) {
     if (state.currentRoom !== room || fullRebuildRuntime.busy || state.saveStatus === 'saving' || state.saveStatus === 'error' || state.autoSaveTimers.has(String(room.chatId || ''))) throw new Error('현재 방의 로컬 저장이 끝난 뒤 전체 재구축 파일을 만들어 주세요.');
     fullRebuildRuntime.busy = true;
+    const control=fullRebuildRuntime.control||null;
     try {
       const before = JSON.stringify(room);
-      const turns = (await loadManualCompletedTurns(room)).map(turn => ({ key:String(turn.key), text:String(turn.text) }));
+      const turns = (await loadManualCompletedTurns(room,{finalFresh:true,control})).map(turn => ({ key:String(turn.key), text:String(turn.text) }));
       if (JSON.stringify(room) !== before || state.currentRoom !== room) throw new Error('RP 조회 중 방 데이터가 변경되었습니다. 다시 시도해 주세요.');
       if (!turns.length) throw new Error('완료된 RP 턴이 없습니다.');
       const snapshotRoom = structuredClone(room);
@@ -28380,6 +28381,8 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
       const dataSha256 = await fullRebuildSha256(JSON.stringify(fullRebuildDataView(snapshotRoom)));
       if (JSON.stringify(room) !== before || state.currentRoom !== room) throw new Error('파일 생성 중 방 데이터가 변경되었습니다. 다시 시도해 주세요.');
       const job = { jobId, createdAt:nowIso(), sourceKeys:turns.map(turn=>String(turn.key)),source, parts, guides:guides.manifest, master, memoHash, dataSha256, loreRefs, timelineRun };
+      if(control?.cancelled)throw rpcmHistoryUserAbort('전체 재구축 파일 생성을 중단했습니다.');
+      if(control)control.commitStarted=true;
       const candidate = structuredClone(room);
       candidate.fullRebuildJob = job;
       await saveRoom(candidate);
@@ -28387,14 +28390,14 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
       rpcmReplaceRoomObject(room,candidate);
       fullRebuildRuntime.files.set(jobId,files);
       return { job, files };
-    } finally { fullRebuildRuntime.busy = false; }
+    } finally { fullRebuildRuntime.busy = false; if(fullRebuildRuntime.control===control)fullRebuildRuntime.control=null; }
   }
 
   async function assertFullRebuildSource(room,job) {
     if(job.stale)throw new Error(job.staleReason||'원문 변경으로 재검토가 필요합니다.');
     if (state.currentRoom !== room || room.fullRebuildJob?.jobId !== job.jobId) throw new Error('다른 방 또는 다른 전체 재구축 작업입니다.');
     if (job.memoHash && await fullRebuildSha256(userCanonMemoBlock(room)) !== job.memoHash) throw new Error('재구축 파일 생성 후 사용자 메모가 변경됐습니다. 새 파일로 다시 작업해 주세요.');
-    const turns = await loadManualCompletedTurns(room);
+    const turns = await loadManualCompletedTurns(room,{finalFresh:true});
     if (turns.length < job.source.turnCount) throw new Error('재구축 파일 생성 후 RP 원문이 줄었습니다. 결과를 적용하지 않았습니다.');
     const prefix = turns.slice(0,job.source.turnCount);
     if (String(prefix[0]?.key) !== job.source.firstTurnKey || String(prefix.at(-1)?.key) !== job.source.lastTurnKey || await manualFullHistoryHash(prefix) !== job.source.sha256) throw new Error('재구축 파일 생성 후 RP 원문/분기가 변경됐습니다. 파일을 다시 만들어 주세요.');
@@ -37035,6 +37038,334 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
   } else {
     startCompat();
   }
+
+  // ===========================================================================
+  // CORE SELECTIVE SAFETY PORT — REVIEWED v0.17.12 (P1~P7)
+  // Based on dinggadingga0515 RefinerEnhanced 20261003; Wish 0.17.11 is the baseline. No Core DB/Lore/prompt/injection engine
+  // is imported wholesale. This block only reimplements the verified contracts.
+  // ===========================================================================
+
+  const RPCM_CORE_PORT = Object.freeze({
+    build:'20261003-fastlog-v2-wish-reviewed',
+    jsonRepairMaxChars:2000000,
+    fastPageSize:300,
+    legacyPageSize:50,
+    retryCount:5,
+    retryBaseDelayMs:1200,
+    retryMaxDelayMs:12000,
+    recoveryRounds:2,
+    recoveryCooldownMs:8000,
+    fallbackCooldownMs:1200,
+    requestTimeoutMs:60000,
+    pageDelayMs:100,
+    maxMessages:1000000,
+    maxPages:20000,
+    cacheTtlMs:120000,
+    cacheDeepMaxChars:12*1024*1024,
+    cacheShallowMaxChars:36*1024*1024,
+    blobUrlTtlMs:60000,
+    zipWarnBytes:256*1024*1024,
+    autoZipMaxBytes:192*1024*1024,
+  });
+
+  function rpcmHistoryUserAbort(message='작업을 중단했습니다.') { const e=new Error(message); e.code='RPCM_USER_ABORT'; return e; }
+  function rpcmHistoryStale(message='RP 조회 중 방·분기 또는 원문 상태가 바뀌었습니다.') { const e=new Error(message); e.code='RPCM_HISTORY_STALE'; return e; }
+  function rpcmHistoryError(message,status=0,retryAfterMs=0) { const e=new Error(message); e.code='RPCM_HISTORY_ERROR'; e.rpcmStatus=Number(status)||0; e.rpcmRetryAfterMs=Math.max(0,Number(retryAfterMs)||0); return e; }
+  function rpcmIsHistoryAbort(error){return String(error?.code||'')==='RPCM_USER_ABORT';}
+  function rpcmIsHistoryStale(error){return String(error?.code||'')==='RPCM_HISTORY_STALE';}
+  function rpcmIsTransientHistoryError(error){const status=Number(error?.rpcmStatus||0);return !rpcmIsHistoryAbort(error)&&!rpcmIsHistoryStale(error)&&(status===0||status===408||status===425||status===429||status>=500);}
+  function rpcmIsHistoryAuthError(error){const status=Number(error?.rpcmStatus||0);return status===401||status===403;}
+  function rpcmIsFastCompatibilityError(error){const status=Number(error?.rpcmStatus||0);return [400,404,413,414,422].includes(status);}
+  function rpcmRetryAfterMs(headers){
+    const raw=String(headers||''),line=raw.split(/\r?\n/).find(row=>/^retry-after\s*:/i.test(row));if(!line)return 0;const value=line.replace(/^[^:]+:/,'').trim();const seconds=Number(value);if(Number.isFinite(seconds)&&seconds>=0)return Math.min(120000,seconds*1000);const at=Date.parse(value);return Number.isFinite(at)?Math.max(0,Math.min(120000,at-Date.now())):0;
+  }
+  function rpcmHistoryBackoff(error,attempt){return Math.max(Number(error?.rpcmRetryAfterMs||0),Math.min(RPCM_CORE_PORT.retryMaxDelayMs,RPCM_CORE_PORT.retryBaseDelayMs*Math.pow(2,Math.max(0,attempt))));}
+
+  function rpcmCreateHistoryControl(){
+    let cancelled=false; const listeners=new Set();
+    return {commitStarted:false,get cancelled(){return cancelled;},cancel(){if(cancelled||this.commitStarted)return false;cancelled=true;for(const fn of [...listeners])try{fn();}catch{}listeners.clear();return true;},onAbort(fn){if(typeof fn!=='function')return()=>{};if(cancelled){fn();return()=>{};}listeners.add(fn);return()=>listeners.delete(fn);}};
+  }
+
+  function rpcmHistorySleep(ms,control){
+    if(control?.cancelled)return Promise.reject(rpcmHistoryUserAbort());
+    if(!control?.onAbort)return sleep(ms);
+    return new Promise((resolve,reject)=>{
+      let settled=false,off=()=>{};
+      const finish=(fn,value)=>{if(settled)return;settled=true;clearTimeout(timer);off();fn(value);};
+      const timer=setTimeout(()=>finish(resolve),ms);
+      off=control.onAbort(()=>finish(reject,rpcmHistoryUserAbort()));
+    });
+  }
+
+  const RpcmHistoryDiagnostics=(()=>{
+    const metrics={physicalReads:0,completedReads:0,failedReads:0,cancelledReads:0,staleReads:0,errorReads:0,pageAttempts:0,fastAttempts:0,fastFailures:0,transientRetries:0,recoveryRounds:0,fastToLegacyFallbacks:0,runawayStops:0,cacheHits:0,cacheMisses:0,cacheInvalidations:0,singleFlightJoins:0};
+    let last=null,seq=0;
+    const begin=mode=>({id:++seq,mode:String(mode||'fast-300'),startedAt:Date.now(),pages:0,messages:0,retries:0,recoveryRounds:0,host:'crack-api.wrtn.ai'});
+    const page=(token,mode)=>{metrics.pageAttempts++;if(mode==='fast-300')metrics.fastAttempts++;if(token)token.mode=mode;};
+    const retry=token=>{metrics.transientRetries++;if(token)token.retries=(token.retries||0)+1;};
+    const recovery=token=>{metrics.recoveryRounds++;if(token)token.recoveryRounds=(token.recoveryRounds||0)+1;};
+    const fallback=token=>{metrics.fastFailures++;metrics.fastToLegacyFallbacks++;if(token)token.mode='legacy-50';};
+    const runaway=()=>{metrics.runawayStops++;};
+    const physical=()=>{metrics.physicalReads++;};
+    const complete=token=>{metrics.completedReads++;last={outcome:'completed',at:Date.now(),elapsedMs:Date.now()-token.startedAt,mode:token.mode,pages:token.pages,messages:token.messages,retries:token.retries,recoveryRounds:token.recoveryRounds,host:token.host};};
+    const fail=(token,error)=>{metrics.failedReads++;const outcome=rpcmIsHistoryAbort(error)?'cancelled':rpcmIsHistoryStale(error)?'stale':'error';if(outcome==='cancelled')metrics.cancelledReads++;else if(outcome==='stale')metrics.staleReads++;else metrics.errorReads++;last={outcome,at:Date.now(),elapsedMs:Math.max(0,Date.now()-Number(token?.startedAt||Date.now())),mode:String(token?.mode||''),pages:Number(token?.pages)||0,messages:Number(token?.messages)||0,retries:Number(token?.retries)||0,recoveryRounds:Number(token?.recoveryRounds)||0,host:String(token?.host||'crack-api.wrtn.ai'),error:String(error?.message||error||'').slice(0,320)};};
+    const cacheHit=()=>{metrics.cacheHits++;}; const cacheMiss=()=>{metrics.cacheMisses++;}; const cacheInvalid=()=>{metrics.cacheInvalidations++;}; const join=()=>{metrics.singleFlightJoins++;};
+    const snapshot=()=>({metrics:{...metrics},last:last?{...last}:null,flights:rpcmHistoryFlights.size,cache:rpcmHistoryCache.size});
+    return {begin,page,retry,recovery,fallback,runaway,physical,complete,fail,cacheHit,cacheMiss,cacheInvalid,join,snapshot};
+  })();
+
+  const rpcmHistoryCache=new Map(),rpcmHistoryFlights=new Map(),rpcmHistoryRevisions=new Map();
+  let rpcmHistoryRevisionSeq=0;
+  function rpcmHistoryContext(room){return {room,chatId:String(apiChatIdOf(room)||''),epoch:state.routeEpoch,revision:rpcmHistoryRevision(apiChatIdOf(room))};}
+  function rpcmAssertHistoryContext(context){
+    if(state.currentRoom!==context.room||state.routeEpoch!==context.epoch||String(apiChatIdOf(context.room))!==context.chatId||rpcmHistoryRevision(context.chatId)!==context.revision)throw rpcmHistoryStale();
+  }
+  function rpcmHistoryRevision(chatId){return Number(rpcmHistoryRevisions.get(String(chatId))||0);}
+  function rpcmHistoryInvalidate(chatId,reason='mutation'){
+    const id=String(chatId||'');if(!id)return;rpcmHistoryRevisions.set(id,++rpcmHistoryRevisionSeq);if(rpcmHistoryCache.delete(id))RpcmHistoryDiagnostics.cacheInvalid();
+  }
+  function rpcmHistoryTurnChars(turns){return (turns||[]).reduce((sum,t)=>sum+String(t?.text||'').length+String(t?.userText||'').length+String(t?.assistantText||'').length,0);}
+  function rpcmFrontierSignature(messages){return semanticSourceHash(JSON.stringify((messages||[]).slice(0,50).map(m=>[String(messageIdOf(m)||''),messageRoleOf(m),semanticSourceHash(messageTextOf(m)),String(m?.status||''),String(m?.generationStatus||''),String(m?.updatedAt||m?.updated_at||'')])));}
+  function rpcmCloneTurnsForCache(turns,chars){
+    if(chars<=RPCM_CORE_PORT.cacheDeepMaxChars)return structuredClone(turns);
+    return turns.map(turn=>Object.freeze({...turn,aliases:Array.isArray(turn.aliases)?Object.freeze([...turn.aliases]):turn.aliases,reviewSources:Array.isArray(turn.reviewSources)?Object.freeze(turn.reviewSources.map(row=>Object.freeze({...row}))):turn.reviewSources}));
+  }
+  function rpcmCloneCachedTurns(turns){return (turns||[]).map(turn=>({...turn,aliases:Array.isArray(turn.aliases)?[...turn.aliases]:turn.aliases,reviewSources:Array.isArray(turn.reviewSources)?turn.reviewSources.map(row=>({...row})):turn.reviewSources}));}
+  function rpcmInstallHistoryCache(room,turns,headSignature){
+    const chatId=String(apiChatIdOf(room)||''),chars=rpcmHistoryTurnChars(turns);if(!chatId||chars>RPCM_CORE_PORT.cacheShallowMaxChars){rpcmHistoryCache.clear();return;}
+    const stored=rpcmCloneTurnsForCache(turns,chars);Object.freeze(stored);
+    // Only retain the active room's snapshot; visiting many rooms must not accumulate full logs.
+    rpcmHistoryCache.clear();
+    rpcmHistoryCache.set(chatId,{at:Date.now(),revision:rpcmHistoryRevision(chatId),headSignature:String(headSignature||''),turns:stored,chars,mode:chars<=RPCM_CORE_PORT.cacheDeepMaxChars?'deep':'shallow'});
+  }
+  async function rpcmTryHistoryCache(room,control=null){
+    const context=rpcmHistoryContext(room),chatId=context.chatId,row=rpcmHistoryCache.get(chatId);rpcmAssertHistoryContext(context);if(!row||Date.now()-row.at>RPCM_CORE_PORT.cacheTtlMs||row.revision!==rpcmHistoryRevision(chatId)){RpcmHistoryDiagnostics.cacheMiss();if(row)rpcmHistoryCache.delete(chatId);return null;}
+    try{if(control?.cancelled)throw rpcmHistoryUserAbort();const url=`https://crack-api.wrtn.ai/crack-gen/v3/chats/${chatId}/messages?limit=50`,data=await rpcmHistoryHttpGet(url,control),recent=data?.data?.messages||data?.messages;if(!Array.isArray(recent))throw rpcmHistoryError('최근 RP 확인 형식이 올바르지 않습니다.');rpcmAssertHistoryContext(context);if(control?.cancelled)throw rpcmHistoryUserAbort();const signature=rpcmFrontierSignature(recent);if(!signature||signature!==row.headSignature){rpcmHistoryCache.delete(chatId);RpcmHistoryDiagnostics.cacheInvalid();RpcmHistoryDiagnostics.cacheMiss();return null;}RpcmHistoryDiagnostics.cacheHit();return rpcmCloneCachedTurns(row.turns);}catch(error){if(rpcmIsHistoryAbort(error)||rpcmIsHistoryStale(error))throw error;RpcmHistoryDiagnostics.cacheMiss();return null;}
+  }
+
+  // Invalidate only message mutation routes. Read-only calls never touch the cache.
+  const rpcmBaseApiRequest=apiRequest;
+  apiRequest=async function(method,url,body=undefined){
+    const result=await rpcmBaseApiRequest(method,url,body);const verb=String(method||'GET').toUpperCase();
+    if(verb!=='GET'&&/\/chats\/([^/?]+)\/messages(?:\/|\?|$)/.test(String(url||''))){const match=String(url).match(/\/chats\/([^/?]+)\/messages/);if(match)rpcmHistoryInvalidate(decodeURIComponent(match[1]),verb);}
+    return result;
+  };
+
+  async function rpcmHistoryAuthToken(){let token=getCookie('access_token');for(let i=0;!token&&i<4;i++){await sleep(250);token=getCookie('access_token');}if(!token){const e=rpcmHistoryError('Crack 로그인 정보를 읽지 못했습니다. 채팅 페이지를 새로고침하거나 다시 로그인해 주세요.',401);e.code='CRACK_AUTH_REQUIRED';throw e;}return token;}
+  async function rpcmHistoryHttpGet(url,control){
+    if(control?.cancelled)throw rpcmHistoryUserAbort();const token=await rpcmHistoryAuthToken();if(control?.cancelled)throw rpcmHistoryUserAbort();
+    return await new Promise((resolve,reject)=>{
+      let settled=false,off=()=>{};const finish=(fn,value)=>{if(settled)return;settled=true;off();fn(value);};
+      const handle=GM_xmlhttpRequest({method:'GET',url,headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json',Accept:'application/json, text/plain, */*',platform:'web','wrtn-locale':'ko-KR'},timeout:RPCM_CORE_PORT.requestTimeoutMs,onload:res=>{let parsed=null;try{parsed=res.responseText?JSON.parse(res.responseText):null;}catch{}if(res.status>=200&&res.status<300)finish(resolve,parsed??{ok:true});else{const detail=parsed?.message||parsed?.error||String(res.responseText||'').slice(0,250),retryAfter=rpcmRetryAfterMs(res.responseHeaders);finish(reject,rpcmHistoryError(`API 오류 ${res.status}${detail?`: ${detail}`:''}`,res.status,retryAfter));}},ontimeout:()=>finish(reject,rpcmHistoryError(`API 요청 시간 초과 (${Math.round(RPCM_CORE_PORT.requestTimeoutMs/1000)}초)`,408)),onerror:()=>finish(reject,rpcmHistoryError('네트워크 오류',0)),onabort:()=>finish(reject,rpcmHistoryUserAbort())});
+      off=typeof control?.onAbort==='function'?control.onAbort(()=>{try{handle?.abort?.();}catch{}finish(reject,rpcmHistoryUserAbort());}):()=>{};
+    });
+  }
+  async function rpcmHistoryPage(chatId,cursor,limit,control,diag,context){
+    let last=null;
+    for(let round=0;round<RPCM_CORE_PORT.recoveryRounds;round++){
+      for(let attempt=0;attempt<RPCM_CORE_PORT.retryCount;attempt++){
+        if(control?.cancelled)throw rpcmHistoryUserAbort();if(context)rpcmAssertHistoryContext(context);
+        const url=`https://crack-api.wrtn.ai/crack-gen/v3/chats/${chatId}/messages?limit=${limit}${cursor?'&cursor='+encodeURIComponent(cursor):''}`;
+        try{return await rpcmHistoryHttpGet(url,control);}catch(error){last=error;if(context)rpcmAssertHistoryContext(context);if(rpcmIsHistoryAuthError(error)||rpcmIsHistoryAbort(error)||rpcmIsHistoryStale(error)||!rpcmIsTransientHistoryError(error))throw error;if(attempt>=RPCM_CORE_PORT.retryCount-1)break;RpcmHistoryDiagnostics.retry(diag);await rpcmHistorySleep(rpcmHistoryBackoff(error,attempt),control);}
+      }
+      if(round<RPCM_CORE_PORT.recoveryRounds-1&&last&&rpcmIsTransientHistoryError(last)){RpcmHistoryDiagnostics.recovery(diag);await rpcmHistorySleep(Math.max(RPCM_CORE_PORT.recoveryCooldownMs,Number(last.rpcmRetryAfterMs||0)),control);continue;}
+      break;
+    }
+    throw last||rpcmHistoryError('RP 페이지 조회 실패');
+  }
+
+  // Preserve Manager's completed-turn semantics; only the physical page transport changes.
+  createRpcmTurnPager=function(room,options={}){
+    const context=rpcmHistoryContext(room),chatId=context.chatId,seenCursors=new Set(),seenMessages=new Map(),control=options.control||null,onProgress=typeof options.onProgress==='function'?options.onProgress:null;
+    let cursor='',carry=[],done=false,messageCount=0,pageCount=0,mode='fast-300',headSignature='';
+    const diag=options.diag||RpcmHistoryDiagnostics.begin(mode);
+    return {get done(){return done;},get messageCount(){return messageCount;},get pageCount(){return pageCount;},get mode(){return mode;},get headSignature(){return headSignature;},async next(){
+      if(done)return [];if(control?.cancelled)throw rpcmHistoryUserAbort();rpcmAssertHistoryContext(context);
+      if(pageCount>=RPCM_CORE_PORT.maxPages||messageCount>=RPCM_CORE_PORT.maxMessages){RpcmHistoryDiagnostics.runaway();throw rpcmHistoryError(`전체 대화 읽기가 안전 한도(${RPCM_CORE_PORT.maxPages}페이지 / ${RPCM_CORE_PORT.maxMessages}메시지)에 도달했습니다. 일부 원문을 전체로 가장하지 않고 중단했습니다.`);}
+      let data,raw,usedMode=mode;RpcmHistoryDiagnostics.page(diag,mode);
+      try{data=await rpcmHistoryPage(chatId,cursor,mode==='fast-300'?RPCM_CORE_PORT.fastPageSize:RPCM_CORE_PORT.legacyPageSize,control,diag,context);raw=data?.data?.messages||data?.messages;if(!Array.isArray(raw))throw rpcmHistoryError('RP 페이지의 메시지 형식이 올바르지 않습니다.');}
+      catch(error){
+        const canFallback=mode==='fast-300'&&!rpcmIsHistoryAuthError(error)&&!rpcmIsHistoryAbort(error)&&!rpcmIsHistoryStale(error)&&(rpcmIsTransientHistoryError(error)||rpcmIsFastCompatibilityError(error));
+        if(!canFallback)throw error;
+        RpcmHistoryDiagnostics.fallback(diag);mode='legacy-50';usedMode=mode;await rpcmHistorySleep(RPCM_CORE_PORT.fallbackCooldownMs,control);RpcmHistoryDiagnostics.page(diag,mode);data=await rpcmHistoryPage(chatId,cursor,RPCM_CORE_PORT.legacyPageSize,control,diag,context);raw=data?.data?.messages||data?.messages;if(!Array.isArray(raw))throw rpcmHistoryError('RP 페이지의 메시지 형식이 올바르지 않습니다.');
+      }
+      if(control?.cancelled)throw rpcmHistoryUserAbort();rpcmAssertHistoryContext(context);
+      if(!headSignature)headSignature=rpcmFrontierSignature(raw);
+      const page=[];for(const message of raw){const id=String(messageIdOf(message)||''),signature=semanticSourceHash(JSON.stringify([messageRoleOf(message),messageTextOf(message),message.turnId,message.status,message.generationStatus]));if(id&&seenMessages.has(id)){if(seenMessages.get(id)!==signature)throw rpcmHistoryStale('페이지 조회 도중 RP 원문이 바뀌었습니다. 다시 조회해 주세요.');continue;}if(id)seenMessages.set(id,signature);page.push(message);}
+      messageCount+=page.length;pageCount++;diag.mode=usedMode;diag.pages=pageCount;diag.messages=messageCount;
+      if(messageCount>RPCM_CORE_PORT.maxMessages){RpcmHistoryDiagnostics.runaway();throw rpcmHistoryError(`전체 대화 메시지 수가 안전 한도 ${RPCM_CORE_PORT.maxMessages}개를 넘었습니다. 일부만 저장하지 않았습니다.`);}
+      const next=String(data?.data?.nextCursor||data?.nextCursor||'');if(next&&(next===cursor||seenCursors.has(next)))throw rpcmHistoryError('RP 페이지 cursor가 반복되었습니다. 일부 기록을 전체로 처리하지 않았습니다.');if(next){seenCursors.add(next);cursor=next;}else done=true;if(next&&!raw.length)throw rpcmHistoryError('빈 RP 페이지에 다음 cursor가 있습니다. 전체 원문을 확인하지 못했습니다.');
+      const combined=page.reverse().concat(carry),firstUser=combined.findIndex(row=>messageRoleOf(row)==='user'&&stripAutomationNoise(messageTextOf(row),true).trim());const turns=firstUser<0?[]:buildCompletedAiDialogueTurns(combined.slice(firstUser));carry=firstUser<0?combined:combined.slice(0,firstUser);if(carry.reduce((sum,row)=>sum+messageTextOf(row).length,0)>2000000)throw rpcmHistoryError('하나의 RP 턴이 안전 메모리 크기를 넘습니다. 원문을 자르지 않았습니다.');if(done)carry=[];
+      const progress={messages:messageCount,pages:pageCount,mode,done,turns:turns.length};onProgress?.(progress);const status=state.modal?.querySelector('[data-rebuild-status]');if(status&&fullRebuildRuntime.busy)status.textContent=`원문 ${formatCount(messageCount)}개 · ${pageCount}페이지 조회 ${done?'완료':'중'} · ${mode==='fast-300'?'고속 300':'복구 50'}`;
+      if(!done&&mode==='fast-300'&&RPCM_CORE_PORT.pageDelayMs>0)await rpcmHistorySleep(RPCM_CORE_PORT.pageDelayMs,control);
+      return turns;
+    }};
+  };
+
+  async function rpcmPhysicalCompletedTurns(room,control,onProgress=null){
+    const context=rpcmHistoryContext(room),diag=RpcmHistoryDiagnostics.begin('fast-300');rpcmAssertHistoryContext(context);RpcmHistoryDiagnostics.physical();const pager=createRpcmTurnPager(room,{control,diag,onProgress}),chunks=[];
+    try{while(!pager.done){if(control?.cancelled)throw rpcmHistoryUserAbort();chunks.push(await pager.next());}const turns=chunks.reverse().flat();rpcmAssertHistoryContext(context);if(control?.cancelled)throw rpcmHistoryUserAbort();RpcmHistoryDiagnostics.complete(diag);rpcmInstallHistoryCache(room,turns,pager.headSignature);return turns;}
+    catch(error){RpcmHistoryDiagnostics.fail(diag,error);throw error;}
+  }
+  function rpcmSubscribeHistoryFlight(flight,control,onProgress=null){
+    const token=Symbol('subscriber');return new Promise((resolve,reject)=>{
+      let settled=false,off=()=>{};
+      const finish=(fn,value)=>{if(settled)return;settled=true;off();flight.subscribers.delete(token);fn(value);};
+      const abort=()=>{finish(reject,rpcmHistoryUserAbort());if(!flight.subscribers.size&&!flight.done){flight.aborting=true;if(rpcmHistoryFlights.get(flight.key)===flight)rpcmHistoryFlights.delete(flight.key);flight.physical.cancel();}};
+      flight.subscribers.set(token,{resolve:v=>finish(resolve,v),reject:e=>finish(reject,e),onProgress});
+      if(control?.cancelled){abort();return;}
+      off=typeof control?.onAbort==='function'?control.onAbort(abort):()=>{};
+      if(flight.done){flight.error?finish(reject,flight.error):finish(resolve,rpcmCloneCachedTurns(flight.result));}
+    });
+  }
+  async function rpcmSharedFullCompletedTurns(room,options={}){
+    const chatId=String(apiChatIdOf(room)||'');if(!chatId)throw rpcmHistoryError('현재 RP 방 식별자를 확인하지 못했습니다.');const control=options.control||null;const context=rpcmHistoryContext(room);rpcmAssertHistoryContext(context);if(control?.cancelled)throw rpcmHistoryUserAbort();
+    if(options.cacheFirst!==false&&!options.finalFresh){const cached=await rpcmTryHistoryCache(room,control);if(cached)return cached;}
+    rpcmAssertHistoryContext(context);if(control?.cancelled)throw rpcmHistoryUserAbort();
+    if(options.finalFresh)return await rpcmPhysicalCompletedTurns(room,control,options.onProgress||null);
+    let flight=rpcmHistoryFlights.get(chatId);if(flight&&(flight.aborting||flight.done||flight.room!==room||flight.epoch!==context.epoch||flight.revision!==context.revision)){rpcmHistoryFlights.delete(chatId);flight=null;}
+    if(!flight){const physical=rpcmCreateHistoryControl();flight={key:chatId,room,epoch:context.epoch,revision:context.revision,physical,subscribers:new Map(),done:false,aborting:false,result:null,error:null};rpcmHistoryFlights.set(chatId,flight);(async()=>{try{flight.result=await rpcmPhysicalCompletedTurns(room,physical,p=>{for(const sub of flight.subscribers.values())if(typeof sub.onProgress==='function')try{sub.onProgress(p);}catch{}});}catch(error){flight.error=error;}finally{flight.done=true;if(rpcmHistoryFlights.get(chatId)===flight)rpcmHistoryFlights.delete(chatId);for(const sub of [...flight.subscribers.values()])flight.error?sub.reject(flight.error):sub.resolve(rpcmCloneCachedTurns(flight.result));}})();}
+    else RpcmHistoryDiagnostics.join();
+    return await rpcmSubscribeHistoryFlight(flight,control,options.onProgress||null);
+  }
+
+  const rpcmLegacyLoadCompletedRange=loadRpcmCompletedRange;
+  loadRpcmCompletedRange=async function(room,anchorKeys=[],options={}){
+    const anchors=[...new Set((anchorKeys||[]).map(String).filter(Boolean))];
+    if(!anchors.length&&!options.recentOnly)return await rpcmSharedFullCompletedTurns(room,options);
+    // Anchor/recent callers keep the original early-stop semantics, but use the new 300→50 pager.
+    return await rpcmLegacyLoadCompletedRange(room,anchors,options);
+  };
+  loadManualCompletedTurns=async function(room,options={}){if(state.currentRoom!==room)throw rpcmHistoryStale('현재 방이 바뀌었습니다.');const turns=await loadRpcmCompletedRange(room,[],options);personCollectAppearances(room,turns);return turns;};
+
+  // -------------------------- P1: JSON Repair / Hold --------------------------
+  function rpcmImportErrorRepairable(error){
+    const msg=String(error?.message||error||'');
+    if(/방 또는|다른 방|jobId|sourceHash|source\/방\/원문 hash|part가 누락|지침 manifest|원문\/분기|원문이 줄|사용자 메모가 변경|기억 데이터가 바뀜|지침이 바뀜|작업자료가 바뀜|시작점 RP가 사라|저장본과 화면|revision|stale/i.test(msg))return false;
+    return /JSON|format|version|최상위 필드|outputs|필수|필드|상태와 변경 이유|문자열|형식|enum|schema/i.test(msg);
+  }
+  function rpcmExternalBusy(){return !!(integratedRuntime?.busy||fullRebuildRuntime?.busy||(manualUpdateRuntime?.commits?.size||0));}
+  function rpcmOpenJsonRepair(room,label,raw,onUse,guard){
+    const text=String(raw??'');if(text.length>RPCM_CORE_PORT.jsonRepairMaxChars){notify(`${label} 오류는 확인했지만 ${formatCount(text.length)}자라 브라우저 안 수정창은 열지 않았습니다. 원본 파일을 외부 편집기로 고친 뒤 다시 가져와 주세요.`,'warn',8500);return false;}
+    document.querySelector('#rpcm-json-repair-backdrop')?.remove();const epoch=state.routeEpoch,backdrop=document.createElement('div');backdrop.id='rpcm-json-repair-backdrop';backdrop.className='rpcm-ltm-backdrop';
+    backdrop.innerHTML=`<section class="rpcm-update-dialog rpcm-update-result-dialog" role="dialog" aria-modal="true" aria-label="외부 JSON 직접 수정"><header><div><h2>${esc(label)} · JSON 직접 수정</h2><p>원문은 메모리에만 보관됩니다. 수정 후 동일한 검증 경로를 다시 실행합니다.</p></div><button type="button" class="rpcm-update-dialog-close">${rpcmUiIcon('close')}</button></header><div class="rpcm-update-result-body"><textarea spellcheck="false" style="width:100%;min-height:45vh"></textarea><p data-repair-status role="status">JSON 문법·필드·로컬 형식 오류만 수정하세요. source/방/원문 불일치는 이 창으로 우회할 수 없습니다.</p></div><footer><button type="button" class="rpcm-btn secondary" data-repair-copy>현재 JSON 복사</button><button type="button" class="rpcm-btn secondary rpcm-update-dialog-close">취소</button><button type="button" class="rpcm-btn primary" data-repair-use>수정본으로 재검증</button></footer></section>`;
+    const input=backdrop.querySelector('textarea'),status=backdrop.querySelector('[data-repair-status]');input.value=text;const close=()=>backdrop.remove();backdrop.querySelectorAll('.rpcm-update-dialog-close').forEach(b=>b.onclick=close);backdrop.onclick=e=>{if(e.target===backdrop)close();};backdrop.querySelector('[data-repair-copy]').onclick=()=>copyPlainText(input.value);backdrop.querySelector('[data-repair-use]').onclick=()=>{try{if(state.currentRoom!==room||state.routeEpoch!==epoch||guard&&!guard())throw new Error('수정하는 동안 방·작업자료가 바뀌었습니다. 현재 방에서 결과를 다시 가져와 주세요.');JSON.parse(input.value.replace(/^\uFEFF/,'').trim());const value=input.value;close();onUse(value);}catch(error){status.textContent='재검증 전 확인: '+error.message;}};document.body.appendChild(backdrop);input.focus();return true;
+  }
+  function rpcmOpenImportHold(room,label,raw,onContinue,guard){
+    document.querySelector('#rpcm-import-hold-backdrop')?.remove();const epoch=state.routeEpoch,backdrop=document.createElement('div');backdrop.id='rpcm-import-hold-backdrop';backdrop.className='rpcm-ltm-backdrop';
+    backdrop.innerHTML=`<section class="rpcm-update-dialog" role="dialog" aria-modal="true"><header><div><h2>${esc(label)} · 결과 보관 중</h2><p>다른 작업이 진행 중이어서 아직 검증하지 않았습니다. 붙여넣은 JSON은 이 창의 메모리에 유지됩니다.</p></div></header><div class="rpcm-update-result-body"><p data-hold-status>진행 중인 작업이 끝난 뒤 ‘계속’을 누르세요.</p></div><footer><button class="rpcm-btn secondary" data-hold-cancel>취소</button><button class="rpcm-btn primary" data-hold-continue>계속</button></footer></section>`;
+    const status=backdrop.querySelector('[data-hold-status]');backdrop.querySelector('[data-hold-cancel]').onclick=()=>backdrop.remove();backdrop.querySelector('[data-hold-continue]').onclick=()=>{if(state.currentRoom!==room||state.routeEpoch!==epoch||guard&&!guard()){status.textContent='대기 중 방·작업자료가 바뀌었습니다. 현재 방에서 다시 가져와 주세요.';return;}if(rpcmExternalBusy('none')){status.textContent='아직 다른 작업이 진행 중입니다.';return;}const kept=String(raw??'');backdrop.remove();onContinue(kept);};document.body.appendChild(backdrop);return false;
+  }
+
+  // Replace only import UI handlers; existing parsers, domain validators, backup and commits stay authoritative.
+  openFullRebuildImportDialog=function(room){
+    const job=room.fullRebuildJob;if(!job){notify('먼저 이 방에서 전체 재구축 TXT를 만들어 주세요. 이전 파일의 source를 검증할 작업 기록이 없습니다.','warn');return;}
+    document.querySelector('#rpcm-full-rebuild-dialog')?.remove();const backdrop=document.createElement('div');backdrop.id='rpcm-full-rebuild-dialog';
+    backdrop.innerHTML=`<section class="rpcm-update-dialog rpcm-update-result-dialog rpcm-full-rebuild-dialog" role="dialog" aria-modal="true" aria-label="전체 기억 재구축 JSON 가져오기"><header><div><h2>전체 기억 재구축 · 최종 JSON 가져오기</h2><p>${job.parts.length}개 TXT · ${job.source.turnCount}턴 · 여섯 영역 모두 검토한 결과에서 반영할 영역을 고릅니다.</p></div><button type="button" class="rpcm-update-dialog-close">${rpcmUiIcon('close')}</button></header><div class="rpcm-update-result-body"><label>Wish-RP-Manager-전체재구축.json<input type="file" accept=".json,application/json" data-rebuild-file><textarea data-rebuild-json spellcheck="false" placeholder="최종 JSON 파일을 선택하거나 순수 JSON을 붙여넣으세요."></textarea></label><div class="rpcm-update-result-status" role="status">파일 선택만으로 저장되지 않습니다.</div><div class="rpcm-update-diff" hidden></div></div><footer><span>선택 영역만 한 번에 저장 · 적용 전 자동 백업</span><button type="button" class="rpcm-btn secondary rpcm-update-dialog-close">취소</button><button type="button" class="rpcm-btn secondary" data-rebuild-preview>형식 검증 · Diff</button><button type="button" class="rpcm-btn primary" data-rebuild-apply disabled>선택 영역 반영</button></footer></section>`;
+    const status=backdrop.querySelector('.rpcm-update-result-status'),diff=backdrop.querySelector('.rpcm-update-diff'),input=backdrop.querySelector('[data-rebuild-json]'),file=backdrop.querySelector('[data-rebuild-file]'),preview=backdrop.querySelector('[data-rebuild-preview]'),apply=backdrop.querySelector('[data-rebuild-apply]');let prepared=null,storedSnapshot='',newerTurns=0,busy=false;
+    const guard=()=>state.currentRoom===room&&room.fullRebuildJob?.jobId===job.jobId;const selected=()=>new Set([...diff.querySelectorAll('[data-rebuild-select]:checked')].map(n=>n.dataset.rebuildSelect));const sync=()=>{apply.disabled=!prepared||!selected().size||busy;};const invalidate=()=>{prepared=null;apply.disabled=true;diff.hidden=true;diff.innerHTML='';status.textContent='결과가 바뀌었습니다. 다시 검증해 주세요.';};input.oninput=invalidate;
+    file.onchange=async()=>{const chosen=file.files?.[0];if(!chosen)return;try{if(!/\.json$/i.test(chosen.name)||chosen.size>8000000)throw new Error('8MB 이하 UTF-8 .json 파일을 선택해 주세요.');input.value=new TextDecoder('utf-8',{fatal:true}).decode(await chosen.arrayBuffer());invalidate();status.textContent=`${chosen.name} 읽음 · 검증을 눌러 주세요.`;}catch(error){status.textContent='파일 읽기 실패: '+error.message;}file.value='';};diff.onchange=e=>{if(e.target.matches('[data-rebuild-select]'))sync();};diff.onclick=e=>{const b=e.target.closest('[data-rebuild-select-all]');if(!b)return;for(const box of diff.querySelectorAll('[data-rebuild-select]'))box.checked=b.dataset.rebuildSelectAll==='all';sync();};
+    const runPreview=async(rawOverride=null)=>{if(busy)return;if(rawOverride!==null){input.value=String(rawOverride);invalidate();}if(rpcmExternalBusy('full'))return rpcmOpenImportHold(room,'전체 재구축 JSON',input.value,kept=>runPreview(kept),guard);busy=true;preview.disabled=true;apply.disabled=true;status.textContent='전체 RP source·part·지침을 검증하고 각 영역을 따로 확인하는 중…';try{let result;try{result=parseFullRebuildJson(input.value,job,room);}catch(error){if(rpcmImportErrorRepairable(error)&&rpcmOpenJsonRepair(room,'전체 재구축 JSON',input.value,kept=>runPreview(kept),guard)){status.textContent='JSON 형식 오류 · 수정창에서 고친 뒤 재검증하세요.';return;}throw error;}const source=await assertFullRebuildSource(room,job);if(await fullRebuildSha256(JSON.stringify(fullRebuildDataView(structuredClone(room))))!==job.dataSha256)throw new Error('파일 생성 후 기억 데이터가 바뀌었습니다. 다시 내보내 주세요.');if(JSON.stringify(fullRebuildGuides(structuredClone(room)).manifest)!==JSON.stringify(job.guides)||JSON.stringify(fullRebuildMasterMeta())!==JSON.stringify(job.master))throw new Error('파일 생성 후 지침이 바뀌었습니다. 다시 내보내 주세요.');const preparedResult=prepareFullRebuildResult(room,job,result,source.sourceTurns),stored=await readManualStoredRoom(room);if(!stored||JSON.stringify(stored)!==JSON.stringify(room))throw new Error('로컬 저장본과 화면 데이터가 다릅니다. 현재 편집을 저장한 뒤 다시 확인해 주세요.');storedSnapshot=JSON.stringify(stored);prepared=preparedResult;newerTurns=source.newerTurns;for(const {key} of FULL_REBUILD_DOMAINS)if(!prepared.domains[key].valid)recordRpcmIssue(room,'FULL_REBUILD','domain-validation',key==='lore'&&/REF/.test(prepared.domains[key].error)?'LORE_REF_INVALID':'DOMAIN_INVALID',`${prepared.domains[key].label} 검증 실패`,prepared.domains[key].error);const warning=newerTurns?`<p class="rpcm-full-rebuild-warning">이 결과는 현재 최신 RP보다 ${newerTurns}턴 이전 snapshot 기준입니다. 적용 후 개별 업데이트에서 새 턴을 이어서 처리해야 합니다.</p>`:'';const invalid=FULL_REBUILD_DOMAINS.filter(({key})=>!prepared.domains[key].valid).length;diff.innerHTML=`${warning}<div class="rpcm-rebuild-diff-toolbar"><strong>검증 결과 · 정상 ${5-invalid}영역${invalid?` · 검증 실패 ${invalid}영역`:''}</strong><div><button type="button" class="rpcm-btn secondary" data-rebuild-select-all="all">전체 선택</button><button type="button" class="rpcm-btn secondary" data-rebuild-select-all="none">전체 해제</button></div></div>${fullRebuildDiffCardsHtml(prepared,room)}`;diff.hidden=false;status.textContent=invalid?'영역 오류는 해당 영역만 반영할 수 없습니다. 정상 영역의 Diff를 확인해 선택하세요.':'검증 완료 · 각 영역의 Diff를 확인하고 반영할 영역을 선택하세요.';}catch(error){prepared=null;diff.hidden=true;status.textContent='전체 재구축 결과 적용 불가: '+error.message;recordRpcmIssue(room,'FULL_REBUILD','global-validation','GLOBAL_INVALID','전체 재구축 결과 적용 불가',error.message);}finally{busy=false;preview.disabled=false;sync();}};
+    preview.onclick=()=>runPreview();apply.onclick=async()=>{if(!prepared||busy)return;const selection=selected();if(!selection.size)return;const labels=FULL_REBUILD_DOMAINS.filter(({key})=>selection.has(key)).map(d=>d.label);if(!confirm(`전체 기억 재구축 중 다음 영역만 반영할까요?\n${labels.join(' · ')}${newerTurns?`\n주의: 최신 RP ${newerTurns}턴은 이 결과에 없습니다.`:''}\n\n선택하지 않은 영역과 체크포인트는 유지합니다. 적용 전 백업 파일을 다운로드합니다.`))return;busy=true;apply.disabled=true;preview.disabled=true;status.textContent='원문·저장본 재확인 → 백업 → 선택 영역 저장 → 저장본 재검증 중…';try{const result=await commitFullRebuildResult(room,job,prepared,input.value,storedSnapshot,selection);status.textContent=`로컬 저장 검증 완료 · ${labels.join(' · ')} 반영 · ${result.carrier}${result.newerTurns?` · 최신 ${result.newerTurns}턴 미반영`:''}`;status.classList.add('is-saved');renderModalIfOpen();notify(`전체 기억 재구축 선택 영역 저장 완료 · ${result.carrier}`,'success',7000);}catch(error){status.textContent='저장 실패 · 적용 상태를 확인해 주세요: '+error.message;recordRpcmIssue(room,'FULL_REBUILD','commit','COMMIT_FAILED','선택 영역 저장 실패',error.message);apply.disabled=false;preview.disabled=false;}finally{busy=false;}};
+    const close=()=>{if(!busy)backdrop.remove();};backdrop.querySelectorAll('.rpcm-update-dialog-close').forEach(b=>b.onclick=close);backdrop.onclick=e=>{if(e.target===backdrop)close();};backdrop.onkeydown=e=>{if(e.key==='Escape')close();};document.body.appendChild(backdrop);
+  };
+
+  openIntegratedImport=function(room){
+    const job=room.manualIntegratedJob;if(!job){notify('먼저 통합 패킷을 만들어 주세요.','warn');return;}document.querySelector('#rpcm-full-rebuild-dialog')?.remove();const backdrop=document.createElement('div');backdrop.id='rpcm-full-rebuild-dialog';backdrop.innerHTML=`<section class="rpcm-update-dialog rpcm-update-result-dialog rpcm-full-rebuild-dialog rpcm-integrated-dialog" role="dialog" aria-modal="true"><header><div><h2>통합 이어갱신 · 결과 가져오기</h2><p>${job.turnCount}턴 · 영역별 이유와 변경을 확인한 뒤 선택한 결과를 함께 저장합니다.</p></div><button class="rpcm-update-dialog-close">${rpcmUiIcon('close')}</button></header><div class="rpcm-update-result-body"><label>통합 결과 JSON<input type="file" accept=".json,.txt"><textarea spellcheck="false" data-integrated-result></textarea></label><p data-integrated-status role="status">새 RP가 더 진행되어도 패킷에 없는 턴은 다음 갱신으로 남습니다.</p><div data-integrated-restore></div><div data-integrated-diff hidden></div></div><footer><span>선택 영역을 함께 저장 · 적용 전 백업</span><button class="rpcm-btn secondary rpcm-update-dialog-close">닫기</button><button class="rpcm-btn secondary" data-integrated-preview>검증 · 비교</button><button class="rpcm-btn primary" data-integrated-apply disabled>선택 영역 적용</button></footer></section>`;
+    const input=backdrop.querySelector('textarea'),status=backdrop.querySelector('[data-integrated-status]'),diff=backdrop.querySelector('[data-integrated-diff]'),restore=backdrop.querySelector('[data-integrated-restore]'),apply=backdrop.querySelector('[data-integrated-apply]'),preview=backdrop.querySelector('[data-integrated-preview]');input.value=integratedRuntime.importDrafts.get(job.jobId)||'';let prepared=null,busy=false,committing=false,parsed=null;const guard=()=>state.currentRoom===room&&room.manualIntegratedJob?.jobId===job.jobId;const invalidate=()=>{prepared=null;apply.disabled=true;diff.hidden=true;};input.oninput=()=>{integratedRuntime.importDrafts.set(job.jobId,input.value);invalidate();restore.innerHTML='';parsed=null;};restore.onchange=invalidate;backdrop.querySelector('input[type=file]').onchange=async e=>{try{const f=e.target.files?.[0];if(!f)return;if(f.size>4000000)throw new Error('4MB 이하 파일을 선택하세요.');input.value=await f.text();input.oninput();}catch(error){status.textContent=error.message;}};
+    const runPreview=async(rawOverride=null)=>{if(busy)return;if(rawOverride!==null){input.value=String(rawOverride);input.oninput();}if(rpcmExternalBusy('integrated'))return rpcmOpenImportHold(room,'통합 이어갱신 JSON',input.value,kept=>runPreview(kept),guard);busy=true;invalidate();try{try{parsed=parseIntegratedResult(input.value,job);}catch(error){if(rpcmImportErrorRepairable(error)&&rpcmOpenJsonRepair(room,'통합 이어갱신 JSON',input.value,kept=>runPreview(kept),guard)){status.textContent='JSON 형식 오류 · 수정창에서 고친 뒤 재검증하세요.';return;}throw error;}const source=await assertIntegratedSource(room,job);if(!restore.innerHTML&&parsed.outputs.personInfo.status==='updated'){const policy=manualPersonImportPolicy(room,job.drafts.personInfo,parsed.outputs.personInfo),names=[...new Set([...policy.deleted,...policy.missing])];if(names.length)restore.innerHTML=`<details><summary>삭제·복원 대상 인물 확인</summary><p>삭제한 인물은 기본 제외됩니다. 다시 살릴 인물만 선택하고 검증하세요.</p>${names.map(name=>`<label><input type="checkbox" data-integrated-person value="${esc(name)}"> ${esc(name)} 복원</label>`).join('')}</details>`;}prepared=prepareIntegratedResult(room,job,parsed,[...restore.querySelectorAll('input:checked')].map(n=>n.value));diff.innerHTML=fullRebuildDiffCardsHtml(prepared,room);for(const {key} of FULL_REBUILD_DOMAINS){const section=diff.querySelector(`[data-rebuild-domain="${key}"]`);if(section){const reason=document.createElement('p');reason.textContent='변경 이유 · '+parsed.outputs[key].reason;reason.style.margin='8px 0';section.querySelector('.rpcm-rebuild-domain-head')?.insertAdjacentElement('afterend',reason);}}diff.hidden=false;apply.disabled=!Object.values(prepared.domains).some(d=>d.valid);status.textContent=`검증 완료 · ${source.newerTurns?`후속 ${source.newerTurns}턴은 다음 갱신에 남습니다. `:''}각 영역의 이유와 Diff를 확인하세요.`;}catch(error){status.textContent='적용 불가: '+error.message;}finally{busy=false;}};
+    preview.onclick=()=>runPreview();diff.onchange=()=>{apply.disabled=busy||!prepared||!diff.querySelector('[data-rebuild-select]:checked');};apply.onclick=async()=>{if(busy||!prepared)return;busy=true;committing=true;apply.disabled=true;preview.disabled=true;backdrop.querySelectorAll('textarea,input').forEach(n=>n.disabled=true);try{const selected=new Set([...diff.querySelectorAll('[data-rebuild-select]:checked')].map(n=>n.dataset.rebuildSelect)),result=await commitIntegratedResult(room,job,prepared,selected);status.textContent='선택 영역 저장·확인 완료 · '+result.carrier;integratedRuntime.importDrafts.delete(job.jobId);prepared=null;renderModalIfOpen();}catch(error){status.textContent=error.localCommitted?'로컬 쓰기 후 확인 실패 · 다시 화면을 열어 저장 결과를 점검하세요: '+error.message:'저장하지 않았습니다: '+error.message;prepared=null;}finally{busy=false;committing=false;preview.disabled=false;backdrop.querySelectorAll('textarea,input').forEach(n=>n.disabled=!!n.closest('.is-invalid'));}};const close=()=>{if(committing){status.textContent='저장 결과를 확인 중입니다. 완료 후 닫을 수 있습니다.';return;}backdrop.remove();};backdrop.querySelectorAll('.rpcm-update-dialog-close').forEach(b=>b.onclick=close);backdrop.onclick=e=>{if(e.target===backdrop)close();};backdrop.onkeydown=e=>{if(e.key==='Escape')close();};document.body.append(backdrop);input.focus();
+  };
+
+  // ------------------------- P4: diagnostics UI -------------------------------
+  const rpcmBaseRecordIssue=recordRpcmIssue;
+  let rpcmLastIssueSignature='',rpcmLastIssueAt=0;
+  recordRpcmIssue=function(room,feature,step,code,message,detail=''){
+    const sig=JSON.stringify([String(room?.chatId||''),feature,step,code,message]);const now=Date.now();if(sig===rpcmLastIssueSignature&&now-rpcmLastIssueAt<5000)return;rpcmLastIssueSignature=sig;rpcmLastIssueAt=now;return rpcmBaseRecordIssue(room,feature,step,code,message,detail);
+  };
+  const rpcmBaseOpenIssueLog=openRpcmIssueLogDialog;
+  openRpcmIssueLogDialog=function(room){rpcmBaseOpenIssueLog(room);const root=document.querySelector('#rpcm-issue-log-backdrop .rpcm-update-result-body');if(!root)return;const snap=RpcmHistoryDiagnostics.snapshot(),cache=rpcmHistoryCache.get(String(apiChatIdOf(room)||''));const details=document.createElement('details');details.open=true;details.innerHTML=`<summary><strong>Full Read / 캐시 진단</strong></summary><p>physical ${snap.metrics.physicalReads} · 완료 ${snap.metrics.completedReads} · 취소 ${snap.metrics.cancelledReads} · stale ${snap.metrics.staleReads} · 오류 ${snap.metrics.errorReads}</p><p>300시도 ${snap.metrics.fastAttempts} · fallback ${snap.metrics.fastToLegacyFallbacks} · retry ${snap.metrics.transientRetries} · single-flight join ${snap.metrics.singleFlightJoins}</p><p>cache hit ${snap.metrics.cacheHits} · miss ${snap.metrics.cacheMisses} · invalidate ${snap.metrics.cacheInvalidations}${cache?` · 현재 ${formatCount(cache.turns.length)}턴 / ${cache.mode}`:' · 현재 캐시 없음'}</p>${snap.last?`<pre style="white-space:pre-wrap">${esc(JSON.stringify(snap.last,null,2))}</pre>`:''}<div><button type="button" class="rpcm-btn secondary" data-history-diag-copy>진단 복사</button><button type="button" class="rpcm-btn secondary" data-history-diag-download>진단 JSON 받기</button></div>`;root.prepend(details);details.querySelector('[data-history-diag-copy]').onclick=()=>copyPlainText(JSON.stringify(snap,null,2));details.querySelector('[data-history-diag-download]').onclick=()=>downloadText(JSON.stringify({at:nowIso(),version:APP.version,history:snap},null,2),`RP_Manager_FullRead_진단_${new Date().toISOString().replace(/[:.]/g,'-')}.json`,'application/json');};
+
+  // ------------------------- P5: lazy TXT + STORE ZIP -------------------------
+  const rpcmZipEncoder=new TextEncoder(),rpcmZipCrcTable=new Uint32Array(256);for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=(c&1)?(0xEDB88320^(c>>>1)):(c>>>1);rpcmZipCrcTable[n]=c>>>0;}
+  function rpcmDownloadRow(file){return {name:String(file.name),text:String(file.text),blob:null,url:'',timer:null};}
+  function rpcmEnsureDownloadBlob(row){if(row.blob instanceof Blob)return row.blob;row.blob=new Blob([`\uFEFF${row.text}`],{type:'text/plain;charset=utf-8'});return row.blob;}
+  function rpcmMaterializeDownload(row){if(!row.url)row.url=URL.createObjectURL(rpcmEnsureDownloadBlob(row));return row.url;}
+  function rpcmReleaseDownload(row,now=false){if(row.timer){clearTimeout(row.timer);row.timer=null;}const release=()=>{if(row.url){try{URL.revokeObjectURL(row.url);}catch{}row.url='';}row.blob=null;};if(now)release();else row.timer=setTimeout(release,RPCM_CORE_PORT.blobUrlTtlMs);}
+  function rpcmTriggerDownloadRow(row){const a=document.createElement('a');a.href=rpcmMaterializeDownload(row);a.download=row.name;document.body.appendChild(a);a.click();a.remove();rpcmReleaseDownload(row,false);}
+  async function rpcmCrc32(blob,control){
+    let crc=0xFFFFFFFF,sinceYield=0;const reader=blob.stream().getReader();
+    try{for(;;){
+      if(control.cancelled){try{await reader.cancel();}catch{}throw rpcmHistoryUserAbort('ZIP 생성을 취소했습니다.');}
+      const {done,value}=await reader.read();if(done)break;
+      for(const byte of value)crc=rpcmZipCrcTable[(crc^byte)&255]^(crc>>>8);
+      sinceYield+=value.length;if(sinceYield>=4*1024*1024){sinceYield=0;await new Promise(resolve=>setTimeout(resolve,0));}
+    }}finally{try{reader.releaseLock();}catch{}}
+    return (crc^0xFFFFFFFF)>>>0;
+  }
+  function rpcmZipHeader(size,write){const out=new Uint8Array(size),view=new DataView(out.buffer);write(view);return out;}
+  async function rpcmBuildStoreZip(rows,control,onProgress){if(rows.length>65535)throw new Error('ZIP32 파일 개수 한도를 넘었습니다.');const parts=[],central=[];let offset=0;const d=new Date(),year=Math.max(1980,d.getFullYear()),time=((d.getHours()&31)<<11)|((d.getMinutes()&63)<<5)|((d.getSeconds()>>1)&31),date=(((year-1980)&127)<<9)|(((d.getMonth()+1)&15)<<5)|(d.getDate()&31);for(let i=0;i<rows.length;i++){if(control.cancelled)throw rpcmHistoryUserAbort('ZIP 생성을 취소했습니다.');const row=rows[i],blob=rpcmEnsureDownloadBlob(row),bytes=blob.size;if(bytes>0xFFFFFFFF)throw new Error('단일 TXT가 ZIP32 크기 한도를 넘었습니다.');const name=rpcmZipEncoder.encode(row.name),crc=await rpcmCrc32(blob,control),localOffset=offset,local=rpcmZipHeader(30,v=>{v.setUint32(0,0x04034b50,true);v.setUint16(4,20,true);v.setUint16(6,0x0800,true);v.setUint16(8,0,true);v.setUint16(10,time,true);v.setUint16(12,date,true);v.setUint32(14,crc,true);v.setUint32(18,bytes,true);v.setUint32(22,bytes,true);v.setUint16(26,name.length,true);});parts.push(local,name,blob);offset+=local.length+name.length+bytes;if(offset>0xFFFFFFFF)throw new Error('ZIP32 총 크기 한도를 넘었습니다.');central.push({name,crc,bytes,localOffset});onProgress?.(i+1,rows.length,row.name);if(!row.url)row.blob=null;}const centralOffset=offset;for(const r of central){const c=rpcmZipHeader(46,v=>{v.setUint32(0,0x02014b50,true);v.setUint16(4,20,true);v.setUint16(6,20,true);v.setUint16(8,0x0800,true);v.setUint16(10,0,true);v.setUint16(12,time,true);v.setUint16(14,date,true);v.setUint32(16,r.crc,true);v.setUint32(20,r.bytes,true);v.setUint32(24,r.bytes,true);v.setUint16(28,r.name.length,true);v.setUint32(42,r.localOffset,true);});parts.push(c,r.name);offset+=c.length+r.name.length;}const centralSize=offset-centralOffset,end=rpcmZipHeader(22,v=>{v.setUint32(0,0x06054b50,true);v.setUint16(8,central.length,true);v.setUint16(10,central.length,true);v.setUint32(12,centralSize,true);v.setUint32(16,centralOffset,true);});parts.push(end);if(control.cancelled)throw rpcmHistoryUserAbort('ZIP 생성을 취소했습니다.');return new Blob(parts,{type:'application/zip'});}
+  showFullRebuildFilesDialog=function(room,job,files){
+    document.querySelector('#rpcm-full-rebuild-dialog')?.remove();
+    const rows=files.map(rpcmDownloadRow),backdrop=document.createElement('div');backdrop.id='rpcm-full-rebuild-dialog';
+    backdrop.innerHTML=`<section class="rpcm-update-dialog rpcm-full-rebuild-dialog" role="dialog" aria-modal="true"><header><div><h2>전체 기억 재구축 파일 생성 완료</h2><p>전체 ${job.source.turnCount}턴 · ${files.length}개 파일 · 완전한 RP 턴 경계</p></div><button class="rpcm-update-dialog-close">${rpcmUiIcon('close')}</button></header><div class="rpcm-update-result-body"><p>권장 방식은 ZIP 1개입니다. 브라우저의 다중 다운로드 차단을 피하고 TXT 순서도 보존합니다.</p><div class="rpcm-full-rebuild-files">${rows.map((row,i)=>`<div><span>${esc(row.name)} <small>${formatCount(row.text.length)}자 · ${job.parts[i].turnCount}턴</small></span><button class="rpcm-btn secondary" data-rebuild-download="${i}">TXT 받기</button></div>`).join('')}</div><p data-zip-status class="rpcm-update-result-status">파일 준비 완료 · ZIP 다운로드를 준비합니다.</p></div><footer><button class="rpcm-btn secondary rpcm-update-dialog-close">닫기</button><button class="rpcm-btn secondary" data-download-sequential>TXT 순차 받기</button><button class="rpcm-btn secondary" data-zip-cancel hidden>ZIP 중단</button><button class="rpcm-btn primary" data-zip-build>ZIP 받기 (권장)</button></footer></section>`;
+    let zipControl=null,zipUrl='';const status=backdrop.querySelector('[data-zip-status]'),zipButton=backdrop.querySelector('[data-zip-build]'),cancel=backdrop.querySelector('[data-zip-cancel]'),sequenceButton=backdrop.querySelector('[data-download-sequential]');
+    const releaseAll=()=>{for(const row of rows)rpcmReleaseDownload(row,true);if(zipUrl){try{URL.revokeObjectURL(zipUrl);}catch{}zipUrl='';}if(zipControl)zipControl.cancelled=true;};
+    const close=()=>{releaseAll();backdrop.remove();};backdrop.querySelectorAll('.rpcm-update-dialog-close').forEach(b=>b.onclick=close);backdrop.onclick=e=>{if(e.target===backdrop)close();};
+    backdrop.querySelectorAll('[data-rebuild-download]').forEach(b=>b.onclick=()=>rpcmTriggerDownloadRow(rows[Number(b.dataset.rebuildDownload)]));
+    const triggerZip=async(auto=false)=>{if(zipControl)return;const estimate=rows.reduce((n,r)=>n+Math.max(3,r.text.length*2),0);if(!auto&&estimate>=RPCM_CORE_PORT.zipWarnBytes&&!confirm(`예상 ZIP 원문이 약 ${Math.ceil(estimate/1024/1024)} MiB입니다. STORE 방식이라 메모리를 더 사용할 수 있습니다. 계속할까요?`))return;if(auto&&estimate>RPCM_CORE_PORT.autoZipMaxBytes){status.textContent=`파일 준비 완료 · 예상 ${Math.ceil(estimate/1024/1024)} MiB라 자동 ZIP은 생략했습니다. ‘ZIP 받기’를 눌러 주세요.`;return;}zipControl={cancelled:false};zipButton.disabled=true;sequenceButton.disabled=true;cancel.hidden=false;status.textContent=auto?'ZIP 자동 생성 중…':'ZIP 생성 준비 중…';try{const blob=await rpcmBuildStoreZip(rows,zipControl,(done,total,name)=>{status.textContent=`ZIP 생성 ${done}/${total} · ${name}`;});if(zipControl.cancelled)return;if(zipUrl)URL.revokeObjectURL(zipUrl);zipUrl=URL.createObjectURL(blob);const a=document.createElement('a');a.href=zipUrl;a.download='Wish-전체재구축-TXT.zip';document.body.appendChild(a);a.click();a.remove();status.textContent=`ZIP 다운로드 요청 완료 · ${formatCount(blob.size)} bytes · 실패하면 ‘ZIP 받기’를 다시 누르세요.`;zipButton.textContent='ZIP 다시 받기';}catch(error){status.textContent=rpcmIsHistoryAbort(error)?'ZIP 생성을 중단했습니다.':'ZIP 생성 실패: '+error.message;}finally{zipControl=null;zipButton.disabled=false;sequenceButton.disabled=false;cancel.hidden=true;}};
+    zipButton.onclick=()=>triggerZip(false);cancel.onclick=()=>{if(zipControl){zipControl.cancelled=true;status.textContent='ZIP 중단 요청 중…';}};
+    sequenceButton.onclick=async()=>{sequenceButton.disabled=true;try{status.textContent='TXT 순차 다운로드 요청 중… 브라우저에서 다중 다운로드 허용을 요구할 수 있습니다.';for(let i=0;i<rows.length;i++){rpcmTriggerDownloadRow(rows[i]);status.textContent=`TXT 순차 다운로드 ${i+1}/${rows.length}`;await sleep(350);}status.textContent='TXT 순차 다운로드 요청 완료';}finally{sequenceButton.disabled=false;}};
+    document.body.appendChild(backdrop);
+    if(rows.length===1){rpcmTriggerDownloadRow(rows[0]);status.textContent='TXT 다운로드 요청 완료 · 실패하면 TXT 받기를 다시 누르세요.';}
+    else{void triggerZip(true);}
+  };
+
+
+  // ---------------- P5b: resilient raw RP export (CrackSafe transport) -------
+  openManualRpExportDialog=function(room){
+    document.querySelector('#rpcm-update-dialog-backdrop')?.remove();const backdrop=document.createElement('div');backdrop.id='rpcm-update-dialog-backdrop';
+    backdrop.innerHTML=`<section class="rpcm-update-dialog rpcm-update-packet-choice" role="dialog" aria-modal="true" aria-label="RP 원문 내보내기"><header><div><h2>RP 원문 내보내기</h2><p>완료된 USER / AI 턴을 고속 300/page로 읽고, 문제가 생기면 자동 재시도·50/page 복구 후 UTF-8 TXT로 저장합니다.</p></div><button type="button" class="rpcm-update-dialog-close" aria-label="닫기">${rpcmUiIcon('close')}</button></header><div class="rpcm-update-range-controls"><label>내보낼 범위 <select data-export-range><option value="full">전체 RP</option><option value="custom">범위 지정</option></select></label><div data-export-custom hidden><label>시작 턴 <select data-export-start></select></label><label>종료 턴 <select data-export-end></select></label></div></div><div class="rpcm-update-packet-status" role="status">전체 RP 원문을 읽는 중…</div><footer><span>원문 다운로드는 저장 데이터와 체크포인트를 바꾸지 않습니다.</span><button type="button" class="rpcm-btn secondary" data-export-cancel>읽기 중단</button><button type="button" class="rpcm-btn primary" data-export-download disabled>TXT 다운로드</button></footer></section>`;
+    let turns=null,closed=false;const control=rpcmCreateHistoryControl(),range=backdrop.querySelector('[data-export-range]'),start=backdrop.querySelector('[data-export-start]'),end=backdrop.querySelector('[data-export-end]'),status=backdrop.querySelector('.rpcm-update-packet-status'),button=backdrop.querySelector('[data-export-download]'),cancel=backdrop.querySelector('[data-export-cancel]');
+    const close=()=>{closed=true;control.cancel();backdrop.remove();};backdrop.querySelector('.rpcm-update-dialog-close').onclick=close;backdrop.onclick=e=>{if(e.target===backdrop)close();};backdrop.onkeydown=e=>{if(e.key==='Escape')close();};range.onchange=()=>{backdrop.querySelector('[data-export-custom]').hidden=range.value!=='custom';};cancel.onclick=()=>{if(control.cancel()){cancel.disabled=true;status.textContent='RP 원문 읽기 중단 요청 중…';}};
+    button.onclick=()=>{if(!turns)return;const first=range.value==='custom'?turns.findIndex(turn=>String(turn.key)===start.value):0,last=range.value==='custom'?turns.findIndex(turn=>String(turn.key)===end.value):turns.length-1;if(first<0||last<first){status.textContent='시작·종료 RP 순서를 확인해 주세요.';return;}const selected=turns.slice(first,last+1);button.disabled=true;try{downloadText(`\uFEFF${formatAiDialogueTurns(selected)}\n`,`RP_원문_${range.value==='full'?'전체':`${first+1}-${last+1}`}_${new Date().toISOString().slice(0,10)}.txt`,'text/plain');status.textContent=`${selected.length}개 완료 RP 턴 다운로드 요청 완료 · 실패하면 버튼을 다시 누르세요.`;}finally{button.disabled=false;}};
+    document.body.appendChild(backdrop);
+    void(async()=>{try{turns=await rpcmSharedFullCompletedTurns(room,{finalFresh:true,control,onProgress:p=>{if(!closed&&backdrop.isConnected)status.textContent=`RP 원문 읽는 중 · 메시지 ${formatCount(p.messages)}개 · ${p.pages}페이지 · ${p.mode==='fast-300'?'고속 300':'복구 50'}`;}});if(closed||!backdrop.isConnected)return;if(!turns.length)throw new Error('완료된 RP 턴이 없습니다.');const options=turns.map((turn,index)=>`<option value="${esc(String(turn.key))}">${esc(manualTurnOption(turn,index))}</option>`).join('');start.innerHTML=options;end.innerHTML=options;start.selectedIndex=0;end.selectedIndex=turns.length-1;button.disabled=false;cancel.disabled=true;status.textContent=`${formatCount(turns.length)}개 완료 RP 턴 확인 완료 · TXT 다운로드 가능`;}catch(error){if(closed)return;cancel.disabled=true;status.textContent=rpcmIsHistoryAbort(error)?'원문 읽기를 중단했습니다.':`내보내기 불가: ${error.message}`;}})();
+  };
+
+  // -------------------------- P6: safe cancel UX ------------------------------
+  bindFullRebuildTools=function(overlay,room){const section=overlay.querySelector('#rpcm-full-rebuild-card');if(!section)return;const status=section.querySelector('[data-rebuild-status]'),button=section.querySelector('[data-rebuild-export]');if(status)status.textContent=fullRebuildToolStatus(room);button.onclick=async event=>{if(fullRebuildRuntime.busy){const control=fullRebuildRuntime.control;if(control&&!control.commitStarted&&control.cancel()){if(status)status.textContent='전체 RP 읽기 중단 요청됨…';button.textContent='중단 처리 중…';}else if(status)status.textContent='저장 단계가 시작되어 중간 중단할 수 없습니다.';return;}const control=rpcmCreateHistoryControl();fullRebuildRuntime.control=control;const original=button.textContent;button.textContent='중단';button.disabled=false;if(status)status.textContent='완료 RP를 읽고 안전한 TXT 구간을 만드는 중… · 다시 누르면 읽기 단계 중단';try{const result=await createFullRebuildFiles(room);if(status)status.textContent=fullRebuildToolStatus(room);showFullRebuildFilesDialog(room,result.job,result.files);}catch(error){if(rpcmIsHistoryAbort(error)){if(status)status.textContent='전체 재구축 파일 생성을 중단했습니다. 저장 데이터는 변경하지 않았습니다.';}else{if(status)status.textContent='파일 생성 실패: '+error.message;recordRpcmIssue(room,'FULL_REBUILD','export','EXPORT_FAILED','재구축 파일 생성 실패',error.message);notify('전체 재구축 파일 생성 실패: '+error.message,'warn',7000);}}finally{if(fullRebuildRuntime.control===control)fullRebuildRuntime.control=null;if(button.isConnected){button.textContent=original;button.disabled=false;}}};section.querySelector('[data-rebuild-import]').onclick=()=>openFullRebuildImportDialog(room);section.querySelector('[data-rebuild-guide]').onclick=()=>{const master=fullRebuildMasterMeta(),guides=fullRebuildGuides(structuredClone(room)).manifest,summary=Object.entries(guides).map(([key,value])=>`${key}: ${value.version} / ${value.hash}`).join(' · ');openManualUpdateTextDialog('전체 RP 최종 기억 재구축 지침 v1.0.5',`${master.hash} · 전문 지침 ${summary}`,FULL_REBUILD_MASTER_GUIDE_V1,'지침 복사');};const issueButton=overlay.querySelector('[data-rpcm-issue-open]');if(issueButton)issueButton.onclick=()=>openRpcmIssueLogDialog(room);};
+
+  // ----------------------- P7: inline carrier inspector -----------------------
+  function rpcmCarrierHost(messageId){if(!messageId)return null;try{const id=CSS.escape(String(messageId));return document.querySelector(`[data-message-id="${id}"],[data-message-group-id="${id}"]`);}catch{return null;}}
+  function rpcmOpenInlineCarrierViewer(room,result){document.querySelector('#rpcm-inline-carrier-viewer')?.remove();const b=document.createElement('div');b.id='rpcm-inline-carrier-viewer';b.className='rpcm-ltm-backdrop';b.innerHTML=`<section class="rpcm-update-dialog" role="dialog" aria-modal="true"><header><div><h2>${result.verified?'✅ 서버 주입 확인됨':'⚠️ 서버 주입 확인 실패'}</h2><p>carrier AI ${esc(shortId(room.pending?.messageId||''))} · 서버 raw ${formatCount(result.serverChars)}자</p></div><button class="rpcm-update-dialog-close">${rpcmUiIcon('close')}</button></header><div class="rpcm-update-result-body"><textarea readonly spellcheck="false" style="width:100%;min-height:45vh"></textarea></div><footer><button class="rpcm-btn secondary" data-copy>raw 복사</button><button class="rpcm-btn primary rpcm-update-dialog-close">닫기</button></footer></section>`;b.querySelector('textarea').value=String(result.text||'');const close=()=>b.remove();b.querySelectorAll('.rpcm-update-dialog-close').forEach(x=>x.onclick=close);b.querySelector('[data-copy]').onclick=()=>copyPlainText(String(result.text||''));b.onclick=e=>{if(e.target===b)close();};document.body.appendChild(b);}
+  let rpcmCarrierUiScheduled=false;
+  function rpcmRefreshInlineCarrierInspector(){
+    rpcmCarrierUiScheduled=false;const room=state.currentRoom,pending=room?.pending;
+    const host=pending?.messageId?rpcmCarrierHost(pending.messageId):null,target=host?.querySelector?.('.wrtn-markdown')?.parentElement||host;
+    let button=null;for(const existing of document.querySelectorAll('[data-rpcm-inline-carrier]')){
+      if(!button&&target&&existing.parentElement===target&&existing.rpcmRoom===room&&existing.dataset.rpcmMessageId===String(pending.messageId))button=existing;
+      else existing.remove();
+    }
+    if(!target||button)return;
+    button=document.createElement('button');button.type='button';button.dataset.rpcmInlineCarrier='1';button.dataset.rpcmMessageId=String(pending.messageId);button.rpcmRoom=room;
+    button.className='rpcm-btn secondary';button.textContent='🪽 주입';button.title='서버에서 Wish 주입 상태 확인';button.style.cssText='margin:4px 0 0 6px;padding:3px 7px;font-size:11px;';
+    button.onclick=async e=>{e.preventDefault();e.stopPropagation();button.disabled=true;try{if(state.currentRoom!==room||room.pending?.messageId!==pending.messageId)throw rpcmHistoryStale();const result=await reverifyPending(room);if(state.currentRoom!==room||room.pending?.messageId!==pending.messageId)throw rpcmHistoryStale();rpcmOpenInlineCarrierViewer(room,result);}catch(error){notify('주입 확인 실패: '+error.message,'error',6000);}finally{if(button.isConnected)button.disabled=false;}};
+    target.appendChild(button);
+  }
+  function rpcmScheduleInlineCarrierInspector(){if(rpcmCarrierUiScheduled)return;rpcmCarrierUiScheduled=true;queueMicrotask(rpcmRefreshInlineCarrierInspector);}
+  const rpcmCarrierObserver=new MutationObserver(mutations=>{
+    const own=node=>{const el=node?.nodeType===1?node:node?.parentElement;return !!el?.closest?.('[data-rpcm-inline-carrier],[id^="rpcm-"],[id^="wish-rpcore-refiner-"]');};
+    if(mutations.some(m=>!own(m.target)&&[...m.addedNodes,...m.removedNodes].some(node=>!own(node))))rpcmScheduleInlineCarrierInspector();
+  });
+  if(document.body)rpcmCarrierObserver.observe(document.body,{childList:true,subtree:true});else document.addEventListener('DOMContentLoaded',()=>rpcmCarrierObserver.observe(document.body,{childList:true,subtree:true}),{once:true});
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden)rpcmScheduleInlineCarrierInspector();});rpcmScheduleInlineCarrierInspector();
+
+  // P8 audit result: current Manager domain Diff already has bounded structured cards;
+  // no MemoryDiff wholesale port is applied in this build. This is intentional.
+  window.__RPCM_CORE_PORT_DIAGNOSTICS__={version:APP.version,build:RPCM_CORE_PORT.build,snapshot:()=>RpcmHistoryDiagnostics.snapshot(),invalidate:chatId=>rpcmHistoryInvalidate(chatId,'manual-test')};
+  // ======================= END CORE SELECTIVE SAFETY PORT ======================
+
 })();
 
 // BEGIN integrated response refiner v1.3.9 (Manager data adapter)
@@ -37114,13 +37445,17 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
   function structuralOnly(config=settings){return enabledReviewTopics(config).every(key=>['truncation','statusBlock','format','userProtection'].includes(key));}
   const REVIEW_OUTPUT_CONTRACT = `## Verdict / Output contract
 Choose exactly one: PASS (no supported issue), RESPONSE_ERROR (objective fact/state/cognition/USER/required-format violation or clear truncation), CONTINUITY_DRIFT (strong supported but interpretive continuity mismatch), MEMORY_STALE (latest direct RP supersedes stored memory; never rewrite to old memory), AMBIGUOUS (cannot establish the right interpretation; never rewrite).
-Return JSON only: {"verdict":"PASS","reason":"한국어 판단 이유","evidence":"관련 근거","replacements":[]}.
-For RESPONSE_ERROR or CONTINUITY_DRIFT return the same object with replacements:[{"from":"exact unique substring of New Speech","to":"smallest supported correction","reason":"한국어 이유","evidence":"specific supporting quote/context","evidenceSource":"human-readable source / block / actor","category":"enabled check key","severity":"confirmed or interpretive","verdict":"RESPONSE_ERROR or CONTINUITY_DRIFT","autoApplyEligible":false}].
-Use confirmed only for objective evidence. Emotional, relationship, motive and characterization interpretation MUST be CONTINUITY_DRIFT, severity interpretive, autoApplyEligible false. If any item is drift, overall verdict must be CONTINUITY_DRIFT. Set autoApplyEligible true only for a confirmed objective minimal RESPONSE_ERROR. PASS/MEMORY_STALE/AMBIGUOUS must have empty replacements. Category MUST be one of the enabled keys. Explain evidence even for structural errors. Never classify mere non-mention as an error.
-OUTPUT ECONOMY: Inspect every enabled check, but return only supported findings. Do not list checks that passed, restate the evidence packet, return unchanged paragraphs, or regenerate the whole response. For each replacement, from must be the shortest unique contiguous affected phrase/sentence and to only its corrected equivalent; include more text only when required to identify the occurrence or repair missing structure. Do not truncate from/to or omit supported findings to save tokens. Keep reason concise (normally <=160 characters per finding), evidence to the specific supporting quote(s) needed (normally <=300 characters), and evidenceSource to short message IDs/block labels. Put shared explanation at the top once; avoid duplicating it in every field. PASS should have empty replacements and a short reason/evidence. Finish the entire valid JSON object; do not wrap it in a code fence.`;
+Return JSON only. PASS example: {"verdict":"PASS","reason":"한국어 판단 이유","evidence":"관련 근거","issues":[],"replacements":[]}.
+For RESPONSE_ERROR or CONTINUITY_DRIFT, PREFER logical issues: [{"reason":"한 논리적 오류의 한국어 이유","evidence":"specific supporting quote/context","evidenceSource":"human-readable source / block / actor","category":"enabled check key","severity":"confirmed or interpretive","verdict":"RESPONSE_ERROR or CONTINUITY_DRIFT","autoApplyEligible":false,"replacements":[{"from":"exact unique substring of New Speech","to":"smallest supported correction"}]}]. Put all text changes that must be accepted/rejected together inside the SAME issue. Every issue must be independently applicable to the ORIGINAL New Speech. Replacements inside one issue and across different issues MUST NOT overlap. If two corrections overlap or depend on each other, merge them into one issue.
+For backward/custom-prompt compatibility, legacy top-level replacements with the previous per-replacement metadata are still accepted. Do not duplicate the same finding in both issues and top-level replacements. In the default/basic contract use issues and leave top-level replacements empty.
+Use confirmed only for objective evidence. Emotional, relationship, motive and characterization interpretation MUST be CONTINUITY_DRIFT, severity interpretive, autoApplyEligible false. If any issue/item is drift, overall verdict must be CONTINUITY_DRIFT. Set autoApplyEligible true only for a confirmed objective minimal RESPONSE_ERROR. PASS/MEMORY_STALE/AMBIGUOUS must have no correction issues/replacements. Category MUST be one of the enabled keys. Explain evidence even for structural errors. Never classify mere non-mention as an error.
+OUTPUT ECONOMY: Inspect every enabled check, but return only supported findings. Do not list checks that passed, restate the evidence packet, return unchanged paragraphs, or regenerate the whole response. For each replacement, from must be the shortest unique contiguous affected phrase/sentence and to only its corrected equivalent; include more text only when required to identify the occurrence or repair missing structure. Do not truncate from/to or omit supported findings to save tokens. Keep each issue reason concise (normally <=160 characters), evidence to the specific supporting quote(s) needed (normally <=300 characters), and evidenceSource to short message IDs/block labels. Put shared explanation at the top once; avoid duplicating it in every field. PASS should have empty issues/replacements and a short reason/evidence. Finish the entire valid JSON object; do not wrap it in a code fence.`;
   function reviewResponseSchema(config=settings){
-    const categories=enabledReviewTopics(config);
-    return {type:'object',properties:{verdict:{type:'string',enum:[...REVIEW_VERDICTS]},reason:{type:'string'},evidence:{type:'string'},replacements:{type:'array',items:{type:'object',properties:{from:{type:'string'},to:{type:'string'},reason:{type:'string'},evidence:{type:'string'},evidenceSource:{type:'string'},category:{type:'string',enum:categories.length?categories:['disabled']},severity:{type:'string',enum:['confirmed','interpretive']},verdict:{type:'string',enum:['RESPONSE_ERROR','CONTINUITY_DRIFT']},autoApplyEligible:{type:'boolean'}},required:['from','to','reason','evidence','evidenceSource','category','severity','verdict','autoApplyEligible']}}},required:['verdict','reason','evidence','replacements']};
+    const categories=enabledReviewTopics(config),categoryEnum=categories.length?categories:['disabled'];
+    const pair={type:'object',properties:{from:{type:'string'},to:{type:'string'}},required:['from','to']};
+    const legacyReplacement={type:'object',properties:{from:{type:'string'},to:{type:'string'},reason:{type:'string'},evidence:{type:'string'},evidenceSource:{type:'string'},category:{type:'string',enum:categoryEnum},severity:{type:'string',enum:['confirmed','interpretive']},verdict:{type:'string',enum:['RESPONSE_ERROR','CONTINUITY_DRIFT']},autoApplyEligible:{type:'boolean'}},required:['from','to','reason','evidence','evidenceSource','category','severity','verdict','autoApplyEligible']};
+    const issue={type:'object',properties:{reason:{type:'string'},evidence:{type:'string'},evidenceSource:{type:'string'},category:{type:'string',enum:categoryEnum},severity:{type:'string',enum:['confirmed','interpretive']},verdict:{type:'string',enum:['RESPONSE_ERROR','CONTINUITY_DRIFT']},autoApplyEligible:{type:'boolean'},replacements:{type:'array',items:pair}},required:['reason','evidence','evidenceSource','category','severity','verdict','autoApplyEligible','replacements']};
+    return {type:'object',properties:{verdict:{type:'string',enum:[...REVIEW_VERDICTS]},reason:{type:'string'},evidence:{type:'string'},issues:{type:'array',items:issue},replacements:{type:'array',items:legacyReplacement}},required:['verdict','reason','evidence']};
   }
   const BASIC_PROMPT = `# RP RESPONSE CONTINUITY REVIEW
 Review only [New Speech]. Preserve it unless a supported correction is necessary.
@@ -37504,6 +37839,13 @@ A correction requires a supported contradiction, a materially relevant persisten
       #wish-rpcore-refiner-confirm .rr-evidence{margin:0 16px;border-top:1px solid var(--rr-line2)}
       #wish-rpcore-refiner-confirm .rr-evidence p{white-space:pre-wrap;margin:0 0 13px;color:var(--rr-fg2);font-size:11px;line-height:1.7}
       #wish-rpcore-refiner-confirm .rr-preview{border:1px solid var(--rr-line);border-radius:10px;padding:0 13px;margin-top:18px;background:var(--rr-card)}
+      #wish-rpcore-refiner-confirm .rr-full-preview{border:1px solid var(--rr-line);border-radius:10px;padding:0 13px;margin-top:18px;background:var(--rr-card)}
+      #wish-rpcore-refiner-confirm [data-change-preview]{font-size:12px;line-height:1.8;color:var(--rr-fg);background:var(--rr-control);border:1px solid var(--rr-line2);padding:12px;border-radius:8px;margin:0 0 7px;white-space:pre-wrap;overflow-wrap:anywhere;min-height:180px;height:300px;max-height:55vh;overflow:auto;resize:vertical;box-sizing:border-box;scrollbar-width:thin;scrollbar-color:var(--rr-line) transparent}
+      #wish-rpcore-refiner-confirm [data-change-preview] .rr-preview-change{background:var(--rr-fg);color:var(--rr-sheet);border-radius:3px;padding:0 2px;box-decoration-break:clone;-webkit-box-decoration-break:clone;font-weight:650}
+      #wish-rpcore-refiner-confirm .rr-preview-hint{margin:0 0 11px;color:var(--rr-muted);font-size:10px;line-height:1.55}
+      #wish-rpcore-refiner-confirm [data-manual-editor-wrap]{margin-top:14px;padding:12px 13px;border:1px solid var(--rr-accent-line);border-radius:10px;background:color-mix(in srgb,var(--rr-accent-soft) 24%,var(--rr-card))}
+      #wish-rpcore-refiner-confirm [data-manual-editor-wrap]>strong{display:block;margin-bottom:7px;font-size:12px;color:var(--rr-fg)}
+      #wish-rpcore-refiner-confirm [data-manual-editor-wrap]>small{display:block;margin-top:-5px;color:var(--rr-muted);font-size:10px;line-height:1.55}
       #wish-rpcore-refiner-confirm textarea{display:block;width:100%;min-height:220px;max-height:45vh;resize:vertical;margin:0 0 13px;padding:11px 12px;border:1px solid var(--rr-line);border-radius:8px;background:var(--rr-control);color:var(--rr-fg);font:12px/1.8 'Pretendard',system-ui;white-space:pre-wrap}
       #wish-rpcore-refiner-confirm .rr-exception{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--rr-fg2);margin:15px 0 0;cursor:pointer}
       #wish-rpcore-refiner-confirm [data-policy]{width:100%;padding:9px 11px;border:1px solid var(--rr-line);border-radius:8px;background:var(--rr-control);color:var(--rr-fg);font:12px/1.5 system-ui;margin-top:9px}
@@ -37545,6 +37887,65 @@ A correction requires a supported contradiction, a materially relevant persisten
     if (rect.width <= 0 || rect.height <= 0) return false;
     const style = getComputedStyle(el);
     return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
+  }
+
+  // v0.17.12 user patch · Crack 네이티브 수정창과 응답교정의 경합 방지.
+  // 서버 fingerprint 검증(assertReviewSource)은 그대로 유지하고, 사용자가 편집 중인 UI 상태를 추가로 존중합니다.
+  function crackButtonText(el) { return String(el?.textContent || '').replace(/\s+/g, ' ').trim(); }
+  function hasVisibleEditDoneButton(root) {
+    if (!(root instanceof Element)) return false;
+    return [...root.querySelectorAll('button,[role="button"]')].some(el => isElementVisible(el) && crackButtonText(el) === '수정 완료');
+  }
+  function findOpenCrackEditDialog() {
+    const editors=[...document.querySelectorAll('.tiptap.ProseMirror[contenteditable="true"], .ProseMirror[contenteditable="true"]')]
+      .filter(el=>isElementVisible(el)&&!el.closest('#wish-rpcore-refiner-modal,#wish-rpcore-refiner-confirm,[id^="rpcm-"]'));
+    for(const editor of editors){
+      const dialog=editor.closest('[role="dialog"]');
+      if(dialog&&isElementVisible(dialog)&&hasVisibleEditDoneButton(dialog))return dialog;
+      let node=editor.parentElement;
+      for(let depth=0;node&&depth<10;depth++,node=node.parentElement)if(isElementVisible(node)&&hasVisibleEditDoneButton(node))return node;
+    }
+    return null;
+  }
+  function waitForCrackEditDialogToClose() {
+    const startScope=chatStateKey();
+    if(!findOpenCrackEditDialog())return Promise.resolve('already-closed');
+    return new Promise(resolve=>{
+      let finished=false;
+      const finish=reason=>{if(finished)return;finished=true;observer.disconnect();window.removeEventListener('popstate',check);window.removeEventListener('hashchange',check);resolve(reason);};
+      const check=()=>{if(chatStateKey()!==startScope)finish('route-changed');else if(!findOpenCrackEditDialog())finish('closed');};
+      const observer=new MutationObserver(check);
+      observer.observe(document.body,{childList:true,subtree:true,attributes:true,attributeFilter:['class','style','hidden','aria-hidden']});
+      window.addEventListener('popstate',check);window.addEventListener('hashchange',check);
+      check();
+    });
+  }
+  function messageStableId(msg) {
+    const raw=msg?.raw||{};
+    return String(msg?.id||raw._id||raw.messageId||raw.turnId||raw.createdAt||raw.created_at||'');
+  }
+  async function latestAssistantAfterEditClose() {
+    await sleep(250);
+    const stable=await waitStableAssistant();
+    if(stable)return stable;
+    await sleep(450);
+    return await findLastAssistant();
+  }
+  async function reconcileLatestTargetBeforeCorrection(target,force=false) {
+    const scopeBefore=chatStateKey(),editWasOpen=!!findOpenCrackEditDialog();
+    if(editWasOpen){
+      setStatus('수정창 닫힘 대기');
+      const closedReason=await waitForCrackEditDialogToClose();
+      if(closedReason==='route-changed'||chatStateKey()!==scopeBefore)return {discard:true,reason:'route-changed',editWasOpen:true};
+    }
+    let latest=null;
+    try{latest=editWasOpen?await latestAssistantAfterEditClose():await findLastAssistant();}catch(_){latest=null;}
+    if(!latest)return {discard:true,reason:'missing-latest',editWasOpen};
+    if(messageFingerprint(latest)===messageFingerprint(target))return {same:true,target:latest,editWasOpen};
+    const sameMessage=!!messageStableId(target)&&messageStableId(target)===messageStableId(latest);
+    if(sameMessage)return {discard:true,target:latest,reason:'user-edited',editWasOpen};
+    if(!force&&isProcessed(latest))return {discard:true,target:latest,reason:'seen-older-message',editWasOpen};
+    return {rerun:true,target:latest,reason:'latest-message-changed',editWasOpen};
   }
 
   function findCrackComposer() {
@@ -37591,7 +37992,7 @@ A correction requires a supported contradiction, a materially relevant persisten
 
   function isReviewStatus(text) {
     const t = String(text || '');
-    return workerBusy && (['응답 완료 기다리는 중','관련 기억 찾는 중','검수 중','응답 받아오는 중','교정 결과 확인 중','오류 발견 · 처리 중','응답 오류 · 처리 중','서버 반영 중','반영 확인 중'].includes(t)||t.startsWith('API가 일시적으로 혼잡합니다.')||t.includes('재시도 중'));
+    return workerBusy && (['응답 완료 기다리는 중','관련 기억 찾는 중','검수 중','응답 받아오는 중','교정 결과 확인 중','오류 발견 · 처리 중','응답 오류 · 처리 중','수정창 닫힘 대기','최신 응답 재검수','서버 반영 중','반영 확인 중'].includes(t)||t.startsWith('API가 일시적으로 혼잡합니다.')||t.includes('재시도 중'));
   }
 
   function hideReviewNotice() {
@@ -38253,23 +38654,44 @@ A correction requires a supported contradiction, a materially relevant persisten
   function normalizeReviewResult(value,config=settings){
     if(!value||typeof value!=='object'||Array.isArray(value))throw new Error('교정 결과가 JSON 객체가 아닙니다.');
     const result={...value},legacy=!value.verdict;
-    const raw=String(value.verdict||(value.pass===true?'PASS':value.replacements?.length||value.refined_text?'RESPONSE_ERROR':'')).toUpperCase();
+    const raw=String(value.verdict||(value.pass===true?'PASS':value.issues?.length||value.replacements?.length||value.refined_text?'RESPONSE_ERROR':'')).toUpperCase();
     if(!REVIEW_VERDICTS.includes(raw))throw new Error('지원하지 않는 교정 판정입니다. 원본을 유지했습니다.');
-    result.verdict=raw;result.legacy=legacy;result.replacements=[];
+    result.verdict=raw;result.legacy=legacy;result.replacements=[];result.issues=[];
     if(['PASS','MEMORY_STALE','AMBIGUOUS'].includes(raw)){delete result.refined_text;return result;}
-    for(const item of Array.isArray(value.replacements)?value.replacements:[]){
+    const seen=new Set();
+    const normalizedMeta=(item={})=>{
       const category=String(item?.category||'legacy');
-      if(REVIEW_TOPICS[category]&&config.reviewTopics?.[category]===false)continue;
+      if(REVIEW_TOPICS[category]&&config.reviewTopics?.[category]===false)return null;
       if(category!=='legacy'&&!REVIEW_TOPICS[category])throw new Error('알 수 없는 검사 항목이 반환되었습니다.');
       const verdict=raw==='CONTINUITY_DRIFT'&&!item?.verdict?'CONTINUITY_DRIFT':String(item?.verdict||raw).toUpperCase();
       if(!['RESPONSE_ERROR','CONTINUITY_DRIFT'].includes(verdict))throw new Error('수정 항목의 판정이 올바르지 않습니다.');
       const interpretive=['relationships','character','hooks'].includes(category)||item?.severity==='interpretive';
-      result.replacements.push({...item,category,verdict:interpretive?'CONTINUITY_DRIFT':verdict,severity:interpretive?'interpretive':item?.severity==='confirmed'?'confirmed':'unconfirmed',evidenceSource:String(item?.evidenceSource||item?.evidence||value.evidence||''),autoApplyEligible:!legacy&&item?.autoApplyEligible===true});
-    }
+      return {
+        category,verdict:interpretive?'CONTINUITY_DRIFT':verdict,severity:interpretive?'interpretive':item?.severity==='confirmed'?'confirmed':'unconfirmed',
+        reason:String(item?.reason||value.reason||'교정 필요'),evidence:String(item?.evidence||value.evidence||''),
+        evidenceSource:String(item?.evidenceSource||item?.evidence||value.evidence||''),autoApplyEligible:!legacy&&item?.autoApplyEligible===true
+      };
+    };
+    const addIssue=(source,replacements,legacyTop=false)=>{
+      const meta=normalizedMeta(source);if(!meta)return;
+      const normalized=[];
+      for(const rep of Array.isArray(replacements)?replacements:[]){
+        const from=String(rep?.from??''),to=String(rep?.to??'');if(!from)throw new Error('교정 항목의 원문이 비어 있습니다. 원본을 유지했습니다.');
+        const key=from+'\u0000'+to;if(seen.has(key))throw new Error('교정 항목에 중복 범위가 있습니다. 원본을 유지했습니다.');seen.add(key);
+        const repMeta=normalizedMeta(legacyTop?rep:{...source,...rep});if(!repMeta)return;
+        const finalMeta={...repMeta,autoApplyEligible:meta.autoApplyEligible&&repMeta.autoApplyEligible},issueIndex=result.issues.length;
+        normalized.push({...rep,...finalMeta,from,to,_issueIndex:issueIndex});
+      }
+      if(!normalized.length)return;
+      const issue={...source,...meta,replacements:normalized};
+      result.issues.push(issue);result.replacements.push(...normalized);
+    };
+    for(const issue of Array.isArray(value.issues)?value.issues:[])addIssue(issue,issue?.replacements,false);
+    for(const item of Array.isArray(value.replacements)?value.replacements:[])addIssue(item,[item],true);
     if(result.replacements.some(x=>x.verdict==='CONTINUITY_DRIFT'))result.verdict='CONTINUITY_DRIFT';
     // Legacy full text remains a manual proposal, never an automatic replacement.
     if(!legacy||!enabledReviewTopics(config).length)delete result.refined_text;
-    if(!result.replacements.length&&!result.refined_text&&!(raw==='CONTINUITY_DRIFT'&&!(value.replacements||[]).length&&enabledReviewTopics(config).some(key=>['relationships','character','hooks'].includes(key)))){result.verdict='PASS';result.reason='선택한 검사 항목에 적용할 수정이 없습니다.';}
+    if(!result.replacements.length&&!result.refined_text&&!(raw==='CONTINUITY_DRIFT'&&enabledReviewTopics(config).some(key=>['relationships','character','hooks'].includes(key)))){result.verdict='PASS';result.reason='선택한 검사 항목에 적용할 수정이 없습니다.';}
     return result;
   }
   function validateReviewUnits(original,parsed,config=settings){
@@ -38530,7 +38952,7 @@ A correction requires a supported contradiction, a materially relevant persisten
     out=out.replace(/\{(?:core|currentState|dateLogs|characters|extras|lore|memory|actors|relationships|speech|timeline|longTerm|structuralHints|formatReference|context|message|passWord)\}/g,key=>String(replacements[key]??''));
     if(settings.template==='custom')out+='\n\n[ACTIVE_REVIEW_CONTRACT · overrides conflicting template instructions]\n'+(truncationOnly()?'Your ONLY job is to detect and repair clear output truncation. Do not change any other sentence.\n':'')+reviewCheckInstructions()+'\n'+REVIEW_OUTPUT_CONTRACT+'\nOnly the enabled categories can produce corrections. Disabled checks must not affect verdicts.\n';
     if(settings.template==='custom'&&!String(template).includes('{formatReference}')&&!truncationOnly())out+='\n[OUTPUT_FORMAT_REFERENCE]\n'+String(values.formatReference||'');
-    return out + `\n\nTARGET BOUNDARY: [New Speech] is the only text you may correct. RP Manager references and [Recent Context] are reference data and are never correction targets. Never return, rewrite, or substitute a user message as refined_text. Every replacements.from MUST be an exact substring of [New Speech]. FORMAT PRESERVATION: for ordinary corrections, preserve the original paragraph boundaries, newline count, blank-line pattern, Markdown markers, and status-block layout of replacements.from. Change only the erroneous content. Do not reflow, prettify, or insert extra blank lines. Only a repair that inherently requires missing structure, such as a missing required INFO/HUD block, a missing bilingual line, or confirmed narration/dialogue marker damage, may restore only the minimum necessary lines or markers. If [New Speech] needs no change, return the appropriate JSON verdict; PASS only when no supported issue exists.`;
+    return out + `\n\nTARGET BOUNDARY: [New Speech] is the only text you may correct. RP Manager references and [Recent Context] are reference data and are never correction targets. Never return, rewrite, or substitute a user message as refined_text. Every issues[].replacements[].from or legacy replacements[].from MUST be a non-empty exact substring of [New Speech]. Each logical issue must be independently applicable to the ORIGINAL [New Speech]; no selected issue may depend on another issue having been applied first. FORMAT PRESERVATION: for ordinary corrections, preserve the original paragraph boundaries, newline count, blank-line pattern, Markdown markers, and status-block layout of the targeted from range. Change only the erroneous content. Do not reflow, prettify, or insert extra blank lines. Only a repair that inherently requires missing structure, such as a missing required INFO/HUD block, a missing bilingual line, or confirmed narration/dialogue marker damage, may restore only the minimum necessary lines or markers. If [New Speech] needs no change, return the appropriate JSON verdict; PASS only when no supported issue exists.`;
   }
 
   function parseGeminiText(json) {
@@ -38744,14 +39166,33 @@ A correction requires a supported contradiction, a materially relevant persisten
 
   function correctionUnits(original,parsed) {
     const replacements=Array.isArray(parsed?.replacements)?parsed.replacements:[];
-    if(!replacements.length)return typeof parsed?.refined_text==='string'?[{from:original,to:parsed.refined_text,start:0,end:original.length,reason:parsed.reason||'전체 응답 수정',evidence:parsed.evidence||'전체 교정본을 직접 확인해 주세요.',verdict:parsed.verdict,category:'legacy',severity:'unconfirmed',autoApplyEligible:false}]:[];
-    const units=replacements.map(r=>{
+    if(!replacements.length)return typeof parsed?.refined_text==='string'?[{from:original,to:parsed.refined_text,start:0,end:original.length,reason:parsed.reason||'전체 응답 수정',evidence:parsed.evidence||'전체 교정본을 직접 확인해 주세요.',verdict:parsed.verdict,category:'legacy',severity:'unconfirmed',autoApplyEligible:false,_issueIndex:0}]:[];
+    const units=replacements.map((r,index)=>{
       const from=String(r?.from??''),start=original.indexOf(from);
       if(!from||start<0||original.indexOf(from,start+1)>=0)throw new Error('교정 대상 원문이 없거나 여러 위치에 있어 정확한 변경 범위를 확인할 수 없습니다.');
-      return {...r,from,to:String(r?.to??''),start,end:start+from.length};
+      return {...r,from,to:String(r?.to??''),start,end:start+from.length,_issueIndex:Number.isInteger(r?._issueIndex)?r._issueIndex:index};
     }).sort((a,b)=>a.start-b.start);
     if(units.some((unit,i)=>i&&unit.start<units[i-1].end))throw new Error('교정 대상 범위가 서로 겹칩니다. 최신 응답을 다시 검수해 주세요.');
     return units;
+  }
+  function correctionIssueGroups(original,parsed) {
+    const units=correctionUnits(original,parsed),groups=new Map();
+    for(const unit of units){
+      const index=Number.isInteger(unit._issueIndex)?unit._issueIndex:groups.size,key=String(index);
+      if(!groups.has(key)){
+        const meta=Array.isArray(parsed?.issues)?parsed.issues[index]:null;
+        groups.set(key,{index,reason:String(meta?.reason||unit.reason||parsed?.reason||'교정 필요'),evidence:String(meta?.evidence||unit.evidence||parsed?.evidence||''),evidenceSource:String(meta?.evidenceSource||unit.evidenceSource||''),category:String(meta?.category||unit.category||'legacy'),severity:String(meta?.severity||unit.severity||'unconfirmed'),verdict:String(meta?.verdict||unit.verdict||parsed?.verdict||''),autoApplyEligible:meta?.autoApplyEligible===true||unit.autoApplyEligible===true,units:[]});
+      }
+      groups.get(key).units.push(unit);
+    }
+    return [...groups.values()].sort((a,b)=>Math.min(...a.units.map(x=>x.start))-Math.min(...b.units.map(x=>x.start)));
+  }
+  function reindexCorrectionGroups(groups) {
+    const issues=(Array.isArray(groups)?groups:[]).map((group,index)=>{
+      const replacements=(group.units||[]).map(unit=>({...unit,_issueIndex:index}));
+      return {...group,index,replacements,units:replacements};
+    });
+    return {issues,replacements:issues.flatMap(issue=>issue.replacements)};
   }
   function applyCorrectionUnits(original,units) {
     let result=original;
@@ -38759,6 +39200,65 @@ A correction requires a supported contradiction, a materially relevant persisten
     return result;
   }
   function applyReplacements(original, parsed) {return applyCorrectionUnits(original,correctionUnits(original,parsed));}
+
+  function replacementInnerDiff(from,to) {
+    const a=String(from??''),b=String(to??'');let prefix=0;
+    while(prefix<a.length&&prefix<b.length&&a[prefix]===b[prefix])prefix++;
+    let aEnd=a.length,bEnd=b.length;while(aEnd>prefix&&bEnd>prefix&&a[aEnd-1]===b[bEnd-1]){aEnd--;bEnd--;}
+    return {prefix:b.slice(0,prefix),changedFrom:a.slice(prefix,aEnd),changedTo:b.slice(prefix,bEnd),suffix:b.slice(bEnd)};
+  }
+  function appendPreviewText(root,text,highlighted=false,title='') {
+    if(!text)return;
+    if(!highlighted){root.appendChild(document.createTextNode(text));return;}
+    const span=document.createElement('span');span.className='rr-preview-change';span.textContent=text;if(title)span.title=title;root.appendChild(span);
+  }
+  function previewTextOffset(root,node,localOffset=0) {
+    if(!(root instanceof Node)||!(node instanceof Node)||!root.contains(node))return -1;
+    const walker=document.createTreeWalker(root,NodeFilter.SHOW_TEXT);let total=0;
+    for(let current=walker.nextNode();current;current=walker.nextNode()){if(current===node)return total+Math.max(0,Math.min(Number(localOffset)||0,current.nodeValue?.length||0));total+=current.nodeValue?.length||0;}
+    return -1;
+  }
+  function previewNodeAtOffset(root,offset) {
+    const target=Math.max(0,Number(offset)||0),walker=document.createTreeWalker(root,NodeFilter.SHOW_TEXT);let total=0;
+    for(let current=walker.nextNode();current;current=walker.nextNode()){const len=current.nodeValue?.length||0;if(target<=total+len)return {node:current,offset:Math.max(0,Math.min(len,target-total))};total+=len;}
+    return null;
+  }
+  function capturePreviewScrollAnchor(root) {
+    if(!(root instanceof HTMLElement))return null;
+    const maxScroll=Math.max(0,root.scrollHeight-root.clientHeight),fallbackRatio=maxScroll>0?root.scrollTop/maxScroll:0;
+    if(!root.isConnected||!root.textContent)return {fallbackRatio};
+    const rect=root.getBoundingClientRect(),x=Math.min(rect.right-12,rect.left+22),yCandidates=[rect.top+12,rect.top+28,rect.top+46,rect.top+66];let point=null;
+    for(const y of yCandidates){try{
+      if(document.caretRangeFromPoint){const range=document.caretRangeFromPoint(x,y);if(range?.startContainer&&root.contains(range.startContainer)){point={node:range.startContainer,offset:range.startOffset,y};break;}}
+      else if(document.caretPositionFromPoint){const pos=document.caretPositionFromPoint(x,y);if(pos?.offsetNode&&root.contains(pos.offsetNode)){point={node:pos.offsetNode,offset:pos.offset,y};break;}}
+    }catch(_){}}
+    if(!point)return {fallbackRatio};
+    const full=String(root.textContent||''),charOffset=previewTextOffset(root,point.node,point.offset);if(charOffset<0)return {fallbackRatio};
+    const candidates=[];for(const delta of [0,36,80,140,-36,-80]){const start=Math.max(0,Math.min(full.length,charOffset+delta)),snippet=full.slice(start,Math.min(full.length,start+72));if(snippet.trim().length>=12&&!candidates.some(x=>x.snippet===snippet))candidates.push({snippet,relative:start-charOffset});}
+    return {fallbackRatio,desiredY:point.y-rect.top,charOffset,candidates};
+  }
+  function restorePreviewScrollAnchor(root,anchor) {
+    if(!(root instanceof HTMLElement)||!anchor)return;
+    requestAnimationFrame(()=>{
+      const maxScroll=Math.max(0,root.scrollHeight-root.clientHeight),full=String(root.textContent||'');let matchOffset=-1;
+      for(const candidate of Array.isArray(anchor.candidates)?anchor.candidates:[]){const idx=full.indexOf(candidate.snippet);if(idx>=0&&full.indexOf(candidate.snippet,idx+1)<0){matchOffset=Math.max(0,idx-Number(candidate.relative||0));break;}}
+      if(matchOffset>=0){const pos=previewNodeAtOffset(root,matchOffset);if(pos?.node){try{const range=document.createRange(),len=pos.node.nodeValue?.length||0,start=Math.max(0,Math.min(len,pos.offset));range.setStart(pos.node,start);range.setEnd(pos.node,Math.min(len,start+1));const rr=range.getBoundingClientRect(),rootRect=root.getBoundingClientRect();if(rr&&Number.isFinite(rr.top)){root.scrollTop=Math.max(0,Math.min(maxScroll,root.scrollTop+(rr.top-rootRect.top)-Number(anchor.desiredY||12)));return;}}catch(_){}}}
+      root.scrollTop=Math.max(0,Math.min(maxScroll,maxScroll*Math.max(0,Math.min(1,Number(anchor.fallbackRatio)||0))));
+    });
+  }
+  function renderCorrectionPreview(root,original,units) {
+    root.replaceChildren();const ranges=[...(Array.isArray(units)?units:[])].sort((a,b)=>a.start-b.start);
+    if(!ranges.length){root.textContent=String(original??'');return;}
+    let cursor=0;
+    for(const r of ranges){
+      if(r.start<cursor||String(original).slice(r.start,r.end)!==String(r.from)){root.textContent=String(original??'');return;}
+      appendPreviewText(root,String(original).slice(cursor,r.start));const diff=replacementInnerDiff(r.from,r.to);appendPreviewText(root,diff.prefix);
+      if(diff.changedTo)appendPreviewText(root,diff.changedTo,true,diff.changedFrom?`변경 전: ${diff.changedFrom}`:'새로 추가되는 내용');
+      else if(diff.changedFrom)appendPreviewText(root,'〔삭제〕',true,`삭제되는 내용: ${diff.changedFrom}`);
+      appendPreviewText(root,diff.suffix);cursor=r.end;
+    }
+    appendPreviewText(root,String(original).slice(cursor));
+  }
 
   function looksLikeUserCopy(candidate, recentMessages) {
     const c = normalizeText(candidate);
@@ -39034,13 +39534,23 @@ A correction requires a supported contradiction, a materially relevant persisten
   }
 
   async function applyCorrection(target, correctedText, reason, parsed = null, options = {}) {
+    const reviewScope=chatStateKey();
+    const guardNativeEdit=async()=>{
+      if(findOpenCrackEditDialog()){
+        setStatus('수정창 닫힘 대기');
+        await waitForCrackEditDialogToClose();
+      }
+      if(chatStateKey()!==reviewScope){const error=new Error('방이 바뀌었습니다. 현재 응답을 다시 검수해 주세요.');error.code='STALE_RESPONSE_REVIEW';throw error;}
+      await assertReviewSource(target,getChatId());
+    };
+    await guardNativeEdit();
     setStatus('서버 반영 중');
     const recent=await fetchRecentMessages(20);
     if(looksLikeUserCopy(correctedText,recent))throw new Error('사용자 입력과 같은 교정본은 적용할 수 없습니다.');
     const safeText = normalizeCrackLinebreaks(correctedText);
     saveCorrectionArchive(target,safeText,reason,'적용 대기');
     let result;
-    try{result=await patchMessage(target,safeText);}catch(error){saveCorrectionArchive(target,safeText,reason+' · '+String(error.message||error),'적용 확인 실패');throw error;}
+    try{await guardNativeEdit();result=await patchMessage(target,safeText);}catch(error){saveCorrectionArchive(target,safeText,reason+' · '+String(error.message||error),'적용 확인 실패');throw error;}
     baselineFingerprint = messageFingerprint(result);
     markProcessed({ id: result.id, content: result.content });
     if (result.pendingSaveError) { window.__WISH_RP_MANAGER_AI_BRIDGE__?.reportRefinerIssue('error','응답 교정은 저장됐지만 주입 복구 정보의 로컬 저장을 확인해 주세요: '+result.pendingSaveError,target.id); toast('교정 저장 완료 · 로컬 주입 정보 확인 필요','error'); }
@@ -39182,6 +39692,25 @@ A correction requires a supported contradiction, a materially relevant persisten
       if(response?.fallbackFromModel){reviewTiming.fallbackFromModel=response.fallbackFromModel;reviewTiming.fallbackModel=response.model||response.fallbackModel||'gemini-3.8-flash';}
       reviewTiming.inputTokens=response.usage?.inputTokens||0;reviewTiming.outputTokens=response.usage?.outputTokens||0;
       if(/MAX_TOKENS|LENGTH|BUDGET_EXCEEDED|TOKEN_LIMIT|INCOMPLETE/i.test(String(response.finishReason||'')))throw reviewOutputLimitError(response,{maxOutputTokens});
+      // 최신 응답을 검수하는 동안 Crack 네이티브 수정창에서 사용자가 직접 편집했으면
+      // 수정 전 원문 기준 제안은 폐기합니다. 과거 응답 수동 검수는 기존 source fingerprint 검증만 사용합니다.
+      if(!historical){
+        const latestGuard=await reconcileLatestTargetBeforeCorrection(target,force);
+        if(latestGuard.discard){
+          if(latestGuard.reason==='user-edited'&&latestGuard.target){
+            markProcessed(latestGuard.target);baselineFingerprint=messageFingerprint(latestGuard.target);
+            addProcessHistory('사용자 수정 · 교정 폐기','검수 중 사용자가 같은 응답을 직접 수정해 수정 전 원문 기준 교정안을 폐기했습니다.',{target:latestGuard.target});
+            setStatus('사용자 수정 · 기존 교정 생략');showReviewNotice('사용자 수정본을 유지했어요','수정 전 원문을 기준으로 만든 교정 제안은 적용하지 않았습니다. 필요하면 최근 AI 응답 재검수를 누르세요.','info',5500);
+          }else{setStatus('검수 대상 변경 · 원본 유지');}
+          return;
+        }
+        if(latestGuard.rerun&&latestGuard.target){
+          setReviewGate(target,'stale');setStatus('최신 응답 재검수');
+          if(force)setTimeout(()=>runRefiner({force:true,targetOverride:latestGuard.target}),80);
+          else{lastAutoAssistantKey='';autoCheckQueued=true;setTimeout(()=>scheduleAutoCheck(400),80);}
+          return;
+        }
+      }
       await assertReviewSource(target,chatId);
       if(!force&&(!settings.enabled||reviewEpoch!==autoPrimeEpoch)){setReviewGate(target,'settled');setStatus('자동 검수 중지 · 원본 유지');showReviewNotice('검수 중단 · 원본 유지',settings.enabled?'검수 도중 방 또는 설정 기준이 바뀌어 결과를 적용하지 않았습니다.':'자동 검수를 꺼서 결과를 적용하지 않았습니다. 다시 검수할 수 있어요.','info');return;}
       setStatus('교정 결과 확인 중');
@@ -39236,13 +39765,16 @@ A correction requires a supported contradiction, a materially relevant persisten
       addProcessHistory(verdict,reason,{target,verdict});
       setStatus(verdict==='CONTINUITY_DRIFT'?'연속성 이탈 · 확인 필요':'응답 오류 · 처리 중');
       if(settings.autoApply){
-        const objective=parsed.replacements.filter(unit=>unit.verdict==='RESPONSE_ERROR'&&reviewAutoApplyEligible(target.content,{...parsed,verdict:'RESPONSE_ERROR',replacements:[unit]}));
+        // 논리적 issue 하나에 묶인 여러 replacement는 자동반영에서도 원자적으로 처리합니다.
+        const issueGroups=correctionIssueGroups(target.content,parsed);
+        const objectiveGroups=issueGroups.filter(group=>group.verdict==='RESPONSE_ERROR'&&reviewAutoApplyEligible(target.content,{...parsed,verdict:'RESPONSE_ERROR',replacements:group.units}));
+        const objectivePack=reindexCorrectionGroups(objectiveGroups),objective=objectivePack.replacements;
         if(objective.length){
-          const objectiveResult={...parsed,verdict:'RESPONSE_ERROR',replacements:objective};
-          const remaining=parsed.replacements.filter(unit=>!objective.includes(unit));
+          const objectiveResult={...parsed,verdict:'RESPONSE_ERROR',replacements:objectivePack.replacements,issues:objectivePack.issues};
+          const objectiveSet=new Set(objectiveGroups.flatMap(group=>group.units)),remainingGroups=issueGroups.filter(group=>group.units.some(unit=>!objectiveSet.has(unit))),remainingPack=reindexCorrectionGroups(remainingGroups),remaining=remainingPack.replacements;
           const appliedTarget=await applyCorrection(target,applyCorrectionUnits(target.content,validateReviewUnits(target.content,objectiveResult)),reason,objectiveResult,{reloadAfter:!remaining.length});
           if(remaining.length){
-            const remainingResult={...parsed,replacements:remaining,verdict:remaining.some(unit=>unit.verdict==='CONTINUITY_DRIFT')?'CONTINUITY_DRIFT':'RESPONSE_ERROR'};
+            const remainingResult={...parsed,replacements:remainingPack.replacements,issues:remainingPack.issues,verdict:remaining.some(unit=>unit.verdict==='CONTINUITY_DRIFT')?'CONTINUITY_DRIFT':'RESPONSE_ERROR'};
             activeReviewTarget=appliedTarget;
             const proposed=applyCorrectionUnits(appliedTarget.content,validateReviewUnits(appliedTarget.content,remainingResult));
             await showCorrectionConfirm({target:appliedTarget,corrected:proposed,reason:reason+' · 확정된 오류는 반영했고 나머지 제안은 확인을 기다립니다.',parsed:remainingResult});
@@ -39330,37 +39862,63 @@ A correction requires a supported contradiction, a materially relevant persisten
       overlay.style.cssText='position:fixed;inset:0;z-index:2147483646;background:var(--rr-scrim);display:flex;align-items:center;justify-content:center;padding:16px';
       const box=document.createElement('section');
       box.className='rr-confirm-box';box.setAttribute('role','dialog');box.setAttribute('aria-modal','true');box.setAttribute('aria-labelledby','rr-confirm-title');
-      box.innerHTML=`<header class="rr-confirm-head"><div class="rr-confirm-heading"><small>WISH · RESPONSE REVIEW</small><h3 id="rr-confirm-title">응답 교정 제안</h3><p>원문과 제안을 비교하고 적용할 항목을 선택하세요.</p></div><button type="button" data-close data-rpcm-close="icon" aria-label="닫기">×</button></header>
+      box.innerHTML=`<header class="rr-confirm-head"><div class="rr-confirm-heading"><small>WISH · RESPONSE REVIEW</small><h3 id="rr-confirm-title">응답 교정 제안</h3><p>논리적 오류 단위로 선택하고, 전체 응답에서 실제 변경 위치를 확인하세요.</p></div><button type="button" data-close data-rpcm-close="icon" aria-label="닫기">×</button></header>
         <div class="rr-confirm-body"><div class="rr-review-summary"><span data-verdict class="rr-verdict-pill"></span><p data-reason></p></div><p data-stale hidden>검수 중 원문이 바뀌었습니다. 최신 응답을 다시 검수해 주세요.</p>
         <div class="rr-selection-bar"><span data-total-count></span><button data-act="all">전체 선택</button></div><div data-changes></div>
-        <details class="rr-preview"><summary>최종 응답 미리보기 · 직접 편집</summary><textarea aria-label="최종 교정 응답"></textarea></details>
+        <details class="rr-full-preview" open><summary>선택 적용 후 전체 응답 미리보기</summary><div data-change-preview tabindex="0" aria-label="선택 교정 전체 응답 미리보기"></div><p class="rr-preview-hint">반전된 부분이 선택한 교정으로 바뀌는 글자입니다. 〔삭제〕는 제거될 부분입니다. 항목을 켜고 꺼도 현재 읽던 위치를 최대한 유지합니다.</p></details>
+        <div data-manual-editor-wrap hidden><strong>직접 수정 · 최종 적용 텍스트</strong><textarea data-manual-editor aria-label="직접 수정 최종 교정 응답" spellcheck="false"></textarea><small>직접 수정 중에는 교정 항목 선택이 잠깁니다. 위 강조 미리보기는 AI 제안 기준으로 유지되고, 이 편집본이 실제 서버 적용 대상입니다.</small></div>
         <label class="rr-exception"><input type="checkbox" data-exception> 원본 유지 시 이 검수 유형을 예외로 저장</label>
         <input data-policy hidden aria-label="교정 예외 적용 범위" placeholder="허용할 표현과 적용할 장면을 직접 입력하세요"></div>
-        <footer class="rr-confirm-foot"><div class="rr-foot-note"><span data-selection-count></span><span>선택한 수정만 응답에 반영합니다.</span></div><div class="rr-confirm-actions"><button data-act="keep">원본 유지</button><button data-act="memory">기억 오류로 표시</button><button data-act="review" hidden>최신 응답 다시 검수</button><button data-act="copy">교정본 복사</button><button data-act="apply" class="rr-primary">선택한 수정 적용</button></div></footer>`;
+        <footer class="rr-confirm-foot"><div class="rr-foot-note"><span data-selection-count></span><span>같은 오류에 묶인 변경은 함께 적용됩니다.</span></div><div class="rr-confirm-actions"><button data-act="keep">원본 유지</button><button data-act="memory">기억 오류로 표시</button><button data-act="review" hidden>최신 응답 다시 검수</button><button data-act="copy">교정본 복사</button><button data-act="manual">직접 수정</button><button data-act="apply" class="rr-primary">선택한 수정 적용</button></div></footer>`;
       box.querySelector('[data-reason]').textContent=reason;
       box.querySelector('[data-verdict]').textContent=(REVIEW_VERDICT_LABELS[parsed?.verdict]||'교정 제안')+(parsed?.verdict==='CONTINUITY_DRIFT'?' · 연속성 수정은 직접 확인 후 선택하세요.':'');
       const reviewChatId=getChatId();
-      const units=correctionUnits(target.content,parsed||{refined_text:corrected,reason});
-      const list=box.querySelector('[data-changes]'),ta=box.querySelector('textarea'),apply=box.querySelector('[data-act="apply"]');
-      const checks=units.map((unit,index)=>{
+      const groups=correctionIssueGroups(target.content,parsed||{refined_text:corrected,reason});
+      const units=groups.flatMap(group=>group.units);
+      const list=box.querySelector('[data-changes]'),preview=box.querySelector('[data-change-preview]'),manualWrap=box.querySelector('[data-manual-editor-wrap]'),ta=box.querySelector('[data-manual-editor]'),manualBtn=box.querySelector('[data-act="manual"]'),apply=box.querySelector('[data-act="apply"]'),allBtn=box.querySelector('[data-act="all"]');
+      const checks=groups.map((group,index)=>{
         const card=document.createElement('article');card.className='rr-change-card';
-        card.innerHTML='<header class="rr-change-head"><label><input type="checkbox"><strong></strong></label><small data-item-verdict class="rr-change-meta"></small></header><p class="rr-change-reason"></p><div class="rr-compare"><div><small>원문</small><p data-before></p></div><div><small>교정 제안</small><p data-after></p></div></div><details class="rr-evidence"><summary>판정 근거 보기</summary><p></p></details>';
-        card.querySelector('strong').textContent=`${index+1}. ${REVIEW_TOPICS[unit.category]?.label||'응답'} 수정`;
-        card.querySelector('.rr-change-reason').textContent=unit.reason||reason;
-        card.querySelector('[data-item-verdict]').textContent=(REVIEW_VERDICT_LABELS[unit.verdict||parsed?.verdict]||'검토 필요')+' · '+(unit.severity==='confirmed'?'확정 근거':'직접 확인 필요');
-        card.querySelector('input').checked=unit.verdict!=='CONTINUITY_DRIFT'&&(unit.verdict||parsed?.verdict)!=='CONTINUITY_DRIFT';
-        renderCorrectionComparison(card,unit.from,unit.to);
-        card.querySelector('details p').textContent=[unit.evidenceSource,unit.evidence||parsed?.evidence||'근거 출처가 제공되지 않았습니다. 원문과 저장 기억을 직접 확인해 주세요.'].filter(Boolean).join('\n');
-        const check=card.querySelector('input');check.onchange=renderSelection;list.append(card);return check;
+        card.innerHTML='<header class="rr-change-head"><label><input type="checkbox"><strong></strong></label><small data-item-verdict class="rr-change-meta"></small></header><p class="rr-change-reason"></p><div data-issue-comparisons></div><details class="rr-evidence"><summary>판정 근거 보기</summary><p></p></details>';
+        const label=REVIEW_TOPICS[group.category]?.label||'응답';
+        card.querySelector('strong').textContent=`${index+1}. ${label} 수정${group.units.length>1?` · 연동 ${group.units.length}개`:''}`;
+        card.querySelector('.rr-change-reason').textContent=group.reason||reason;
+        card.querySelector('[data-item-verdict]').textContent=(REVIEW_VERDICT_LABELS[group.verdict||parsed?.verdict]||'검토 필요')+' · '+(group.severity==='confirmed'?'확정 근거':'직접 확인 필요');
+        const host=card.querySelector('[data-issue-comparisons]');
+        group.units.forEach((unit,unitIndex)=>{
+          const compare=document.createElement('div');compare.className='rr-compare';compare.innerHTML='<div><small></small><p data-before></p></div><div><small></small><p data-after></p></div>';
+          compare.querySelector(':scope > div:first-child small').textContent=group.units.length>1?`원문 · 연동 변경 ${unitIndex+1}`:'원문';
+          compare.querySelector(':scope > div:last-child small').textContent=group.units.length>1?`교정 제안 · 연동 변경 ${unitIndex+1}`:'교정 제안';
+          renderCorrectionComparison(compare,unit.from,unit.to);host.append(compare);
+        });
+        card.querySelector('details p').textContent=[group.evidenceSource,group.evidence||parsed?.evidence||'근거 출처가 제공되지 않았습니다. 원문과 저장 기억을 직접 확인해 주세요.'].filter(Boolean).join('\n');
+        const check=card.querySelector('input');check.checked=group.verdict!=='CONTINUITY_DRIFT'&&(group.verdict||parsed?.verdict)!=='CONTINUITY_DRIFT';check.onchange=renderSelection;list.append(card);return check;
       });
-      box.querySelector('[data-total-count]').textContent=`수정 제안 ${units.length}개`;
-      if(!units.length){const empty=document.createElement('p');empty.className='rr-empty-changes';empty.textContent='자동으로 적용할 수정 구간을 찾지 못했습니다. 판정 근거를 확인하고 원본 유지 또는 기억 검토를 선택해 주세요.';list.append(empty);}
-      let stale=false,busy=false,edited=false;
-      function selected(){return units.filter((_,index)=>checks[index].checked);}
-      function renderSelection(){edited=false;ta.value=applyCorrectionUnits(target.content,selected());apply.disabled=stale||!selected().length;checks.forEach(check=>check.closest('article').dataset.selected=String(check.checked));box.querySelector('[data-selection-count]').textContent=`${selected().length} / ${units.length}개 선택`;box.querySelector('[data-act="all"]').textContent=selected().length===units.length&&units.length?'전체 해제':'전체 선택';}
-      renderSelection();if(ta.value!==target.content)saveCorrectionArchive(target,ta.value,reason,'검토 제안');
-      box.querySelector('[data-act="copy"]').onclick=()=>{saveCorrectionArchive(target,ta.value,reason,'복사용 교정본');copyCorrectionText(ta.value,ta);};
-      ta.oninput=()=>{edited=true;box.querySelector('[data-selection-count]').textContent='직접 편집한 응답';apply.disabled=stale||normalizeCrackLinebreaks(ta.value)===normalizeCrackLinebreaks(target.content);};
+      box.querySelector('[data-total-count]').textContent=`수정 이슈 ${groups.length}개 · 실제 변경 ${units.length}개`;
+      if(!groups.length){const empty=document.createElement('p');empty.className='rr-empty-changes';empty.textContent='자동으로 적용할 수정 구간을 찾지 못했습니다. 판정 근거를 확인하거나 직접 수정 모드를 사용할 수 있습니다.';list.append(empty);}
+      let stale=false,busy=false,editMode=false,generatedText=corrected;
+      function selectedGroups(){return groups.filter((_,index)=>checks[index]?.checked);}
+      function selectedUnits(){return selectedGroups().flatMap(group=>group.units);}
+      function currentFinalText(){return editMode?ta.value:generatedText;}
+      function selectionReason(){const rows=selectedGroups().map((group,index)=>`${index+1}. ${group.reason}`).filter(Boolean);return rows.length?rows.join('\n'):reason;}
+      function updateApplyState(){const changed=normalizeCrackLinebreaks(currentFinalText())!==normalizeCrackLinebreaks(target.content);apply.disabled=stale||busy||!changed;}
+      function renderSelection(){
+        if(editMode)return;
+        const anchor=capturePreviewScrollAnchor(preview),chosen=selectedUnits();generatedText=applyCorrectionUnits(target.content,chosen);ta.value=generatedText;renderCorrectionPreview(preview,target.content,chosen);restorePreviewScrollAnchor(preview,anchor);
+        checks.forEach(check=>check.closest('article').dataset.selected=String(check.checked));
+        box.querySelector('[data-selection-count]').textContent=`${selectedGroups().length} / ${groups.length}개 이슈 선택 · ${chosen.length}개 변경`;
+        allBtn.textContent=selectedGroups().length===groups.length&&groups.length?'전체 해제':'전체 선택';updateApplyState();
+      }
+      function setIssueSelectionLocked(locked){checks.forEach(check=>{check.disabled=!!locked||busy;});allBtn.disabled=!!locked||busy;}
+      function setEditMode(enabled){
+        if(busy)return;editMode=!!enabled;setIssueSelectionLocked(editMode);manualWrap.hidden=!editMode;manualBtn.textContent=editMode?'편집 취소':'직접 수정';apply.textContent=editMode?'수정본 적용':'선택한 수정 적용';
+        if(editMode){ta.value=generatedText;ta.focus({preventScroll:true});box.querySelector('[data-selection-count]').textContent='직접 편집 모드 · 교정 항목 선택 잠금';}
+        else renderSelection();
+        updateApplyState();
+      }
+      renderSelection();if(generatedText!==target.content)saveCorrectionArchive(target,generatedText,reason,'검토 제안');
+      box.querySelector('[data-act="copy"]').onclick=()=>{const value=currentFinalText();saveCorrectionArchive(target,value,editMode?reason+' · 사용자 직접 수정':selectionReason(),'복사용 교정본');copyCorrectionText(value,ta);};
+      ta.oninput=()=>{if(!editMode)return;box.querySelector('[data-selection-count]').textContent='직접 편집한 응답 · 교정 항목 선택 잠금';updateApplyState();};
+      manualBtn.onclick=()=>setEditMode(!editMode);
       const exception=box.querySelector('[data-exception]'),policy=box.querySelector('[data-policy]');exception.onchange=()=>{policy.hidden=!exception.checked;};
       const previousFocus=document.activeElement;
       const onEscape=event=>{if(event.key==='Escape'&&!busy){event.preventDefault();event.stopPropagation();dismiss();}};
@@ -39369,7 +39927,7 @@ A correction requires a supported contradiction, a materially relevant persisten
       box.querySelector('[data-close]').onclick=dismiss;document.addEventListener('keydown',onEscape,true);
       const markStale=()=>{stale=true;setReviewGate(target,'stale');box.querySelector('[data-stale]').hidden=false;box.querySelector('[data-act="review"]').hidden=false;apply.disabled=true;setStatus('최신 응답 재검수 필요','error');};
       const timer=setInterval(async()=>{if(!overlay.isConnected){clearInterval(timer);return;}try{await assertReviewSource(target,reviewChatId);}catch(error){if(error.code==='STALE_RESPONSE_REVIEW')markStale();}},2000);
-      box.querySelector('[data-act="all"]').onclick=()=>{if(busy)return;const selectAll=selected().length!==units.length;checks.forEach(check=>check.checked=selectAll);renderSelection();};
+      allBtn.onclick=()=>{if(busy||editMode)return;const selectAll=selectedGroups().length!==groups.length;checks.forEach(check=>check.checked=selectAll);renderSelection();};
       box.querySelector('[data-act="review"]').onclick=()=>{if(busy)return;close(false);setTimeout(()=>runRefiner({force:true}),0);};
       const keep=async memory=>{
         if(busy)return;
@@ -39382,17 +39940,23 @@ A correction requires a supported contradiction, a materially relevant persisten
       };
       box.querySelector('[data-act="keep"]').onclick=()=>keep(false);box.querySelector('[data-act="memory"]').onclick=()=>keep(true);
       apply.onclick=async()=>{
-        if(stale||busy)return;busy=true;for(const control of box.querySelectorAll('input,textarea,button'))control.disabled=true;apply.textContent='서버 반영 중…';
-        try{const chosen=selected();await applyCorrection(target,ta.value,reason,edited?null:{...parsed,replacements:chosen});close(true);}
+        if(stale||busy)return;busy=true;
+        const interactive=[...box.querySelectorAll('input,textarea,button')];interactive.forEach(control=>control.disabled=true);apply.textContent='서버 반영 중…';
+        try{
+          const chosen=selectedUnits(),finalText=currentFinalText(),selectedReason=editMode?reason+' · 사용자 직접 수정':selectionReason();
+          const selectedPack=reindexCorrectionGroups(selectedGroups()),applyParsed=editMode?null:{...parsed,replacements:selectedPack.replacements,issues:selectedPack.issues};
+          await applyCorrection(target,finalText,selectedReason,applyParsed);close(true);
+        }
         catch(error){addProcessHistory('오류',formatErrorHistory(error),{target});window.__WISH_RP_MANAGER_AI_BRIDGE__?.reportRefinerIssue(error.code==='STALE_RESPONSE_REVIEW'?'stale':'error',error.message,target.id);if(error.code==='STALE_RESPONSE_REVIEW')markStale();toast(error.message,'error');}
-        finally{busy=false;for(const control of box.querySelectorAll('input,textarea,button'))control.disabled=false;apply.disabled=stale||(edited?normalizeCrackLinebreaks(ta.value)===normalizeCrackLinebreaks(target.content):!selected().length);apply.textContent='선택한 수정 적용';}
+        finally{
+          busy=false;interactive.forEach(control=>control.disabled=false);setIssueSelectionLocked(editMode);manualBtn.disabled=false;box.querySelector('[data-close]').disabled=false;box.querySelector('[data-act="review"]').disabled=false;
+          apply.textContent=editMode?'수정본 적용':'선택한 수정 적용';updateApplyState();
+        }
       };
       overlay.append(box);document.body.append(overlay);setStatus('사용자 확인 대기');
       hideReviewNotice();box.querySelector('[data-close]').focus({preventScroll:true});
-
     });
   }
-
   function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
   function scheduleAutoCheck(delay=1200) {
