@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🪽위시 RP Manager
 // @namespace    local.rp.context.manager
-// @version      0.17.13
+// @version      0.17.13.3
 // @description  장기 RP용 현재상태·날짜로그·연속성 타임라인·캐릭터 설정을 관리하고, 검수형 AI 생성과 필요한 컨텍스트 자동 주입을 지원합니다.
 // @author       User
 // @license      All Rights Reserved
@@ -47,13 +47,13 @@
   // 버전별 키를 쓰면 구버전과 신버전이 동시에 설치됐을 때 둘 다 실행될 수 있습니다.
   // 모든 버전이 공유하는 고정 키로 중복 실행을 막습니다.
   if (window.__WISH_RP_MANAGER_LOADED__) return;
-  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.17.13', loadedAt: Date.now() };
+  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.17.13.3', loadedAt: Date.now() };
   // 같은 페이지에 남아 있는 v0.8.10 복사본이 뒤늦게 시작되는 경우도 차단합니다.
   window.__RP_MANAGER_0810_LOADED__ = true;
 
   const APP = {
     name: '🪽위시 RP Manager',
-    version: '0.17.13',
+    version: '0.17.13.3',
     dbName: 'RPContextManagerDB',
     dbVersion: 2,
     storeName: 'rooms',
@@ -24126,14 +24126,31 @@ html.rpcm-mobile-layout #rpcm-modal :is(.rpcm-section-title,.rpcm-section-desc,.
     return String(el?.textContent || '').replace(/\s+/g, ' ').trim();
   }
 
+  function isCrackHeaderVisible(el) {
+    if (!isElementVisible(el) || el.closest('[hidden],[inert],[aria-hidden="true"]')) return false;
+    if (el.checkVisibility && !el.checkVisibility({ checkOpacity:true, checkVisibilityCSS:true })) return false;
+    const rect = el.getBoundingClientRect();
+    return rect.bottom > 0 && rect.top < window.innerHeight && rect.right > 0 && rect.left < window.innerWidth;
+  }
+
   function findStableCrackHeaderActionRow() {
-    // 크랙 요약 메모리 편집기가 안정적으로 사용하는 실제 상단 액션 행을 그대로 사용합니다.
-    // 이 컨테이너 안에서만 Manager 위치를 결정하여 본문/좌측 내비/팝오버로 이탈하지 않게 합니다.
-    try {
-      return document.querySelector('.group\\/header .flex.gap-3.items-center');
-    } catch (_) {
-      return null;
+    // Tailwind 클래스 순서·간격 변경과 새 header/banner 마크업을 모두 지원합니다.
+    // 본문 모델 배지나 다른 확장프로그램의 팝업은 위치 기준으로 쓰지 않습니다.
+    const roots = document.querySelectorAll('[class~="group/header"],header,[role="banner"]');
+    for (const root of roots) {
+      if (root.closest('[id^="rpcm-"],[id^="wish-rpcore-"],[role="dialog"],[role="menu"],[data-radix-popper-content-wrapper]')) continue;
+      if (!isCrackHeaderVisible(root) || root.getBoundingClientRect().top > 180) continue;
+      const model = findModelSelectorButtonInHeader(root);
+      if (!model || !isCrackHeaderVisible(model)) continue;
+      for (let row = model.parentElement; row && root.contains(row); row = row.parentElement) {
+        const rect = row.getBoundingClientRect();
+        const style = getComputedStyle(row);
+        if (isCrackHeaderVisible(row) && rect.height <= 96 &&
+            (style.display === 'flex' || style.display === 'inline-flex') && style.flexDirection !== 'column') return row;
+        if (row === root) break;
+      }
     }
+    return null;
   }
 
   function findModelSelectorButtonInHeader(header) {
@@ -24141,9 +24158,9 @@ html.rpcm-mobile-layout #rpcm-modal :is(.rpcm-section-title,.rpcm-section-desc,.
     const badText = /^(manager|lore|기억\s*삽입|설정|요약|파티챗|에피소드)$/i;
     const strongModelWord = /(하이퍼\s*챗|프로\s*챗|프리\s*챗|chat|gpt|claude|gemini|sonnet|opus|flash)/i;
     const candidates = [...header.querySelectorAll('button,[role="button"]')].map(el => {
-      if (!el || el === state.fab || el.id === 'summary-editor-btn' || !isElementVisible(el)) return null;
+      if (!el || el === state.fab || el.id === 'summary-editor-btn' || el.id === 'wish-rpcore-refiner-button' || !isCrackHeaderVisible(el)) return null;
       if (el.closest?.('[role="dialog"],[aria-modal="true"],[role="menu"],[role="listbox"],[data-radix-popper-content-wrapper]')) return null;
-      const t = modelSelectorText(el);
+      const t = [modelSelectorText(el), el.getAttribute('aria-label'), el.getAttribute('title')].filter(Boolean).join(' ');
       if (!t || badText.test(t)) return null;
       const strong = strongModelWord.test(t);
       const popup = !!el.getAttribute('aria-haspopup') || el.getAttribute('aria-expanded') != null;
@@ -24166,17 +24183,38 @@ html.rpcm-mobile-layout #rpcm-modal :is(.rpcm-section-title,.rpcm-section-desc,.
     return node?.parentElement === host ? node : null;
   }
 
+  function canMountCrackHeaderButton(header, button, extraWidth) {
+    if (!header) return false;
+    const parent = header.parentElement;
+    if (parent && isElementVisible(parent)) {
+      const style = getComputedStyle(parent), rowStyle = getComputedStyle(header);
+      const siblings = [...parent.children].filter(node => node !== header && isElementVisible(node));
+      const rowChildren = [...header.children].filter(node => node !== button && isElementVisible(node));
+      const available = parent.clientWidth - (parseFloat(style.paddingLeft) || 0) - (parseFloat(style.paddingRight) || 0)
+        - siblings.reduce((sum,node) => sum + node.getBoundingClientRect().width, 0)
+        - (parseFloat(style.columnGap) || 0) * siblings.length;
+      const required = rowChildren.reduce((sum,node) => sum + node.getBoundingClientRect().width, 0)
+        + (parseFloat(rowStyle.columnGap) || 0) * rowChildren.length + extraWidth;
+      if (required > Math.max(0, available)) return false;
+    }
+
+    return true;
+  }
+
   function mountManagerNextToModelSelector(fab) {
     const header = findStableCrackHeaderActionRow();
-    if (!header || !isElementVisible(header)) return false;
+    if (!header || !isCrackHeaderVisible(header)) return false;
     const modelButton = findModelSelectorButtonInHeader(header);
     if (!modelButton) return false;
     const before = directChildInsideHost(modelButton, header);
     if (!before) return false;
+    // WISH를 추가하면 기존 확장 버튼이 밀려나는 좁은 행은 사용하지 않습니다.
+    if (!canMountCrackHeaderButton(header, fab, 106)) return false;
 
     hideManagerMobileHost();
     fab.classList.remove('rpcm-fallback', 'rpcm-compact-fallback', 'rpcm-mobile-fab');
-    for (const prop of ['left','right','top','bottom','position','margin']) fab.style.removeProperty(prop);
+    for (const prop of ['left','right','top','bottom','position','margin','z-index']) fab.style.removeProperty(prop);
+    fab.style.setProperty('flex-shrink', '0');
     fab.style.setProperty('margin-right', '8px', 'important');
 
     // 요약 메모리 편집기(📜)와 같은 고정 상단 행에만 삽입합니다.
@@ -24239,7 +24277,10 @@ html.rpcm-mobile-layout #rpcm-modal :is(.rpcm-section-title,.rpcm-section-desc,.
   function mountManagerFallback(fab, locked = false) {
     if (!document.body) return false;
     hideManagerMobileHost();
+    fab.classList.remove('rpcm-mobile-fab');
     fab.classList.add('rpcm-fallback');
+    fab.style.setProperty('position', 'fixed', 'important');
+    fab.style.setProperty('z-index', '2147483645', 'important');
     if (fab.parentElement !== document.body) document.body.appendChild(fab);
     positionManagerSafeFallback(fab);
     fab.dataset.rpcmPlacement = locked ? 'fixed-safe-recovery' : 'fixed-safe-awaiting-target';
@@ -24255,6 +24296,9 @@ html.rpcm-mobile-layout #rpcm-modal :is(.rpcm-section-title,.rpcm-section-desc,.
       button[hidden]{display:none!important}
       .rpcm-fab-label{display:none!important}
       .rpcm-fab-wing{display:inline!important;font-size:22px!important;line-height:1!important}
+      .rpcm-header-monitor-label{font-size:11px!important;font-weight:700!important;line-height:1!important}
+      .rpcm-header-status-dot{display:none!important}
+      .rpcm-header-monitor.is-on .rpcm-header-status-dot{display:block!important;position:absolute!important;right:4px!important;top:4px!important;width:6px!important;height:6px!important;border-radius:50%!important;background:#22c55e!important}
       .rpcm-dot{position:absolute!important;right:5px!important;top:5px!important;width:8px!important;height:8px!important;border:1px solid rgba(24,24,24,.9)!important;border-radius:50%!important;background:#f9a8d4!important}
       button.rpcm-armed{background:rgba(85,36,61,.96)!important;border-color:#fb7185!important;color:#fff!important}
       button.rpcm-armed .rpcm-dot{background:#22c55e!important;box-shadow:0 0 0 2px rgba(34,197,94,.16)!important}
@@ -24423,7 +24467,7 @@ html.rpcm-mobile-layout #rpcm-modal :is(.rpcm-section-title,.rpcm-section-desc,.
   }
 
   function ensureMobileSettingsMenuEntry() {
-    if (!isMobileManagerLayout() || !state.currentChatId) {
+    if (!state.currentChatId) {
       removeMobileSettingsMenuEntry();
       return false;
     }
@@ -24432,7 +24476,7 @@ html.rpcm-mobile-layout #rpcm-modal :is(.rpcm-section-title,.rpcm-section-desc,.
       updateMobileSettingsMenuEntry();
       return true;
     }
-    const labels = [...document.querySelectorAll('p,span')].filter(node => !node.closest?.('#rpcm-overlay,[data-rpcm-settings-entry="1"]') && isElementVisible(node));
+    const labels = [...document.querySelectorAll('p,span,button,[role="button"],[role="menuitem"]')].filter(node => !node.closest?.('[id^="rpcm-"],[id^="wish-rpcore-"],[data-rpcm-settings-entry="1"]') && isElementVisible(node));
     const summaryLabel = labels.find(node => normalizedMenuText(node.textContent) === '요약 메모리');
     const fallbackLabel = labels.find(node => normalizedMenuText(node.textContent) === '전체 설정');
     const anchorLabel = summaryLabel || fallbackLabel;
@@ -24456,7 +24500,7 @@ html.rpcm-mobile-layout #rpcm-modal :is(.rpcm-section-title,.rpcm-section-desc,.
     if (state.mobileMenuBound) return;
     state.mobileMenuBound = true;
     document.addEventListener('click', () => {
-      if (!isMobileManagerLayout() || !state.currentChatId) return;
+      if (!state.currentChatId) return;
       scheduleMobileSettingsMenuEntry(80);
       setTimeout(() => scheduleMobileSettingsMenuEntry(0), 280);
       setTimeout(() => scheduleMobileSettingsMenuEntry(0), 650);
@@ -24470,6 +24514,7 @@ html.rpcm-mobile-layout #rpcm-modal :is(.rpcm-section-title,.rpcm-section-desc,.
     // 호스트는 body 밖 documentElement 직속이라 React가 body를 다시 그려도 유지됩니다.
     fab.classList.add('rpcm-fallback', 'rpcm-mobile-fab');
     fab.classList.remove('rpcm-compact-fallback');
+    for (const prop of ['position','top','right','left','bottom','z-index','margin']) fab.style.removeProperty(prop);
     fab.style.removeProperty('bottom');
     if (fab.parentNode !== mount) mount.appendChild(fab);
     fab.dataset.rpcmPlacement = 'shadow-mobile';
@@ -24500,41 +24545,29 @@ html.rpcm-mobile-layout #rpcm-modal :is(.rpcm-section-title,.rpcm-section-desc,.
     if (!state.currentChatId) {
       if (state.fab) { state.fab.rpcmCancelHold?.(); state.fab.hidden = true; }
       hideManagerMobileHost();
+      removeMobileSettingsMenuEntry();
       return false;
     }
-
     const fab = state.fab || createManagerButton();
+    // React나 다른 확장이 헤더를 다시 그렸다면 같은 위치에 계속 재삽입하지 않습니다.
+    if (managerInlineMounted && !fab.isConnected) {
+      fab.rpcmCancelHold?.();
+      managerFallbackLocked = true;
+    }
     const mobileLayout = isMobileManagerLayout();
     fab.classList.toggle('rpcm-mobile-fab', mobileLayout);
-
-    if (mobileLayout && !findModelSelectorButtonInHeader(findStableCrackHeaderActionRow())) {
-      hideManagerMobileHost();
-      if (fab.isConnected) { fab.rpcmCancelHold?.(); fab.remove(); }
-      state.fab = fab;
-      scheduleMobileSettingsMenuEntry(0);
-      updateFab();
-      return true;
-    }
-
-    removeMobileSettingsMenuEntry();
-
-    // 데스크톱은 모델 선택 버튼(예: "프로챗 1.0") 바로 왼쪽 한 자리만 사용합니다.
-    // 검색창/메뉴를 위치 기준으로 따라다니지 않으므로 Manager가 화면 여기저기로 이동하지 않습니다.
-    if (mountManagerNextToModelSelector(fab)) {
+    scheduleMobileSettingsMenuEntry(0);
+    if (!managerFallbackLocked && mountManagerNextToModelSelector(fab)) {
       state.fab = fab;
       updateFab();
       return true;
     }
-
-    // 상단 액션 행/모델 선택기가 아직 렌더링되지 않았다면 엉뚱한 곳에 임시로 띄우지 않습니다.
-    // 요약 메모리 편집기와 같은 실제 헤더가 준비될 때까지 DOM 밖에서 대기하고, 다음 observer/주기 체크에서 정확한 자리로만 삽입합니다.
     managerInlineMounted = false;
-    managerFallbackLocked = false;
-    if (fab.isConnected) { fab.rpcmCancelHold?.(); fab.remove(); }
-    fab.dataset.rpcmPlacement = 'waiting-stable-header';
+    // 헤더가 없는 새 UI에서도 진입 가능합니다. 기존 버튼이나 입력창은 옮기거나 삭제하지 않습니다.
+    const mounted = mobileLayout ? mountManagerMobile(fab) : mountManagerFallback(fab, managerFallbackLocked);
     state.fab = fab;
     updateFab();
-    return false;
+    return mounted;
   }
 
   function createFab() {
@@ -36925,13 +36958,8 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
       await cleanOrphanMarkerInCurrentRoom();
       if (state.modal) closeModal();
     }
-    // 정상적으로 연결된 버튼은 다시 찾지 않습니다. React가 실제로 버튼을 제거했거나
-    // 첫 렌더에서 아직 헤더가 없었던 경우에만 위치 탐색을 다시 수행합니다.
-    if (state.currentChatId && isMobileManagerLayout() && !findModelSelectorButtonInHeader(findStableCrackHeaderActionRow())) {
-      updateMobileSettingsMenuEntry();
-    } else if (state.currentChatId && !state.fab?.isConnected) {
-      ensureManagerButton();
-    }
+    // 연결되어 있어도 상단이 숨겨지거나 UI 구성이 바뀔 수 있습니다.
+    ensureManagerButton();
     if(state.currentRoom){longTermNativeDisplayTick(state.currentRoom);void aiMemoryPoll(state.currentRoom);void longTermPoll(state.currentRoom);}
   }
 
@@ -37025,6 +37053,16 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
 
   // 화면 숨김 필터는 Manager UI보다 먼저 시작합니다.
   startRenderedContextObserver();
+
+  // UI 탐색만 공유합니다. 다른 확장의 DOM과 페이지 저장소를 변경하지 않습니다.
+  window.__WISH_RP_MANAGER_UI_BRIDGE__ = Object.freeze({
+    headerActionRow:findStableCrackHeaderActionRow,
+    isVisible:isCrackHeaderVisible,
+    canMountHeader:canMountCrackHeaderButton,
+  });
+  try {
+    GM_registerMenuCommand('🪽 RP Manager 열기', () => openModal().catch(error => notify(error.message, 'error')));
+  } catch (_) {}
 
   // The integrated response refiner uses the same provider, model and saved
   // credential as the Manager AI tab. Keep the secret inside this closure.
@@ -40439,21 +40477,49 @@ A correction requires a supported contradiction, a materially relevant persisten
     modal = null;
   }
 
+  let refinerHeaderRecoveryLocked = false;
+  let refinerPlacementRoute = '';
+  function mountRefinerHeaderButton(button, header) {
+    button.style.setProperty('flex-shrink', '0');
+    if (header) {
+      for (const key of ['position','top','right','z-index']) button.style.removeProperty(key);
+      button.style.setProperty('background', 'transparent');
+      button.style.setProperty('border', 'none');
+      const manager = header.querySelector('#rpcm-fab');
+      const before = manager || header.firstChild;
+      if (before !== button && (button.parentElement !== header || button.nextSibling !== before)) header.insertBefore(button, before);
+      button.dataset.wishPlacement = 'header';
+    } else {
+      button.style.setProperty('position', 'fixed', 'important');
+      button.style.setProperty('right', '18px', 'important');
+      button.style.setProperty('top', '156px', 'important');
+      button.style.setProperty('z-index', '2147483645', 'important');
+      button.style.setProperty('background', 'var(--wish-card,#fff)', 'important');
+      button.style.setProperty('border', '1px solid var(--wish-line,#ddd)', 'important');
+      if (button.parentElement !== document.body) document.body.appendChild(button);
+      button.dataset.wishPlacement = 'fallback';
+    }
+  }
+
   function injectHeaderButton() {
+    const route = location.pathname + location.search;
+    if (route !== refinerPlacementRoute) { refinerPlacementRoute = route; refinerHeaderRecoveryLocked = false; }
+    if (floatingButton?.dataset.wishPlacement === 'header' && !floatingButton.isConnected) refinerHeaderRecoveryLocked = true;
     if (settings.showButton === false) {
       document.getElementById('wish-rpcore-refiner-button')?.remove();
       floatingButton = null;
       return false;
     }
     // '크랙 요약 메모리 텍스트 편집기'와 같은 상단 헤더 슬롯을 사용합니다.
-    const headerContainer = document.querySelector('.group\\/header .flex.gap-3.items-center');
-    if (!headerContainer) return false;
+    const ui = window.__WISH_RP_MANAGER_UI_BRIDGE__;
+    const candidate = refinerHeaderRecoveryLocked ? null : ui?.headerActionRow?.();
+    const headerContainer = ui?.canMountHeader?.(candidate, floatingButton, 52) ? candidate : null;
+    if (!headerContainer && !document.body) return false;
 
     const existing = document.getElementById('wish-rpcore-refiner-button');
     if (existing) {
       floatingButton = existing;
-      floatingButton.textContent = '🪽';
-      floatingButton.style.fontSize = '20px';
+      mountRefinerHeaderButton(existing, headerContainer);
       return true;
     }
 
@@ -40490,7 +40556,7 @@ A correction requires a supported contradiction, a materially relevant persisten
       openSettings();
     };
 
-    headerContainer.prepend(floatingButton);
+    mountRefinerHeaderButton(floatingButton, headerContainer);
     return true;
   }
 
@@ -40526,10 +40592,11 @@ A correction requires a supported contradiction, a materially relevant persisten
     });
     observer.observe(document.body, { childList:true, subtree:true });
     setInterval(() => {
-      if (!document.getElementById('wish-rpcore-refiner-button')) injectHeaderButton();
+      injectHeaderButton();
       if (badge?.dataset.room && badge.dataset.room !== chatStateKey()) hideReviewNotice();
     }, 15000);
-    document.addEventListener('visibilitychange',()=>{if(!document.hidden&&!document.getElementById('wish-rpcore-refiner-button'))injectHeaderButton();});
+    document.addEventListener('visibilitychange',()=>{if(!document.hidden)injectHeaderButton();});
+    window.addEventListener('resize', injectHeaderButton, { passive:true });
     window.addEventListener('resize', positionReviewBadge, { passive:true });
     window.addEventListener('scroll', event => {
       if(event.target?.closest?.('[id^="rpcm-"],.rpcm-ltm-backdrop,.wish-rpcore-refiner-ui'))return;
