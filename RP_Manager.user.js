@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🪽위시 RP Manager
 // @namespace    local.rp.context.manager
-// @version      0.17.13.3
+// @version      0.17.14
 // @description  장기 RP용 현재상태·날짜로그·연속성 타임라인·캐릭터 설정을 관리하고, 검수형 AI 생성과 필요한 컨텍스트 자동 주입을 지원합니다.
 // @author       User
 // @license      All Rights Reserved
@@ -29,7 +29,9 @@
 // @grant        GM_setValue
 // @grant        GM_registerMenuCommand
 // @grant        GM_deleteValue
-// @run-at       document-start
+// @sandbox      DOM
+// @noframes
+// @run-at       document-end
 // ==/UserScript==
 
 // ============================================================
@@ -43,17 +45,48 @@
 (function () {
   'use strict';
 
+  const wishBoot = (() => {
+    let host=null, message='스크립트 실행 시작', phase='starting', started=false, dismissed=false;
+    const render = (force=false) => {
+      if(force)dismissed=false;
+      if (dismissed || (phase === 'ready'&&!force) || !document.documentElement) return;
+      if (!host?.isConnected) {
+        host=document.createElement('div');host.id='wish-rpcm-startup-status';
+        const root=host.attachShadow({mode:'open'});
+        const style=document.createElement('style');
+        style.textContent=':host{all:initial}section{box-sizing:border-box;width:280px;border:1px solid #d898ba;border-radius:12px;background:#fff4f9;color:#442d3b;padding:12px;font:13px/1.5 system-ui;box-shadow:0 4px 20px #0003}strong,span{display:block}span{white-space:pre-wrap;overflow-wrap:anywhere;margin-top:5px}button{font:inherit;margin-top:8px;padding:5px 9px;border:1px solid #b982a2;border-radius:6px;background:white;color:#442d3b;cursor:pointer}';
+        const card=document.createElement('section');
+        card.innerHTML='<strong>WISH 0.17.14 · 실행 상태</strong><span role="status" aria-live="polite"></span><button type="button">닫기</button>';
+        card.querySelector('button').onclick=()=>{dismissed=true;host?.remove();host=null;};
+        root.append(style,card);document.documentElement.appendChild(host);
+        for(const [key,value] of Object.entries({position:'fixed',right:'16px',top:'112px','z-index':'2147483647',display:'block',visibility:'visible',opacity:'1',width:'280px',height:'auto'}))host.style.setProperty(key,value,'important');
+      }
+      const text=host.shadowRoot.querySelector('span');if(text.textContent!==message)text.textContent=message;
+      if(host.dataset.wishStartupPhase!==phase)host.dataset.wishStartupPhase=phase;
+    };
+    const status=(next,text)=>{phase=next;message=text;if(next==='ready'){host?.remove();host=null;}else render();};
+    try{GM_registerMenuCommand('🪽 RP Manager 실행 상태',()=>render(true));}catch(_){}
+    render();
+    const guard=setInterval(()=>{if(phase==='ready'){clearInterval(guard);return;}render();},2000);
+    return {status,begin(){if(started)return false;started=true;return true;},fail(error){status('error','초기화 중단: '+String(error?.message||error).slice(0,240));}};
+  })();
+
+  try {
+
   // 다른 Tampermonkey 스크립트와의 중복 실행/재주입 충돌 방지
   // 버전별 키를 쓰면 구버전과 신버전이 동시에 설치됐을 때 둘 다 실행될 수 있습니다.
   // 모든 버전이 공유하는 고정 키로 중복 실행을 막습니다.
-  if (window.__WISH_RP_MANAGER_LOADED__) return;
-  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.17.13.3', loadedAt: Date.now() };
+  if (window.__WISH_RP_MANAGER_LOADED__) {
+    wishBoot.status('duplicate', '다른 RP Manager 실행이 감지됐습니다. 버전: '+String(window.__WISH_RP_MANAGER_LOADED__.version||'알 수 없음'));
+    return;
+  }
+  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.17.14', loadedAt: Date.now() };
   // 같은 페이지에 남아 있는 v0.8.10 복사본이 뒤늦게 시작되는 경우도 차단합니다.
   window.__RP_MANAGER_0810_LOADED__ = true;
 
   const APP = {
     name: '🪽위시 RP Manager',
-    version: '0.17.13.3',
+    version: '0.17.14',
     dbName: 'RPContextManagerDB',
     dbVersion: 2,
     storeName: 'rooms',
@@ -16169,6 +16202,9 @@ ${dialogueText}`;
     }).catch(error=>{entry.checkedAt=Date.now();throw error;}).finally(()=>{entry.promise=null;});
     return entry.promise;
   }
+  // Same continuity guide as the supplied Core 2.0.0. The block is reference data, not an answer template.
+  const WISH_CONTEXT_GUIDE = "[RP 연속성 참고]\n아래는 RP의 진행 지시·설정·기억을 모은 관리 자료다. 지시와 참고 내용을 구분해 적용한다. 블록·안내문 자체는 출력하거나 극중 정보로 취급하지 않으며, 기록된 내용은 인물별 경험·인지 범위에서 활용한다.\n사실·시점: 사용자의 직접 지시·정정(OOC)과 RP에서 확정된 최신 변화가 저장 기록보다 우선한다. 저장값이 충돌하면 현재 장면 시점에 유효한 최신 확정값을 우선하고, 선후가 불명확하면 해당 정보의 전용 칸을 기준으로 한다. 발언·주장·생각의 존재와 그 내용의 진위는 별개다. 과거 장면은 당시 인지 범위를 따르며, 옛 값의 재현·언급은 현재값의 변경이 아니다.\n사용: 기록은 필요할 때 참고하며, 실렸다는 이유로 모두 드러내거나 기록된 반응을 매번 재현할 필요는 없고, 아직 결말이 나지 않은 서사 고리도 장면이 그 일로 이어질 때 자연스럽게 반영할 뿐 억지로 꺼내거나 해결하지 않는다. 기록에 없는 과거를 없던 일로 단정하거나 임의로 채우지 않는다. 응답은 저장 기록체가 아닌 해당 RP의 언어·문체·출력 지시를 따른다.\n표기: 기호는 각 기록의 작성 규약을 따르고, 규약이 드러나지 않으면 문맥으로 읽는다. 뜻이 분명하지 않은 기호로 방향·선후·인과를 단정하지 않는다. 인용·약속어·암호·사용자 작성문의 기호는 원래 뜻을 유지한다.\n\n";
+
   function buildContextBlockFromItems(items) {
     const active = (items || []).filter(i => String(i.content || '').trim());
     if (!active.length) return '';
@@ -16193,10 +16229,7 @@ ${dialogueText}`;
     const body = parts.map(part => part.text || `# ${groupLabels[part.group]}\n${grouped[part.group].join('\n\n')}`).join('\n\n');
 
     return `${APP.markerStart} version="${APP.version}"\n` +
-      `[RP 연속성 참고]\n` +
-      `아래 자료는 출력하지 말고 현재 장면의 사실관계·연속성에만 참고한다.\n` +
-      `기존 RP의 언어·문체·대사·지문 형식을 그대로 유지한다.\n` +
-      `현재 대화의 더 최근 확정 사실과 충돌하면 최근 직접 대화를 우선한다.\n\n` +
+      WISH_CONTEXT_GUIDE +
       `${body}\n` +
       `${APP.markerEnd}`;
   }
@@ -20119,11 +20152,19 @@ ${dialogueText}`;
   // Render-only sanitizer: 서버 raw는 유지하고 일반 채팅 화면에서만 RP 블록 숨김
   // ---------------------------------------------------------------------------
 
+  // Carrier cleanup is limited to a rendered chat message. A missing END marker
+  // must never borrow a marker from another message or an injected script.
+  function renderedContextScope(node) {
+    const element=node?.nodeType===Node.ELEMENT_NODE?node:node?.parentElement;
+    return element?.closest?.('.wrtn-markdown,[data-message-id],[data-message-group-id]') || null;
+  }
+
   function cleanupRenderedMarkerArtifacts(root) {
     if (!root) return;
-    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_COMMENT);
+    const walker = renderedContextWalker(root);
     const removeNodes = []; let n;
     while ((n = walker.nextNode())) {
+      if (!renderedContextScope(n)) continue;
       if (n.nodeType === Node.COMMENT_NODE) {
         if (String(n.nodeValue || '').includes('RP_CONTEXT_MANAGER')) removeNodes.push(n);
         continue;
@@ -20144,15 +20185,19 @@ ${dialogueText}`;
   function sanitizeOneRenderedBlock(startNode) {
     if (!startNode || startNode.nodeType !== Node.TEXT_NODE) return false;
     if (startNode.parentElement?.closest('#rpcm-overlay,#rpcm-toast-wrap,#rpcm-notice-popups,#rpcm-lib-dialog-backdrop')) return false;
+    const scope = renderedContextScope(startNode);
+    if (!scope || isManagerUiNode(startNode)) return false;
     let root = startNode.parentElement;
     for (let i = 0; root && i < 12; i++, root = root.parentElement) {
       if (root.id === 'rpcm-overlay' || root.id === 'rpcm-toast-wrap' || root.id === 'rpcm-notice-popups' || root.id === 'rpcm-lib-dialog-backdrop') return false;
+      if (!scope.contains(root)) return false;
       const text = root.textContent || '';
       if (!text.includes('RP_CONTEXT_MANAGER_END')) continue;
 
-      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      const walker = renderedContextWalker(root);
       const nodes = []; let joined = ''; let n;
       while ((n = walker.nextNode())) {
+        if (n.nodeType !== Node.TEXT_NODE) continue;
         if (n.parentElement?.closest('#rpcm-overlay,#rpcm-toast-wrap,#rpcm-notice-popups,#rpcm-lib-dialog-backdrop')) continue;
         nodes.push({ node: n, start: joined.length, end: joined.length + n.nodeValue.length });
         joined += n.nodeValue;
@@ -20181,7 +20226,7 @@ ${dialogueText}`;
 
   function isManagerUiNode(node) {
     const element=node?.nodeType===Node.ELEMENT_NODE?node:node?.parentElement;
-    return !!element?.closest?.('[id^="rpcm-"],[id^="wish-rpcore-"],script,style,textarea');
+    return !!element?.closest?.('[id^="rpcm-"],[id^="wish-rpcore-"],#wish-rpcm-startup-status,script,style,textarea,button,input,select,[role="button"]');
   }
   function renderedContextWalker(root) {
     return document.createTreeWalker(root,NodeFilter.SHOW_ELEMENT|NodeFilter.SHOW_TEXT|NodeFilter.SHOW_COMMENT,{
@@ -20196,7 +20241,7 @@ ${dialogueText}`;
     let node;
     while ((node = walker.nextNode())) {
       const v = node.nodeValue || '';
-      if (!v.includes('RP_CONTEXT_MANAGER')) continue;
+      if (!v.includes('RP_CONTEXT_MANAGER') || !renderedContextScope(node)) continue;
       if (node.nodeType === Node.COMMENT_NODE) {
         comments.push(node);
         continue;
@@ -20228,48 +20273,63 @@ ${dialogueText}`;
     return false;
   }
 
+  const renderedContextPendingRoots = new Set();
+  let renderedContextFlushTimer = null;
+  function queueRenderedContextRoot(root) {
+    if (!root || isManagerUiNode(root)) return;
+    const candidate=root.nodeType===Node.ELEMENT_NODE?root:root.parentElement;
+    if (!candidate) return;
+    for (const existing of renderedContextPendingRoots) {
+      if (existing.contains(candidate)) return;
+      if (candidate.contains(existing)) renderedContextPendingRoots.delete(existing);
+    }
+    renderedContextPendingRoots.add(candidate);
+    if (renderedContextFlushTimer !== null) return;
+    renderedContextFlushTimer=setTimeout(flushRenderedContextRoots,120);
+  }
+  function flushRenderedContextRoots() {
+    renderedContextFlushTimer=null;
+    if(document.hidden){renderedContextPendingRoots.clear();return;}
+    state.domSanitizing=true;
+    try {
+      const roots=[...renderedContextPendingRoots].slice(0,12);
+      for(const root of roots){renderedContextPendingRoots.delete(root);if(root.isConnected)sanitizeRenderedContextBlocks(root);}
+    } finally {state.domSanitizing=false;}
+    if(renderedContextPendingRoots.size)renderedContextFlushTimer=setTimeout(flushRenderedContextRoots,16);
+  }
   function startRenderedContextObserver() {
     if (document.hidden) return;
     const target = document.documentElement || document;
     if (!state.domObserver) {
       state.domObserver = new MutationObserver((mutations) => {
         if (state.domSanitizing || document.hidden) return;
-        const roots = new Set();
+        let historyChanged=false;
         for (const m of mutations) {
           if (isManagerUiNode(m.target)) continue;
-          invalidateAiMemoryHistory();
+          if (renderedContextScope(m.target)) historyChanged=true;
           if (m.type === 'characterData') {
-            if (nodeContainsRenderedContextMarker(m.target)) roots.add(m.target.parentElement || m.target);
+            if (renderedContextScope(m.target) && nodeContainsRenderedContextMarker(m.target)) queueRenderedContextRoot(m.target);
             continue;
           }
-          // mutation.target의 textContent는 채팅 전체 문자열을 새로 만들 수 있으므로 읽지 않습니다.
-          // 실제로 추가된 노드만 검사해 스트리밍 중 반복되는 전체 DOM 직렬화를 막습니다.
           for (const added of (m.addedNodes || [])) {
-            if (!nodeContainsRenderedContextMarker(added)) continue;
-            if (added.nodeType === Node.COMMENT_NODE) {
-              added.remove();
-            } else {
-              roots.add(added.nodeType === Node.ELEMENT_NODE ? added : (added.parentElement || m.target));
-            }
+            if(isManagerUiNode(added))continue;
+            const scope=renderedContextScope(added);
+            const hasMessages=added.nodeType===Node.ELEMENT_NODE && added.querySelector?.('.wrtn-markdown,[data-message-id],[data-message-group-id]');
+            if(scope||hasMessages){historyChanged=true;queueRenderedContextRoot(added);}
           }
         }
-        if (!roots.size) return;
-        state.domSanitizing = true;
-        try {
-          for (const root of roots) sanitizeRenderedContextBlocks(root);
-        } finally {
-          state.domSanitizing = false;
-        }
+        if(historyChanged)invalidateAiMemoryHistory();
       });
     }
     if (!state.domObserverActive) {
       state.domObserver.observe(target, { childList: true, subtree: true, characterData: true });
       state.domObserverActive = true;
     }
-    sanitizeRenderedContextBlocks(document.body || document.documentElement || document);
+    queueRenderedContextRoot(document.body || document.documentElement);
   }
 
   function pauseRenderedContextObserver() {
+    clearTimeout(renderedContextFlushTimer);renderedContextFlushTimer=null;renderedContextPendingRoots.clear();
     if (!state.domObserver || !state.domObserverActive) return;
     state.domObserver.disconnect();
     state.domObserverActive = false;
@@ -29998,7 +30058,7 @@ RP 원문과 사용자 확정 메모를 사실 근거로 삼는다. Crack의 미
       for(const id of Object.keys(native.managedHashes))if(!presentIds.has(id)){delete native.managedHashes[id];metadataChanged=true;}
       for(const item of allNative){const id=longTermId(item),managed=native.managedHashes[id];if(managed&&managed!==longTermFingerprint(item)){native.userModifiedIds.push(id);delete native.managedHashes[id];metadataChanged=true;}}
       native.userModifiedIds=[...new Set(native.userModifiedIds)];
-      if(!native.lastInventoryHash){native.lastInventoryHash=longTermInventoryHash(inventory);native.status='Crack 기억 확인';await saveRoom(room);} 
+      if(!native.lastInventoryHash){native.lastInventoryHash=longTermInventoryHash(inventory);native.status='Crack 기억 확인';await saveRoom(room);}
       const candidates=longTermNativeCandidates(room,inventory);
       const overCap=inventory.length>native.maxSlots;
       const midMerge=native.midMergeTurns>0&&native.processedSinceMerge>=native.midMergeTurns;
@@ -37015,6 +37075,8 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
   }
 
   async function init() {
+    if (!wishBoot.begin()) return;
+    wishBoot.status('initializing', '화면 초기화 중');
     try {
       addStyles();
       addAiSummaryStyles();
@@ -37027,7 +37089,9 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
       bindPerformanceVisibility();
       bindMobileSettingsMenuEntry();
       bindRerollBridge();
+      wishBoot.status('storage', '저장소 연결 대기 중 · 기존 자료는 유지됩니다');
       state.db = await openDb();
+      wishBoot.status('room', '채팅방 자료를 준비하는 중');
       void seedRescueCopies();
       GM_addStyle(INTEGRATED_UI_CSS);
       createFab();
@@ -37038,8 +37102,10 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
       scheduleRouteTick();
       // 새로고침 후에도 활성 자동 유지 세션을 이어가기 위한 즉시 복구 패스입니다.
       scheduleRecovery(0);
+      wishBoot.status('ready', '준비 완료');
       console.log(`[위시RPManager] ${APP.name} v${APP.version} loaded`);
     } catch (e) {
+      wishBoot.fail(e);
       console.error('[RP매니저] init failed', e);
       notify(`🪽위시 RP Manager 초기화 실패: ${e.message}`, 'error', 7000);
     }
@@ -37115,9 +37181,11 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', startCompat, { once: true });
+    window.addEventListener('load', startCompat, { once: true });
   } else {
     startCompat();
   }
+  setTimeout(() => { if (document.readyState !== 'loading') startCompat(); }, 1200);
 
   // ===========================================================================
   // CORE SELECTIVE SAFETY PORT — REVIEWED v0.17.12 (P1~P7)
@@ -37433,7 +37501,7 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
     button.onclick=async e=>{e.preventDefault();e.stopPropagation();button.disabled=true;try{if(state.currentRoom!==room||room.pending?.messageId!==pending.messageId)throw rpcmHistoryStale();const result=await reverifyPending(room);if(state.currentRoom!==room||room.pending?.messageId!==pending.messageId)throw rpcmHistoryStale();rpcmOpenInlineCarrierViewer(room,result);}catch(error){notify('주입 확인 실패: '+error.message,'error',6000);}finally{if(button.isConnected)button.disabled=false;}};
     target.appendChild(button);
   }
-  function rpcmScheduleInlineCarrierInspector(){if(rpcmCarrierUiScheduled)return;rpcmCarrierUiScheduled=true;queueMicrotask(rpcmRefreshInlineCarrierInspector);}
+  function rpcmScheduleInlineCarrierInspector(){if(rpcmCarrierUiScheduled||document.hidden)return;rpcmCarrierUiScheduled=true;setTimeout(rpcmRefreshInlineCarrierInspector,180);}
   const rpcmCarrierObserver=new MutationObserver(mutations=>{
     const own=node=>{const el=node?.nodeType===1?node:node?.parentElement;return !!el?.closest?.('[data-rpcm-inline-carrier],[id^="rpcm-"],[id^="wish-rpcore-refiner-"]');};
     if(mutations.some(m=>!own(m.target)&&[...m.addedNodes,...m.removedNodes].some(node=>!own(node))))rpcmScheduleInlineCarrierInspector();
@@ -37446,6 +37514,10 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
   window.__RPCM_CORE_PORT_DIAGNOSTICS__={version:APP.version,build:RPCM_CORE_PORT.build,snapshot:()=>RpcmHistoryDiagnostics.snapshot(),invalidate:chatId=>rpcmHistoryInvalidate(chatId,'manual-test')};
   // ======================= END CORE SELECTIVE SAFETY PORT ======================
 
+  } catch (error) {
+    wishBoot.fail(error);
+    console.error('[RP매니저] startup failed', error);
+  }
 })();
 
 // BEGIN integrated response refiner v1.3.9 (Manager data adapter)
@@ -40583,12 +40655,15 @@ A correction requires a supported contradiction, a materially relevant persisten
 
     injectHeaderButton();
 
-    // Crack SPA가 헤더를 다시 그렸을 때 🪽 버튼도 같은 자리에 복구합니다.
+    // Batch recovery after page rendering; avoid observer-to-observer microtask loops.
+    let refinerRecoveryTimer=null;
     const observer = new MutationObserver(mutations => {
       if(!settings.showButton||document.hidden)return;
       const own=node=>node?.closest?.('[id^="rpcm-"],[id^="wish-rpcore-"],.wish-rpcore-refiner-ui');
       if(mutations.every(m=>own(m.target)||[...m.addedNodes,...m.removedNodes].every(own)))return;
-      if (!document.getElementById('wish-rpcore-refiner-button')) injectHeaderButton();
+      if (!document.getElementById('wish-rpcore-refiner-button') && refinerRecoveryTimer===null) {
+        refinerRecoveryTimer=setTimeout(()=>{refinerRecoveryTimer=null;if(settings.showButton&&!document.hidden)injectHeaderButton();},180);
+      }
     });
     observer.observe(document.body, { childList:true, subtree:true });
     setInterval(() => {
