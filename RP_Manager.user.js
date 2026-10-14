@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🪽위시 RP Manager
 // @namespace    local.rp.context.manager
-// @version      0.17.14
+// @version      0.17.15
 // @description  장기 RP용 현재상태·날짜로그·연속성 타임라인·캐릭터 설정을 관리하고, 검수형 AI 생성과 필요한 컨텍스트 자동 주입을 지원합니다.
 // @author       User
 // @license      All Rights Reserved
@@ -42,6 +42,19 @@
 // 원본 배포처 외의 장소에 파일/코드를 다시 업로드하지 말아주세요.
 // ============================================================
 
+// Firefox returns page-owned Xray-wrapped objects from IndexedDB. Clone data
+// records in the userscript before normalization or edits; never clone DB handles.
+(function () {
+  'use strict';
+  function wishLocalStorageRecord(value) {
+    if (value === null || typeof value !== 'object') return value;
+    return structuredClone(value);
+  }
+  function wishResolveStorageRecord(request, fallback, resolve, reject) {
+    try { resolve(wishLocalStorageRecord(request.result || fallback)); }
+    catch (error) { reject(error); }
+  }
+
 (function () {
   'use strict';
 
@@ -56,7 +69,7 @@
         const style=document.createElement('style');
         style.textContent=':host{all:initial}section{box-sizing:border-box;width:280px;border:1px solid #d898ba;border-radius:12px;background:#fff4f9;color:#442d3b;padding:12px;font:13px/1.5 system-ui;box-shadow:0 4px 20px #0003}strong,span{display:block}span{white-space:pre-wrap;overflow-wrap:anywhere;margin-top:5px}button{font:inherit;margin-top:8px;padding:5px 9px;border:1px solid #b982a2;border-radius:6px;background:white;color:#442d3b;cursor:pointer}';
         const card=document.createElement('section');
-        card.innerHTML='<strong>WISH 0.17.14 · 실행 상태</strong><span role="status" aria-live="polite"></span><button type="button">닫기</button>';
+        card.innerHTML='<strong>WISH 0.17.15 · 실행 상태</strong><span role="status" aria-live="polite"></span><button type="button">닫기</button>';
         card.querySelector('button').onclick=()=>{dismissed=true;host?.remove();host=null;};
         root.append(style,card);document.documentElement.appendChild(host);
         for(const [key,value] of Object.entries({position:'fixed',right:'16px',top:'112px','z-index':'2147483647',display:'block',visibility:'visible',opacity:'1',width:'280px',height:'auto'}))host.style.setProperty(key,value,'important');
@@ -68,7 +81,7 @@
     try{GM_registerMenuCommand('🪽 RP Manager 실행 상태',()=>render(true));}catch(_){}
     render();
     const guard=setInterval(()=>{if(phase==='ready'){clearInterval(guard);return;}render();},2000);
-    return {status,begin(){if(started)return false;started=true;return true;},fail(error){status('error','초기화 중단: '+String(error?.message||error).slice(0,240));}};
+    return {status,begin(){if(started)return false;started=true;return true;},fail(error){const stage=message;status('error','초기화 중단 ('+stage+'): '+String(error?.message||error).slice(0,240));}};
   })();
 
   try {
@@ -80,13 +93,13 @@
     wishBoot.status('duplicate', '다른 RP Manager 실행이 감지됐습니다. 버전: '+String(window.__WISH_RP_MANAGER_LOADED__.version||'알 수 없음'));
     return;
   }
-  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.17.14', loadedAt: Date.now() };
+  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.17.15', loadedAt: Date.now() };
   // 같은 페이지에 남아 있는 v0.8.10 복사본이 뒤늦게 시작되는 경우도 차단합니다.
   window.__RP_MANAGER_0810_LOADED__ = true;
 
   const APP = {
     name: '🪽위시 RP Manager',
-    version: '0.17.14',
+    version: '0.17.15',
     dbName: 'RPContextManagerDB',
     dbVersion: 2,
     storeName: 'rooms',
@@ -11428,7 +11441,7 @@ ${dialogueText}`;
   }
   async function semanticLoad(room,refresh=false){
     const runtime=semanticRoom(room);if(runtime.loading)return runtime.loading;if(refresh)runtime.loaded=false;if(runtime.loaded)return;
-    runtime.loading=(async()=>{const db=await semanticOpenDb();const rows=await new Promise((resolve,reject)=>{const tx=db.transaction('vectors','readonly'),request=tx.objectStore('vectors').index('roomId').getAll(String(room.chatId));request.onsuccess=()=>resolve(request.result||[]);request.onerror=()=>reject(request.error);});
+    runtime.loading=(async()=>{const db=await semanticOpenDb();const rows=await new Promise((resolve,reject)=>{const tx=db.transaction('vectors','readonly'),request=tx.objectStore('vectors').index('roomId').getAll(String(room.chatId));request.onsuccess=()=>wishResolveStorageRecord(request,[],resolve,reject);request.onerror=()=>reject(request.error);});
       const docs=new Map(semanticDocuments(room).map(doc=>[doc.id,doc]));for(const row of rows)if(semanticValidRow(row,docs.get(row.documentId)||{}))runtime.rows.set(row.documentId,row);runtime.loaded=true;
     })().finally(()=>{runtime.loading=null;});return runtime.loading;
   }
@@ -13900,7 +13913,7 @@ ${dialogueText}`;
     const room = await new Promise((resolve, reject) => {
       const tx = state.db.transaction(APP.storeName, 'readonly');
       const req = tx.objectStore(APP.storeName).get(chatId);
-      req.onsuccess = () => resolve(req.result || null);
+      req.onsuccess = () => wishResolveStorageRecord(req, null, resolve, reject);
       req.onerror = () => reject(req.error);
     });
 
@@ -14410,7 +14423,10 @@ ${dialogueText}`;
         const tx=state.db.transaction(APP.storeName,'readwrite'),store=tx.objectStore(APP.storeName),get=store.get(room.chatId);
         let abortedForStale=false,validationError=null;
         get.onsuccess=()=>{
-          const stored=get.result;storedForTrace=stored||{};
+          let stored;
+          try { stored=wishLocalStorageRecord(get.result); }
+          catch(error){validationError=error;tx.abort();return;}
+          storedForTrace=stored||{};
           const revision=Number(stored?._rpcmRevision||0);
           let candidate=rpcmRoomClone(room);writtenLocal=rpcmRoomClone(candidate);
           if(stored&&rescueUseful('room',stored)&&!rescueUseful('room',candidate)&&!state.roomSaveBaselines?.has(key)&&writer!=='backup-restore'){staleReason='빈 초기 데이터로 기존 기억을 덮어쓰려는 저장을 차단했습니다.';abortedForStale=true;tx.abort();return;}
@@ -14445,7 +14461,7 @@ ${dialogueText}`;
     return new Promise((resolve, reject) => {
       const tx = state.db.transaction(APP.storeName, 'readonly');
       const req = tx.objectStore(APP.storeName).getAll();
-      req.onsuccess = () => resolve(req.result || []);
+      req.onsuccess = () => wishResolveStorageRecord(req, [], resolve, reject);
       req.onerror = () => reject(req.error);
     });
   }
@@ -14467,7 +14483,7 @@ ${dialogueText}`;
     return new Promise((resolve, reject) => {
       const tx = state.db.transaction(APP.libraryStoreName, 'readonly');
       const req = tx.objectStore(APP.libraryStoreName).get(scopeId);
-      req.onsuccess = () => resolve(req.result || null);
+      req.onsuccess = () => wishResolveStorageRecord(req, null, resolve, reject);
       req.onerror = () => reject(req.error);
     });
   }
@@ -14522,7 +14538,7 @@ ${dialogueText}`;
     return new Promise((resolve, reject) => {
       const tx = state.db.transaction(APP.libraryStoreName, 'readonly');
       const req = tx.objectStore(APP.libraryStoreName).getAll();
-      req.onsuccess = () => resolve(req.result || []);
+      req.onsuccess = () => wishResolveStorageRecord(req, [], resolve, reject);
       req.onerror = () => reject(req.error);
     });
   }
@@ -27075,7 +27091,7 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
     return new Promise((resolve, reject) => {
       const tx = state.db.transaction(APP.storeName, 'readonly');
       const req = tx.objectStore(APP.storeName).get(room.chatId);
-      req.onsuccess = () => resolve(req.result || null);
+      req.onsuccess = () => wishResolveStorageRecord(req, null, resolve, reject);
       req.onerror = () => reject(req.error || new Error('저장본 읽기 실패'));
     });
   }
@@ -34024,7 +34040,7 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
       candidate.updatedAt=nowIso();
       if(!noChange)await stampVerifiedResult(candidate,AI_MEMORY_AREAS[area].manual,'ai-memory',draft);
       const writeStartedAt=nowIso();
-      await new Promise((resolve,reject)=>{const tx=state.db.transaction(APP.storeName,'readwrite'),store=tx.objectStore(APP.storeName),request=store.get(room.chatId);let conflictReason='';request.onsuccess=()=>{try{assertPermission();}catch(error){conflictReason=error.message;tx.abort();return;}const persisted=request.result||null;if(automatic&&(!aiMemoryPolicyMatches(persisted,area,draft)||!aiMemorySameDraft(aiMemoryConfig(persisted).areas[area].draft,draft)||aiMemoryConfig(persisted).areas[area].draft?.stale)){conflictReason='다른 탭에서 자동 반영 설정 또는 초안이 변경됐습니다.';tx.abort();return;}if(JSON.stringify(room)!==prepared.baseSnapshot){conflictReason='현재 화면 데이터가 검토 뒤 다시 바뀌었습니다.';traceRoomWrite(candidate,'ai-memory:'+area,'stale-rejected',room._rpcmRevision,persisted?._rpcmRevision,'',{startedAt:writeStartedAt,before:persisted||{}});tx.abort();return;}if(JSON.stringify(persisted)!==storedSnapshot){const base=JSON.parse(storedSnapshot),sameArea=aiMemoryComparableSnapshot(aiMemoryAreaSnapshot(persisted,area),area)===aiMemoryComparableSnapshot(aiMemoryAreaSnapshot(base,area),area);if(!sameArea){conflictReason='적용하려는 기억 영역이 다른 저장 작업에서 변경됐습니다.';traceRoomWrite(candidate,'ai-memory:'+area,'stale-rejected',room._rpcmRevision,persisted?._rpcmRevision,'',{startedAt:writeStartedAt,before:persisted||{}});tx.abort();return;}const conflicts=[],merged=rpcmThreeWayNode(true,base,true,candidate,true,persisted,'',conflicts).value;if(conflicts.length){conflictReason=`동시에 수정된 항목이 있습니다: ${conflicts.slice(0,4).join(', ')}`;traceRoomWrite(candidate,'ai-memory:'+area,'stale-rejected',room._rpcmRevision,persisted?._rpcmRevision,'',{startedAt:writeStartedAt,before:persisted||{}});tx.abort();return;}rpcmReplaceRoomObject(candidate,merged);traceRoomWrite(candidate,'ai-memory:'+area,'stale-rebased',room._rpcmRevision,persisted?._rpcmRevision,'',{startedAt:writeStartedAt,before:persisted||{},after:candidate});}candidate._rpcmRevision=Number(persisted?._rpcmRevision||0)+1;candidate.updatedAt=nowIso();store.put(candidate);};request.onerror=()=>tx.abort();tx.oncomplete=()=>{traceRoomWrite(candidate,'ai-memory:'+area,'committed',room._rpcmRevision,candidate._rpcmRevision,'',{startedAt:writeStartedAt,before:JSON.parse(storedSnapshot)||{}});resolve();};tx.onabort=()=>reject(new Error(conflictReason||'IndexedDB 저장 실패 · 어느 항목도 적용되지 않았습니다.'));tx.onerror=()=>reject(tx.error||new Error('저장 실패'));});
+      await new Promise((resolve,reject)=>{const tx=state.db.transaction(APP.storeName,'readwrite'),store=tx.objectStore(APP.storeName),request=store.get(room.chatId);let conflictReason='';request.onsuccess=()=>{try{assertPermission();}catch(error){conflictReason=error.message;tx.abort();return;}let persisted;try{persisted=wishLocalStorageRecord(request.result||null);}catch(error){conflictReason='저장본 복사 실패: '+error.message;tx.abort();return;}if(automatic&&(!aiMemoryPolicyMatches(persisted,area,draft)||!aiMemorySameDraft(aiMemoryConfig(persisted).areas[area].draft,draft)||aiMemoryConfig(persisted).areas[area].draft?.stale)){conflictReason='다른 탭에서 자동 반영 설정 또는 초안이 변경됐습니다.';tx.abort();return;}if(JSON.stringify(room)!==prepared.baseSnapshot){conflictReason='현재 화면 데이터가 검토 뒤 다시 바뀌었습니다.';traceRoomWrite(candidate,'ai-memory:'+area,'stale-rejected',room._rpcmRevision,persisted?._rpcmRevision,'',{startedAt:writeStartedAt,before:persisted||{}});tx.abort();return;}if(JSON.stringify(persisted)!==storedSnapshot){const base=JSON.parse(storedSnapshot),sameArea=aiMemoryComparableSnapshot(aiMemoryAreaSnapshot(persisted,area),area)===aiMemoryComparableSnapshot(aiMemoryAreaSnapshot(base,area),area);if(!sameArea){conflictReason='적용하려는 기억 영역이 다른 저장 작업에서 변경됐습니다.';traceRoomWrite(candidate,'ai-memory:'+area,'stale-rejected',room._rpcmRevision,persisted?._rpcmRevision,'',{startedAt:writeStartedAt,before:persisted||{}});tx.abort();return;}const conflicts=[],merged=rpcmThreeWayNode(true,base,true,candidate,true,persisted,'',conflicts).value;if(conflicts.length){conflictReason=`동시에 수정된 항목이 있습니다: ${conflicts.slice(0,4).join(', ')}`;traceRoomWrite(candidate,'ai-memory:'+area,'stale-rejected',room._rpcmRevision,persisted?._rpcmRevision,'',{startedAt:writeStartedAt,before:persisted||{}});tx.abort();return;}rpcmReplaceRoomObject(candidate,merged);traceRoomWrite(candidate,'ai-memory:'+area,'stale-rebased',room._rpcmRevision,persisted?._rpcmRevision,'',{startedAt:writeStartedAt,before:persisted||{},after:candidate});}candidate._rpcmRevision=Number(persisted?._rpcmRevision||0)+1;candidate.updatedAt=nowIso();store.put(candidate);};request.onerror=()=>tx.abort();tx.oncomplete=()=>{traceRoomWrite(candidate,'ai-memory:'+area,'committed',room._rpcmRevision,candidate._rpcmRevision,'',{startedAt:writeStartedAt,before:JSON.parse(storedSnapshot)||{}});resolve();};tx.onabort=()=>reject(new Error(conflictReason||'IndexedDB 저장 실패 · 어느 항목도 적용되지 않았습니다.'));tx.onerror=()=>reject(tx.error||new Error('저장 실패'));});
       const verifiedAi=await readManualStoredRoom(room);
       if(!verifiedAi||aiMemoryAreaSnapshot(verifiedAi,area)!==aiMemoryAreaSnapshot(candidate,area)||aiMemoryConfig(verifiedAi).areas[area].cursor!==draft.endKey)
         throw new Error('AI 결과 저장 후 IndexedDB 재확인에 실패했습니다. 적용 완료로 표시하지 않았습니다.');
@@ -38628,7 +38644,7 @@ A correction requires a supported contradiction, a materially relevant persisten
       try {
         const tx = db.transaction(storeName, 'readonly');
         const req = tx.objectStore(storeName).get(key);
-        req.onsuccess = () => resolve(req.result || null);
+        req.onsuccess = () => wishResolveStorageRecord(req, null, resolve, reject);
         req.onerror = () => reject(req.error || new Error(`${storeName} 읽기 실패`));
       } catch (e) { reject(e); }
     });
@@ -38639,7 +38655,7 @@ A correction requires a supported contradiction, a materially relevant persisten
       try {
         const tx = db.transaction(storeName, 'readonly');
         const req = tx.objectStore(storeName).getAll();
-        req.onsuccess = () => resolve(req.result || []);
+        req.onsuccess = () => wishResolveStorageRecord(req, [], resolve, reject);
         req.onerror = () => reject(req.error || new Error(`${storeName} 읽기 실패`));
       } catch (e) { reject(e); }
     });
@@ -40726,3 +40742,5 @@ A correction requires a supported contradiction, a materially relevant persisten
   }
 })();
 // END integrated response refiner v1.3.9
+
+})(); // shared storage boundary for Manager and integrated refiner
