@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🪽위시 RP Manager
 // @namespace    local.rp.context.manager
-// @version      0.17.16
+// @version      0.17.17
 // @description  장기 RP용 현재상태·날짜로그·연속성 타임라인·캐릭터 설정을 관리하고, 검수형 AI 생성과 필요한 컨텍스트 자동 주입을 지원합니다.
 // @author       User
 // @license      All Rights Reserved
@@ -69,7 +69,7 @@
         const style=document.createElement('style');
         style.textContent=':host{all:initial}section{box-sizing:border-box;width:280px;border:1px solid #d898ba;border-radius:12px;background:#fff4f9;color:#442d3b;padding:12px;font:13px/1.5 system-ui;box-shadow:0 4px 20px #0003}strong,span{display:block}span{white-space:pre-wrap;overflow-wrap:anywhere;margin-top:5px}button{font:inherit;margin-top:8px;padding:5px 9px;border:1px solid #b982a2;border-radius:6px;background:white;color:#442d3b;cursor:pointer}';
         const card=document.createElement('section');
-        card.innerHTML='<strong>WISH 0.17.16 · 실행 상태</strong><span role="status" aria-live="polite"></span><button type="button">닫기</button>';
+        card.innerHTML='<strong>WISH 0.17.17 · 실행 상태</strong><span role="status" aria-live="polite"></span><button type="button">닫기</button>';
         card.querySelector('button').onclick=()=>{dismissed=true;host?.remove();host=null;};
         root.append(style,card);document.documentElement.appendChild(host);
         for(const [key,value] of Object.entries({position:'fixed',right:'16px',top:'112px','z-index':'2147483647',display:'block',visibility:'visible',opacity:'1',width:'280px',height:'auto'}))host.style.setProperty(key,value,'important');
@@ -93,13 +93,13 @@
     wishBoot.status('duplicate', '다른 RP Manager 실행이 감지됐습니다. 버전: '+String(window.__WISH_RP_MANAGER_LOADED__.version||'알 수 없음'));
     return;
   }
-  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.17.16', loadedAt: Date.now() };
+  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.17.17', loadedAt: Date.now() };
   // 같은 페이지에 남아 있는 v0.8.10 복사본이 뒤늦게 시작되는 경우도 차단합니다.
   window.__RP_MANAGER_0810_LOADED__ = true;
 
   const APP = {
     name: '🪽위시 RP Manager',
-    version: '0.17.16',
+    version: '0.17.17',
     dbName: 'RPContextManagerDB',
     dbVersion: 2,
     storeName: 'rooms',
@@ -14409,6 +14409,8 @@ ${dialogueText}`;
   }
 
   async function saveRoom(room,writer='saveRoom',validateBeforeWrite=null) {
+    const resetEpoch=areaResetEpoch(room);
+    if(areaResetRuntime.active&&areaResetPaused(room))throw new Error('영역 초기화 중에는 다른 저장을 보류합니다.');
     if(writer==='saveRoom')writer=String(new Error().stack?.split('\n')[2]?.match(/at ([^ (]+)/)?.[1]||writer);
     const key=String(room.chatId||'');
     state.roomSaveQueues ||= new Map();
@@ -14416,6 +14418,7 @@ ${dialogueText}`;
     const run=previous.catch(()=>{}).then(async()=>{
       const manualCommitLock=manualUpdateRuntime.commitLocks.get(key);
       if(manualCommitLock)await manualCommitLock;
+      if(areaResetEpoch(room)!==resetEpoch)throw new Error('영역 초기화 전에 시작한 저장은 취소했습니다.');
       const stampedEdits=await stampManualExplicitEdits(room);
       let committedRoom=null,writtenLocal=null,storedForTrace=null,staleReason='';
       const priorRevision=Number(room._rpcmRevision||0),priorSnapshot=rpcmRoomClone(room),startedAt=nowIso();
@@ -14813,7 +14816,8 @@ ${dialogueText}`;
   // Crack API
   // ---------------------------------------------------------------------------
 
-  async function apiRequest(method, url, body = undefined) {
+  async function apiRequest(method, url, body = undefined, areaResetToken=null) {
+    if(areaResetRuntime.active&&String(method).toUpperCase()!=='GET'&&areaResetToken!==areaResetRuntime.token)throw new Error('영역 초기화 중에는 다른 서버 변경을 보류합니다.');
     if(String(method).toUpperCase()!=='GET')invalidateAiMemoryHistory();
     let token=getCookie('access_token');
     // 로그인 초기화/갱신 중 잠깐 비어 있는 쿠키만 기다립니다. 인증 정보는 외부로 노출하지 않습니다.
@@ -26378,6 +26382,297 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
     card.querySelector('[data-integrated-create]').onclick=async event=>{const button=event.currentTarget;button.disabled=true;try{await buildIntegratedPacket(room,card.querySelector('select').value);download();renderModalIfOpen();notify('통합 TXT 생성 완료 · 외부 AI 결과를 통합 결과 가져오기에 넣으세요.','success');}catch(error){notify('통합 패킷 생성 불가: '+error.message,'warn',8000);}finally{button.disabled=false;}};
   }
 
+  // Area reset uses a reviewed snapshot and one compare-and-swap transaction.
+  // Native long-term cards live on Crack and require separately verified deletes.
+  const areaResetRuntime = { roomId:'', active:false, epochs:new Map(), token:{} };
+  const AREA_RESET_GROUPS = Object.freeze({
+    currentItems:{label:'현재상태 · 중요 물품',areas:['currentState','importantItems'],description:'현재상태 내용과 중요 물품 전체'},
+    logSummary:{label:'날짜별 로그',areas:['logSummary'],description:'모든 날짜 로그와 로그 타임라인·선택 기록'},
+    personInfo:{label:'인물정보',areas:['personInfo'],description:'인물 관계·지식 카드와 인물 목록'},
+    lore:{label:'자료집',areas:['lore'],description:'모든 자료집 팩과 카드'},
+    timeline:{label:'연속성 타임라인',areas:['timeline'],description:'모든 연속성 카드와 검토·되돌리기 기록'},
+    longTerm:{label:'장기기억',areas:[],description:'크랙 서버의 장기기억 카드 전체(보호 카드 포함)와 매니저 처리 기록'},
+  });
+  function areaResetKeys(keys) {
+    if(!Array.isArray(keys)||!keys.length||keys.some(key=>!Object.hasOwn(AREA_RESET_GROUPS,key)))throw new Error('초기화할 영역을 선택해 주세요.');
+    return [...new Set(keys)];
+  }
+  function areaResetEpoch(room){return areaResetRuntime.epochs.get(String(room.chatId))||0;}
+  function areaResetPaused(room){return areaResetRuntime.roomId===String(room?.chatId||'');}
+  function areaResetAssertIdle(room,own=false) {
+    const key=String(room?.chatId||'');
+    if(state.currentRoom!==room)throw new Error('현재 방이 바뀌었습니다. 초기화 창을 다시 열어 주세요.');
+    if(room.pending)throw new Error('먼저 임시 주입을 복원해 주세요.');
+    if(areaResetRuntime.active&&!own)throw new Error('영역 초기화가 진행 중입니다.');
+    if(aiMemoryRuntime.busy||longTermRuntime.busy||longTermActiveLocks.has(longTermLockKey(room))||state.aiSummaryBusy||fullRebuildRuntime.busy||compressionRuntime.busy||integratedRuntime.busy||manualBatchRuntime.busy||manualUpdateRuntime.commits.has(key)||state.pendingCarrierSyncQueues?.has(key))throw new Error('기억 생성·저장·주입 작업이 끝난 뒤 다시 시도해 주세요.');
+    if(state.autoSaveTimers.has(key)||state.roomSaveQueues?.has(key)||['saving','error'].includes(state.saveStatus))throw new Error('편집 내용의 로컬 저장을 완료한 뒤 다시 시도해 주세요.');
+  }
+  function areaResetCandidate(source,keys) {
+    keys=areaResetKeys(keys);
+    const next=structuredClone(source),selected=new Set(keys),areas=new Set(keys.flatMap(key=>AREA_RESET_GROUPS[key].areas));
+    const clear=(fields)=>{for(const field of fields)delete next[field];};
+    if(selected.has('currentItems')) {
+      next.slots=(next.slots||[]).filter(slot=>slot.group!=='item');
+      for(const slot of next.slots)if(slot.id==='currentState'){slot.content='';slot.enabled=false;}
+      next.allowedDuplicateItemSignatures=[];
+    }
+    if(selected.has('logSummary')) {
+      for(const slot of next.slots||[])if(slot.id==='logSummary'){slot.content='';slot.enabled=false;}
+      for(const field of ['autoLogPinnedKeys','autoLogExcludedKeys','manualLogSelectedKeys','favoriteLogKeys','acceptedUnknownLogKeys','storyLogReviews','recallSelectionHistory'])next[field]=[];
+      next.logTimelines=[DEFAULT_LOG_TIMELINE];next.activeLogTimeline=DEFAULT_LOG_TIMELINE;
+      next.autoLogRecallEnabled=false;
+      clear(['_logBudgetInfo']);
+    }
+    if(selected.has('personInfo')) {
+      for(const field of ['knowledgeCards','personStateRecords','personUiActors','personDeletedNames','personHiddenActors'])next[field]=[];
+      next.knowledgeInjectionEnabled=false;next.personStateInjectionEnabled=false;
+      clear(['personLastImportSummary']);
+    }
+    if(selected.has('lore')) {next.lorePacks=[];clear(['loreBackups','_loreBudgetInfo']);}
+    if(selected.has('timeline')) {
+      next.storyTimelineCards=[];
+      next.storyTimelineLastReviewedMessageId='';next.storyTimelineLastReviewedAt='';
+      next.storyTimelineUnreviewedTurnCount=0;
+      for(const field of ['storyTimelineCarryoverTurnKeys','storyTimelineLastDiff','storyTimelineApiHistory','storyTimelineAuditHistory'])next[field]=[];
+      for(const field of ['storyTimelinePendingReview','storyTimelineBackup','storyTimelineApiDraft','storyTimelineManualRun'])next[field]=null;
+      clear(['storyTimelineCountCheckedAt','storyTimelineAnchorRecoveredAt']);
+    }
+    if(selected.has('longTerm')) {
+      const old=next.longTermMemory||{};
+      next.longTermMemory={guides:structuredClone(old.guides||{})};
+      longTermState(next); // Defaults disable automatic generation and application.
+    }
+    for(const task of keys.filter(key=>key!=='longTerm')) {
+      for(const field of ['manualUpdateCheckpoints','manualPendingJobs','manualApplyReceipts','manualResultEditReceipts','manualFullBuilds','manualFullBuildCompleted'])if(next[field])delete next[field][task];
+    }
+    if(next.aiMemoryAutomation&&areas.size) {
+      const config=next.aiMemoryAutomation;
+      for(const area of areas) {
+        const old=config.areas?.[area]||{};
+        config.areas||={};
+        config.areas[area]={enabled:false,autoApply:false,interval:old.interval||AI_MEMORY_AREAS[area].interval,applyRevision:Number(old.applyRevision||0)+1,cursor:'',baseline:'',appliedAt:'',error:'',failedEnd:'',lastAttemptKey:'',draft:null,status:'초기화됨 · 자동 꺼짐'};
+      }
+      config.undo=(config.undo||[]).filter(entry=>!areas.has(entry.area));
+      config.enabled=config.enabled===true&&Object.values(config.areas||{}).some(row=>row.enabled);
+    }
+    for(const area of areas)if(next.aiMemorySourceAnchors)delete next.aiMemorySourceAnchors[area];
+    // Legacy summary jobs/undo contain both state and log snapshots. Cancel the
+    // mixed job rather than allow its old half to resurrect a cleared area.
+    if(selected.has('currentItems')||selected.has('logSummary')) {
+      clear(['aiSummaryDraft','aiSummaryUndo']);
+      next.aiSummaryLastAppliedTurnKeys||={};next.aiSummaryLastAppliedAts||={};
+      for(const area of ['currentState','logSummary'])if(!areas.has(area)) {
+        next.aiSummaryLastAppliedTurnKeys[area] ||= String(next.aiSummaryLastAppliedTurnKey||'');
+        next.aiSummaryLastAppliedAts[area] ||= String(next.aiSummaryLastAppliedAt||'');
+      }
+      for(const area of ['currentState','logSummary'].filter(area=>areas.has(area))) {
+        if(next.aiSummaryLastAppliedTurnKeys)delete next.aiSummaryLastAppliedTurnKeys[area];
+        if(next.aiSummaryLastAppliedAts)delete next.aiSummaryLastAppliedAts[area];
+      }
+      // The unscoped cursor is a legacy fallback; keep per-area cursors intact.
+      next.aiSummaryLastAppliedTurnKey='';next.aiSummaryLastAppliedAt='';
+      if(Array.isArray(next.aiSummaryHistory))next.aiSummaryHistory=next.aiSummaryHistory.map(entry=>{
+        const row={...entry};
+        if(areas.has('currentState')){row.currentState='';row.baseCurrentState='';}
+        if(areas.has('logSummary'))row.logSummary='';
+        return row;
+      }).filter(row=>String(row.currentState||'')||String(row.logSummary||''));
+    }
+    if(areas.size) {
+      if(Array.isArray(next.aiReviewInbox))next.aiReviewInbox=next.aiReviewInbox.filter(item=>!areas.has(aiReviewTarget(item))&&!selected.has(aiReviewTarget(item))&&!(selected.has('currentItems')&&item.taskType==='importantItemFolder'));
+      // These bundles span multiple areas and must be rebuilt against new data.
+      clear(['manualIntegratedJob','fullRebuildJob','compressionJob']);
+    }
+    next.autoRecallContextText='';
+    return next;
+  }
+  function areaResetCount(room,key,inventory=null) {
+    if(key==='currentItems')return `현재상태 ${(room.slots||[]).find(slot=>slot.id==='currentState')?.content?.length||0}자 · 물품 ${(room.slots||[]).filter(slot=>slot.group==='item').length}개`;
+    if(key==='logSummary')return `로그 ${(room.slots||[]).find(slot=>slot.id==='logSummary')?.content?.length||0}자 · 타임라인 ${(room.logTimelines||[]).length}개`;
+    if(key==='personInfo')return `관계 ${(room.personStateRecords||[]).length}개 · 지식 ${(room.knowledgeCards||[]).length}개`;
+    if(key==='lore')return `팩 ${(room.lorePacks||[]).length}개 · 카드 ${(room.lorePacks||[]).reduce((sum,pack)=>sum+(pack.cards||[]).length,0)}개`;
+    if(key==='timeline')return `카드 ${(room.storyTimelineCards||[]).length}개`;
+    return inventory?`서버 카드 ${inventory.length}개 · 보호 카드 포함`:'서버 카드 수는 미리보기에서 조회';
+  }
+  function areaResetBackup(room,keys,inventory) {
+    return {_rpContextManagerBackup:true,version:APP.version,exportedAt:nowIso(),backupMode:'before-area-reset',areas:areaResetKeys(keys),rooms:[structuredClone(room)],characterLibraries:[],longTermCards:inventory==null?null:structuredClone(inventory),longTermRestoreText:inventory?.map(item=>`[${String(item.title||'')}]\n${String(item.summary||'')}`).join('\n\n')||'',note:'rooms는 매니저 백업 불러오기로 복원합니다. longTermCards는 크랙 서버 카드 보관본이며 자동 복원되지 않습니다. longTermRestoreText를 장기기억 일괄 편집에 신규 카드로 넣어 검토 후 저장할 수 있습니다.'};
+  }
+  function areaResetValidateInventory(inventory) {
+    if(!Array.isArray(inventory))throw new Error('서버 장기기억 목록을 확인할 수 없습니다.');
+    const ids=inventory.map(longTermId);
+    if(ids.some(id=>!id)||new Set(ids).size!==ids.length)throw new Error('장기기억 카드 ID가 없거나 중복됩니다. 삭제하지 않았습니다.');
+  }
+  async function areaResetWrite(room,preview,build) {
+    const snapshot=preview.storedSnapshot,base=preview.baseSnapshot;
+    let candidate;
+    await new Promise((resolve,reject)=>{
+      const tx=state.db.transaction(APP.storeName,'readwrite'),store=tx.objectStore(APP.storeName),request=store.get(room.chatId);
+      let reason='초기화 저장이 취소됐습니다.';
+      request.onsuccess=()=>{
+        try {
+          const stored=wishLocalStorageRecord(request.result);
+          if(state.currentRoom!==room||JSON.stringify(room)!==base||JSON.stringify(stored)!==snapshot)throw new Error('미리보기 이후 방 데이터가 바뀌었습니다. 내용을 다시 확인해 주세요.');
+          candidate=build(stored);
+          candidate._rpcmRevision=Number(stored._rpcmRevision||0)+1;candidate.updatedAt=nowIso();
+          store.put(candidate);
+        }catch(error){reason=error.message;tx.abort();}
+      };
+      request.onerror=()=>tx.abort();tx.oncomplete=resolve;
+      tx.onabort=()=>reject(new Error(reason));tx.onerror=()=>reject(tx.error||new Error(reason));
+    });
+    // Always reconcile the live room once the write committed, including the
+    // readback-failure path, so a later autosave cannot restore the old contents.
+    rpcmReplaceRoomObject(room,candidate);rpcmRememberRoomBaseline(candidate);
+    areaResetRuntime.epochs.set(String(room.chatId),areaResetEpoch(room)+1);
+    const stored=await readManualStoredRoom(room);
+    if(JSON.stringify(stored)!==JSON.stringify(candidate))throw new Error('초기화 저장 후 확인에 실패했습니다. 다시 열어 현재 데이터를 확인해 주세요.');
+    return candidate;
+  }
+  async function areaResetCommitLocal(room,preview) {
+    const snapshot=preview.storedSnapshot,keys=areaResetKeys(preview.keys);
+    await areaResetWrite(room,preview,stored=>areaResetCandidate(stored,keys));
+    const key=String(room.chatId);
+    for(const task of keys.filter(key=>key!=='longTerm')) {
+      manualUpdateRuntime.packets.delete(manualPacketKey(room,task));
+      manualUpdateRuntime.carrierStatuses.delete(manualPacketKey(room,task));
+      manualExplicitEdits.get(key)?.delete(task);
+    }
+    manualUpdateRuntime.counts.delete(key);aiMemoryRuntime.lastCounts.delete(key);aiMemoryRuntime.lastPoll.delete(key);
+    invalidateAiMemoryHistory();
+    if(keys.includes('longTerm')){longTermRuntime.inventory=[];longTermRuntime.selected.clear();longTermRuntime.externalText='';longTermRuntime.draftView='';longTermRuntime.lastError='';}
+    if(keys.includes('personInfo')){state.personCoreSelectedActor='';state.personCoreRailRoomId='';}
+    if(keys.some(key=>key!=='longTerm')) {
+      const previous=JSON.parse(snapshot);
+      integratedRuntime.importDrafts.delete(previous.manualIntegratedJob?.jobId);
+      fullRebuildRuntime.files.delete(previous.fullRebuildJob?.jobId);
+      compressionRuntime.files.delete(previous.compressionJob?.jobId);
+    }
+    queueSemanticIndexRefresh(room,'area-reset');
+    traceRoomWrite(room,'area-reset:'+keys.join(','),'readback-verified',JSON.parse(snapshot)._rpcmRevision,room._rpcmRevision,'',{before:JSON.parse(snapshot),after:room});
+    state.lastSavedAt=Date.now();updateSaveStatusUi('saved');
+  }
+  async function areaResetExecute(room,preview,onProgress=()=>{}) {
+    areaResetAssertIdle(room);
+    if(!preview.backupReady)throw new Error('먼저 초기화 전 백업을 받아 주세요.');
+    if(JSON.stringify(room)!==preview.baseSnapshot||JSON.stringify(await readManualStoredRoom(room))!==preview.storedSnapshot)throw new Error('미리보기 이후 데이터가 바뀌었습니다. 다시 확인해 주세요.');
+    areaResetAssertIdle(room);
+    areaResetRuntime.active=true;
+    const key=String(room.chatId);let release;
+    manualUpdateRuntime.commits.add(key);
+    manualUpdateRuntime.commitLocks.set(key,new Promise(resolve=>release=resolve));
+    const run=async()=>{
+      if(preview.keys.includes('longTerm')) {
+        areaResetValidateInventory(preview.inventory);
+        let inventory=await longTermFetch(room,{passive:true});
+        if(longTermInventoryHash(inventory)!==longTermInventoryHash(preview.inventory))throw new Error('서버 장기기억이 미리보기 이후 바뀌었습니다. 새로 확인해 주세요.');
+        // Persist the pause before the first remote delete. On partial failure,
+        // reopening the page must not resume an old automatic apply plan.
+        const paused=await areaResetWrite(room,preview,stored=>{
+          const next=structuredClone(stored);next.longTermMemory||={};next.longTermMemory.nativeAuto||={};
+          next.longTermMemory.nativeAuto.enabled=false;next.longTermMemory.nativeAuto.autoApply=false;
+          next.longTermMemory.nativeAuto.modeRevision=Number(next.longTermMemory.nativeAuto.modeRevision||0)+1;
+          return next;
+        });
+        preview.baseSnapshot=JSON.stringify(room);preview.storedSnapshot=JSON.stringify(paused);
+        let deleted=0;
+        for(const item of preview.inventory) {
+          if(state.currentRoom!==room||JSON.stringify(room)!==preview.baseSnapshot||JSON.stringify(await readManualStoredRoom(room))!==preview.storedSnapshot)throw new Error('삭제 도중 방 데이터가 바뀌었습니다. 남은 카드는 삭제하지 않았습니다.');
+          const remaining=preview.inventory.slice(deleted);
+          inventory=await longTermFetch(room,{passive:true});
+          if(longTermInventoryHash(inventory)!==longTermInventoryHash(remaining))throw new Error('삭제 도중 서버 카드가 바뀌었습니다. 남은 카드는 삭제하지 않았습니다.');
+          const id=longTermId(item);if(!id)throw new Error('ID 없는 서버 카드는 삭제할 수 없습니다.');
+          onProgress(`장기기억 삭제 ${deleted+1}/${preview.inventory.length}`);
+          await longTermDelete(room,id,areaResetRuntime.token);deleted++;
+        }
+        inventory=await longTermFetch(room,{passive:true});
+        if(inventory.length)throw new Error('서버에 남은 장기기억 카드가 있습니다. 로컬 처리 기록은 초기화하지 않았습니다.');
+      }
+      onProgress('선택 영역 저장·확인 중…');
+      await areaResetCommitLocal(room,preview);
+    };
+    try {
+      if(preview.keys.includes('longTerm'))await longTermWithLock(room,'area-reset',run);else await run();
+    }catch(error){
+      if(preview.keys.includes('longTerm'))error.message+=' 서버 삭제는 일부 진행됐을 수 있습니다. 백업과 현재 카드 목록을 확인해 주세요. 삭제를 시작한 경우 장기기억 자동 정리는 꺼진 상태로 유지됩니다.';
+      throw error;
+    }finally{manualUpdateRuntime.commits.delete(key);manualUpdateRuntime.commitLocks.delete(key);release?.();areaResetRuntime.active=false;}
+  }
+  async function openAreaResetDialog(room) {
+    if(document.getElementById('rpcm-area-reset-dialog'))return;
+    areaResetAssertIdle(room);
+    const box=document.createElement('div');box.id='rpcm-area-reset-dialog';
+    box.style.cssText='position:fixed;inset:0;z-index:2147483647;background:#0009;display:grid;place-items:center;padding:16px;color:#20202a;font:14px/1.6 sans-serif;';
+    box.innerHTML=`<section role="dialog" aria-modal="true" aria-labelledby="rpcm-area-reset-title" style="background:#fff;border-radius:16px;padding:24px;width:min(620px,100%);max-height:85vh;overflow:auto;box-sizing:border-box"><h2 id="rpcm-area-reset-title" style="margin-top:0">현재 방 · 영역별 초기화</h2><p>지울 영역만 선택하세요. 캐릭터 설정·기타/OOC·사용자 확정 메모·지침·API 설정과 선택하지 않은 영역의 내용은 유지합니다.</p><div data-area-choices>${Object.entries(AREA_RESET_GROUPS).map(([key,meta])=>`<label style="display:block;padding:10px 0;border-bottom:1px solid #ddd"><input type="checkbox" value="${key}"> <strong>${esc(meta.label)}</strong><span style="display:block;margin-left:24px">${esc(meta.description)}<br><small>${esc(areaResetCount(room,key))}</small></span></label>`).join('')}</div><div data-area-review hidden></div><p data-area-status role="status" style="white-space:pre-wrap"></p><div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" data-area-close>취소</button><button type="button" data-area-preview>선택 내용 확인</button><button type="button" data-area-back hidden>다시 선택</button><button type="button" data-area-backup hidden>초기화 전 백업 받기</button><button type="button" data-area-apply hidden disabled style="color:#b42318">선택 영역 초기화</button></div></section>`;
+    document.body.appendChild(box);areaResetRuntime.roomId=String(room.chatId);
+    const by=selector=>box.querySelector(selector),status=by('[data-area-status]');let preview=null,busy=false;
+    const previousBackup=document.createElement('button');previousBackup.type='button';previousBackup.textContent='이전 초기화 전 백업 다시 받기';previousBackup.hidden=true;
+    by('[data-area-close]').parentElement.appendChild(previousBackup);
+    void (async()=>{try{const value=await GM_getValue(rescueKey('area-reset-backup',String(room.chatId)),null);if(value&&box.isConnected)previousBackup.hidden=false;}catch(_){}})();
+    previousBackup.onclick=async()=>{
+      try {
+        const raw=await GM_getValue(rescueKey('area-reset-backup',String(room.chatId)),null),payload=JSON.parse(raw||'null');
+        if(!payload?._rpContextManagerBackup||payload.rooms?.[0]?.chatId!==room.chatId)throw new Error('보관된 백업을 찾을 수 없습니다.');
+        downloadText(JSON.stringify(payload,null,2),'WISH_영역초기화전_보관백업.json');
+      }catch(error){status.textContent=error.message;}
+    };
+    box.querySelectorAll('button').forEach(button=>button.style.cssText='padding:9px 12px;border:1px solid #bbb;border-radius:8px;background:#f4f1f8;color:#272334;font:inherit;cursor:pointer;');
+    by('[data-area-apply]').style.color='#b42318';
+    const buttons=()=>box.querySelectorAll('button');
+    const close=()=>{if(busy)return;box.remove();areaResetRuntime.roomId='';renderModalIfOpen();};
+    by('[data-area-close]').onclick=close;
+    box.onkeydown=event=>{
+      if(event.key==='Escape'){event.preventDefault();event.stopPropagation();close();}
+      if(event.key==='Tab'){const focusable=[...box.querySelectorAll('button,input')].filter(el=>!el.disabled&&!el.hidden&&!el.closest('[hidden]'));const first=focusable[0],last=focusable.at(-1);if(event.shiftKey&&document.activeElement===first){event.preventDefault();last?.focus();}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first?.focus();}}
+    };
+    const back=()=>{
+      preview=null;by('[data-area-choices]').hidden=false;by('[data-area-review]').hidden=true;
+      for(const name of ['back','backup','apply'])by(`[data-area-${name}]`).hidden=true;
+      by('[data-area-preview]').hidden=false;by('[data-area-apply]').disabled=true;status.textContent='';
+    };
+    by('[data-area-back]').onclick=back;
+    by('[data-area-preview]').onclick=async()=>{
+      try {
+        areaResetAssertIdle(room);busy=true;buttons().forEach(button=>button.disabled=true);
+        const keys=areaResetKeys([...box.querySelectorAll('input:checked')].map(el=>el.value));
+        const baseSnapshot=JSON.stringify(room),stored=await readManualStoredRoom(room);
+        if(!stored||JSON.stringify(room)!==baseSnapshot||JSON.stringify(stored)!==baseSnapshot)throw new Error('저장본과 화면이 달라졌습니다. 창을 닫고 최신 데이터를 다시 열어 주세요.');
+        status.textContent=keys.includes('longTerm')?'크랙 서버 장기기억 조회 중…':'초기화 내용 확인 중…';
+        const inventory=keys.includes('longTerm')?await longTermFetch(room,{passive:true}):null;
+        if(inventory)areaResetValidateInventory(inventory);
+        areaResetAssertIdle(room);
+        if(JSON.stringify(room)!==baseSnapshot)throw new Error('조회 중 데이터가 바뀌었습니다. 다시 확인해 주세요.');
+        preview={keys,inventory,baseSnapshot,storedSnapshot:JSON.stringify(stored),backupReady:false};
+        by('[data-area-review]').innerHTML=`<h3>초기화할 영역 ${keys.length}개</h3><ul>${keys.map(key=>`<li><strong>${esc(AREA_RESET_GROUPS[key].label)}</strong> · ${esc(areaResetCount(stored,key,inventory))}</li>`).join('')}</ul><p>선택한 영역의 기준점·대기 초안·자동 처리 기록·되돌리기 기록도 지웁니다. 자동 업데이트는 꺼집니다. 다시 켜면 처음 범위부터 시작하므로 필요하면 시작점을 지정하세요.</p>${keys.some(key=>key!=='longTerm')?'<p>여러 영역을 묶은 수동 일괄 작업·재구축·압축 대기는 취소됩니다. 다른 영역에 저장된 내용과 개별 작업은 유지됩니다.</p>':''}${keys.includes('longTerm')?'<p style="color:#b42318">장기기억은 크랙 서버의 보호 카드를 포함한 전체 카드가 삭제됩니다. 같은 채팅의 분기는 서버 장기기억을 공유할 수 있습니다. 서버 삭제는 즉시 되돌릴 수 없으며, 중간에 실패하면 일부 카드만 삭제될 수 있습니다.</p>':''}<p>먼저 백업을 받은 뒤 아래 초기화 버튼을 누르세요.</p>`;
+        by('[data-area-choices]').hidden=true;by('[data-area-review]').hidden=false;by('[data-area-preview]').hidden=true;
+        for(const name of ['back','backup','apply'])by(`[data-area-${name}]`).hidden=false;
+        status.textContent='확인 전에는 삭제하지 않습니다.';
+      }catch(error){status.textContent=error.message;preview=null;}
+      finally{busy=false;buttons().forEach(button=>button.disabled=false);by('[data-area-apply]').disabled=!preview?.backupReady;}
+    };
+    by('[data-area-backup]').onclick=async()=>{
+      if(!preview||busy)return;busy=true;buttons().forEach(button=>button.disabled=true);
+      try {
+        const payload=areaResetBackup(JSON.parse(preview.storedSnapshot),preview.keys,preview.inventory),serialized=JSON.stringify(payload);
+        const backupKey=rescueKey('area-reset-backup',String(room.chatId));
+        await GM_setValue(backupKey,serialized);
+        if(await GM_getValue(backupKey,null)!==serialized)throw new Error('초기화 전 백업 보관 확인에 실패했습니다.');
+        downloadText(JSON.stringify(payload,null,2),`WISH_영역초기화전_${new Date().toISOString().replace(/[:.]/g,'-')}.json`);
+        preview.backupReady=true;status.textContent='백업을 별도로 보관했습니다. 파일 다운로드도 확인한 뒤 초기화하세요.';
+      }catch(error){preview.backupReady=false;status.textContent='백업 실패: '+error.message;}
+      finally{busy=false;buttons().forEach(button=>button.disabled=false);by('[data-area-apply]').disabled=!preview?.backupReady;}
+    };
+    by('[data-area-apply]').onclick=async()=>{
+      if(!preview||busy)return;
+      if(!confirm(`${preview.keys.map(key=>AREA_RESET_GROUPS[key].label).join(', ')} 영역을 초기화할까요?${preview.keys.includes('longTerm')?' 크랙 서버 장기기억도 삭제됩니다.':''}`))return;
+      busy=true;buttons().forEach(button=>button.disabled=true);
+      try{await areaResetExecute(room,preview,text=>status.textContent=text);status.textContent='선택 영역 초기화 완료';notify('선택 영역 초기화 완료','success');busy=false;close();}
+      catch(error){status.textContent=error.message;preview=null;by('[data-area-back]').hidden=false;}
+      finally{busy=false;buttons().forEach(button=>button.disabled=false);by('[data-area-apply]').disabled=true;}
+    };
+    by('[data-area-close]').focus();
+  }
+
+
   function renderManualUpdateCenterHtml(room) {
     manualRestoreDrafts(room);
     return `<section class="rpcm-update-center" id="rpcm-section-update" aria-label="수동 업데이트 센터">
@@ -29177,7 +29472,7 @@ RP 원문과 사용자 확정 메모를 사실 근거로 삼는다. Crack의 미
     const external=longTermReadLock(`${LONG_TERM_REFERENCE_LOCK_PREFIX}${apiChatIdOf(room)}`);
     if(external&&Number(external.expiresAt)>Date.now())throw new Error('다른 장기기억 자동 정리 확장프로그램이 작업 중입니다.');
   }
-  async function longTermFetch(room) {
+  async function longTermFetch(room,options={}) {
     const all = [], seen = new Set(); let cursor = '';
     for (;;) {
       const url = `${longTermApiBase(room)}/summaries?limit=20&type=longTerm&orderBy=newest&filter=all${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
@@ -29191,8 +29486,8 @@ RP 원문과 사용자 확정 메모를 사실 근거로 삼는다. Crack의 미
       seen.add(next); cursor = next;
     }
     if (state.currentRoom !== room) throw new Error('장기기억 조회 중 방이 바뀌었습니다.');
-    if(longTermNativeDisplay.dialog&&longTermNativeDisplay.roomId===String(room.chatId)){longTermNativeDisplay.inventory=all;queueMicrotask(()=>longTermDecorateNativeCards(room,longTermNativeDisplay.dialog,all));}
-    rpcmNewBadgeInventory(room,all);return all;
+    if(!options.passive&&longTermNativeDisplay.dialog&&longTermNativeDisplay.roomId===String(room.chatId)){longTermNativeDisplay.inventory=all;queueMicrotask(()=>longTermDecorateNativeCards(room,longTermNativeDisplay.dialog,all));}
+    if(!options.passive)rpcmNewBadgeInventory(room,all);return all;
   }
   async function longTermPost(room, card) {
     longTermAssertMutationLock(room);
@@ -29202,9 +29497,9 @@ RP 원문과 사용자 확정 메모를 사실 근거로 삼는다. Crack의 미
     longTermAssertMutationLock(room);
     return apiRequest('PATCH', `${longTermApiBase(room)}/summaries/${encodeURIComponent(id)}`, { title:card.title, summary:card.summary });
   }
-  async function longTermDelete(room, id) {
+  async function longTermDelete(room, id, areaResetToken=null) {
     longTermAssertMutationLock(room);
-    return apiRequest('DELETE', `${longTermApiBase(room)}/summaries/${encodeURIComponent(id)}`);
+    return apiRequest('DELETE', `${longTermApiBase(room)}/summaries/${encodeURIComponent(id)}`,undefined,areaResetToken);
   }
   async function longTermHash(value) {
     const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(value)));
@@ -30095,6 +30390,7 @@ RP 원문과 사용자 확정 메모를 사실 근거로 삼는다. Crack의 미
     });
   }
   async function longTermPoll(room,force=false) {
+    if(areaResetPaused(room))return;
     if(!room||state.currentRoom!==room||document.hidden||longTermRuntime.busy)return;
     const meta=longTermState(room),now=Date.now();
     if(!meta.nativeAuto.enabled)return;
@@ -31819,7 +32115,7 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
       const sections = [
         ['주입 확인', '현재 주입 후보와 원문을 확인합니다.', ['rpcm-preview-btn', 'rpcm-save']],
         ['자료 이동', '현재 방 복사본을 만들거나 전체 데이터를 백업하고 복원합니다.', ['rpcm-room-transfer-backup', 'rpcm-backup', 'rpcm-import', 'rpcm-storage-recovery']],
-        ['초기화', '현재 방의 RP 매니저 데이터만 초기화합니다.', ['rpcm-reset']],
+        ['초기화', '선택한 영역의 내용·기준점·대기 초안을 함께 초기화할 수 있습니다.', ['rpcm-reset-area', 'rpcm-reset']],
       ];
       for (const [title, description, buttonIds] of sections) {
         const card = document.createElement('section');
@@ -33764,6 +34060,7 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
   }
 
   async function aiMemoryGenerate(room,area,options={}) {
+    if(areaResetPaused(room))throw new Error('영역 초기화 창을 닫은 뒤 다시 시도해 주세요.');
     if(!AI_MEMORY_AREAS[area])throw new Error('알 수 없는 기억 항목입니다.');
     if(aiMemoryRuntime.busy)throw new Error('다른 AI 기억 작업이 진행 중입니다.');
     if(state.currentRoom!==room)throw new Error('방이 바뀌었습니다.');
@@ -33838,6 +34135,7 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
     finally{aiMemoryRuntime.busy=false;aiMemoryRuntime.roomId='';}
   }
   async function aiMemoryPoll(room,force=false) {
+    if(areaResetPaused(room))return;
     const config=aiMemoryConfig(room);
     if(state.currentRoom!==room||aiMemoryRuntime.busy||document.hidden)return;
     const id=String(room.chatId),last=aiMemoryRuntime.lastPoll.get(id)||0;
@@ -33847,14 +34145,14 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
     if(!aiMemoryConfig(room).enabled||!enabled.length){aiMemoryRefreshStatusUi(room);return;}
     try{
       const turns=await aiMemoryPlanningTurns(room,force),counts={...(aiMemoryRuntime.lastCounts.get(id)||{}),lastKey:String(turns.at(-1)?.key||'')};
-      if(state.currentRoom!==room||!aiMemoryConfig(room).enabled)return;
+      if(areaResetPaused(room)||state.currentRoom!==room||!aiMemoryConfig(room).enabled)return;
       for(const area of enabled){const row=aiMemoryConfig(room).areas[area];if(!row.enabled)continue;try{counts[area]=aiMemoryPending(room,area,turns).count;aiMemoryClearRangeError(row);}catch(error){counts[area]=null;row.error=error.message;}}
       counts.ready=Object.fromEntries(enabled.map(area=>{try{return [area,aiMemoryReadyCount(room,area,turns)];}catch(_){return [area,null];}}));
       aiMemoryRuntime.lastCounts.set(id,counts);
       aiMemoryRefreshStatusUi(room);
       if(!aiMemoryConfig(room).enabled||!enabled.length)return;
       for(const area of enabled){
-        if(state.currentRoom!==room||!aiMemoryConfig(room).enabled)break;
+        if(areaResetPaused(room)||state.currentRoom!==room||!aiMemoryConfig(room).enabled)break;
         const row=aiMemoryConfig(room).areas[area];if(!row.enabled)continue;
         if(aiMemoryManualWaiting(room,area)){row.status='수동 결과 대기 · 자동 일시정지';continue;}
         if(row.draft){const applied=await aiMemoryTryAutoApply(room,area,row.draft);if(applied)break;continue;}
@@ -34023,13 +34321,14 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
       &&draft.globalApplyRevision===config.applyRevision
       &&draft.connectionStamp===JSON.stringify(aiFeatureSettings(loadAiSummarySettings(),area==='timeline'?'timeline':'summary'));
   }
-  function aiMemoryAutoPermission(room,area,draft) {return state.currentRoom===room&&aiMemoryPolicyMatches(room,area,draft); }
+  function aiMemoryAutoPermission(room,area,draft) {return !areaResetPaused(room)&&state.currentRoom===room&&aiMemoryPolicyMatches(room,area,draft); }
   function aiMemoryEditingNow() {
     const active=document.activeElement;
-    return !!document.querySelector('#rpcm-ai-memory-backdrop,#rpcm-update-dialog-backdrop,#rpcm-full-rebuild-dialog,#rpcm-compression-backdrop,#rpcm-lore-dialog-backdrop,#wish-rpcore-refiner-confirm,.rpcm-ltm-backdrop')
+    return !!document.querySelector('#rpcm-area-reset-dialog,#rpcm-ai-memory-backdrop,#rpcm-update-dialog-backdrop,#rpcm-full-rebuild-dialog,#rpcm-compression-backdrop,#rpcm-lore-dialog-backdrop,#wish-rpcore-refiner-confirm,.rpcm-ltm-backdrop')
       ||!!(state.modal?.contains(active)&&active?.matches('textarea,input:not([type=checkbox]):not([type=button]),[contenteditable=true]'));
   }
   async function aiMemoryCommitDraft(room,area,draft,prepared,automatic=false) {
+    if(areaResetPaused(room))throw new Error('영역 초기화 창을 닫은 뒤 다시 시도해 주세요.');
     const row=aiMemoryConfig(room).areas[area],roomKey=String(room.chatId);
     const noChange=draft.noChange===true&&aiMemoryIsNoChange(room,area,prepared);
     let storedSnapshot='',releaseAiCommit=null;
@@ -34619,7 +34918,8 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
               <button class="rpcm-mini" id="rpcm-backup">전체 백업 JSON</button>
               <button class="rpcm-mini" id="rpcm-storage-recovery">저장소 점검·복구</button>
               <button class="rpcm-mini" id="rpcm-import">백업 불러오기</button>
-              <button class="rpcm-mini" id="rpcm-reset">현재 RP 데이터 초기화</button>
+              <button class="rpcm-mini" id="rpcm-reset-area">영역별 초기화</button>
+              <button class="rpcm-mini" id="rpcm-reset">현재 RP 데이터 전체 초기화</button>
               <input id="rpcm-import-file" type="file" accept=".json" style="display:none">
               <div class="rpcm-shortcuts">단축키 · Ctrl+Shift+F 통합 검색 · Ctrl+Enter 주입 시작 · 독립 편집창 Esc 닫기</div>
             </div>
@@ -36934,6 +37234,14 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
     };
 
     overlay.querySelector('#rpcm-footer-preview').onclick = () => overlay.querySelector('#rpcm-preview-btn')?.click();
+
+    overlay.querySelector('#rpcm-reset-area').onclick = async () => {
+      try {
+        areaResetAssertIdle(room);
+        readModalIntoRoom();await saveRoom(room,'before-area-reset');
+        await openAreaResetDialog(room);
+      }catch(error){notify(error.message,'error',7000);}
+    };
 
     overlay.querySelector('#rpcm-reset').onclick = async () => {
       if (room.pending) { notify('먼저 임시 주입을 복원해 주세요.', 'warn'); return; }
