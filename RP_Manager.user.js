@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🪽위시 RP Manager
 // @namespace    local.rp.context.manager
-// @version      0.17.15.1
+// @version      0.17.16
 // @description  장기 RP용 현재상태·날짜로그·연속성 타임라인·캐릭터 설정을 관리하고, 검수형 AI 생성과 필요한 컨텍스트 자동 주입을 지원합니다.
 // @author       User
 // @license      All Rights Reserved
@@ -46,30 +46,6 @@
 // records in the userscript before normalization or edits; never clone DB handles.
 (function () {
   'use strict';
-  // Shared only by read transports; a Google AI endpoint or a mutation never enters this helper.
-  function wishCrackReadAlternate(url) {
-    const contents='https://contents-api.wrtn.ai/character-chat/v3/chats/',crack='https://crack-api.wrtn.ai/crack-gen/v3/chats/';
-    const value=String(url||'');
-    for(const [from,to] of [[contents,crack],[crack,contents]])if(value.startsWith(from)&&/^[^/?]+\/messages(?:\/[^/?]+)?(?:\?|$)/.test(value.slice(from.length)))return to+value.slice(from.length);
-    return '';
-  }
-  function wishCrackReadRetryable(error) {
-    if(['RPCM_USER_ABORT','RPCM_HISTORY_STALE','WISH_USER_ABORT','CRACK_AUTH_REQUIRED'].includes(String(error?.code||'')))return false;
-    const status=Number(error?.rpcmStatus||error?.httpStatus||error?.status||0)||Number(/(?:API 오류\s*|HTTP\s*)(\d{3})/i.exec(String(error?.message||''))?.[1]||0);
-    if(status)return [404,405,408].includes(status)||status>=500&&status<600;
-    return ['CRACK_NETWORK','CRACK_TIMEOUT'].includes(String(error?.code||''))||error?.name==='TypeError'||error?.name==='AbortError'||/(?:네트워크 오류|네트워크 요청.*실패|요청 시간 초과|Failed to fetch|NetworkError)/i.test(String(error?.message||''));
-  }
-  async function wishCrackReadFallback(url,read,{check=()=>{},locked=false,onSwitch=()=>{}}={}) {
-    check();
-    try { const result=await read(url);check();return result; }
-    catch(error) {
-      check();const alternate=wishCrackReadAlternate(url);
-      if(locked||!alternate||!wishCrackReadRetryable(error))throw error;
-      onSwitch(alternate);check();
-      const result=await read(alternate);check();return result;
-    }
-  }
-
   function wishLocalStorageRecord(value) {
     if (value === null || typeof value !== 'object') return value;
     return structuredClone(value);
@@ -93,7 +69,7 @@
         const style=document.createElement('style');
         style.textContent=':host{all:initial}section{box-sizing:border-box;width:280px;border:1px solid #d898ba;border-radius:12px;background:#fff4f9;color:#442d3b;padding:12px;font:13px/1.5 system-ui;box-shadow:0 4px 20px #0003}strong,span{display:block}span{white-space:pre-wrap;overflow-wrap:anywhere;margin-top:5px}button{font:inherit;margin-top:8px;padding:5px 9px;border:1px solid #b982a2;border-radius:6px;background:white;color:#442d3b;cursor:pointer}';
         const card=document.createElement('section');
-        card.innerHTML='<strong>WISH 0.17.15.1 · 실행 상태</strong><span role="status" aria-live="polite"></span><button type="button">닫기</button>';
+        card.innerHTML='<strong>WISH 0.17.16 · 실행 상태</strong><span role="status" aria-live="polite"></span><button type="button">닫기</button>';
         card.querySelector('button').onclick=()=>{dismissed=true;host?.remove();host=null;};
         root.append(style,card);document.documentElement.appendChild(host);
         for(const [key,value] of Object.entries({position:'fixed',right:'16px',top:'112px','z-index':'2147483647',display:'block',visibility:'visible',opacity:'1',width:'280px',height:'auto'}))host.style.setProperty(key,value,'important');
@@ -117,13 +93,13 @@
     wishBoot.status('duplicate', '다른 RP Manager 실행이 감지됐습니다. 버전: '+String(window.__WISH_RP_MANAGER_LOADED__.version||'알 수 없음'));
     return;
   }
-  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.17.15.1', loadedAt: Date.now() };
+  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.17.16', loadedAt: Date.now() };
   // 같은 페이지에 남아 있는 v0.8.10 복사본이 뒤늦게 시작되는 경우도 차단합니다.
   window.__RP_MANAGER_0810_LOADED__ = true;
 
   const APP = {
     name: '🪽위시 RP Manager',
-    version: '0.17.15.1',
+    version: '0.17.16',
     dbName: 'RPContextManagerDB',
     dbVersion: 2,
     storeName: 'rooms',
@@ -5139,10 +5115,10 @@ USER 캐릭터의 다음 항목은 직접 RP, USER의 명시적 서술 또는 �
       const assistantText = current.assistantParts.join('\n\n').trim();
       if (!assistantText) return;
       const key = current.turnId || current.assistantId || simpleHash(`${current.userText}\n${assistantText}`);
-      const aliases=[current.turnId,current.assistantId].filter(Boolean).map(String);
+      const aliases=[current.turnId,current.assistantId,current.userId,...current.reviewSources.map(row=>row.id)].filter(Boolean).map(String);
       turns.push({
         key:String(key), aliases:[...new Set(aliases)],
-        userText:current.userText,
+        userId:current.userId,userText:current.userText,
         assistantText,reviewSources:current.reviewSources,
         text:`[USER]\n${current.userText}\n\n[AI]\n${assistantText}`,
       });
@@ -5153,7 +5129,7 @@ USER 캐릭터의 다음 항목은 직접 RP, USER의 명시적 서술 또는 �
       if (!clean) continue;
       if (role === 'user') {
         push();
-        current = { userText:clean, assistantParts:[], assistantId:'',reviewSources:[], turnId:String(message?.turnId || ''), incomplete:false };
+        current = { userText:clean,userId:String(messageIdOf(message)||''),assistantParts:[],assistantId:'',reviewSources:[],turnId:String(message?.turnId||''),incomplete:false };
       } else if (current && ['assistant','character','bot'].includes(role)) {
         if (isIncompleteAiSourceMessage(message)) { current.incomplete = true; continue; }
         current.assistantParts.push(clean);
@@ -5175,11 +5151,11 @@ USER 캐릭터의 다음 항목은 직접 RP, USER의 명시적 서술 또는 �
     const all = [];
     const seenCursors = new Set();
     let cursor = '';
-    let foundStop = false,host='https://crack-api.wrtn.ai/crack-gen/v3/chats/';
+    let foundStop = false;
     while (all.length < maxMessages) {
-      let url = host+encodeURIComponent(chatId)+`/messages?limit=${Math.min(50, maxMessages - all.length)}`;
+      let url = `https://crack-api.wrtn.ai/crack-gen/v3/chats/${chatId}/messages?limit=${Math.min(50, maxMessages - all.length)}`;
       if (cursor) url += `&cursor=${encodeURIComponent(cursor)}`;
-      const data = await wishCrackReadFallback(url,u=>rpcmBaseApiRequest('GET',u),{locked:all.length>0,onSwitch:u=>{host=u.startsWith('https://contents-api')?'https://contents-api.wrtn.ai/character-chat/v3/chats/':'https://crack-api.wrtn.ai/crack-gen/v3/chats/';}});
+      const data = await apiRequest('GET', url);
       const page = data?.data?.messages || data?.messages || [];
       if (!Array.isArray(page) || !page.length) break;
       all.push(...page);
@@ -11680,13 +11656,13 @@ ${dialogueText}`;
     const basis=aiMemoryCacheBasis(room),cached=aiMemoryHistoryCache.get(roomId),now=Date.now();
     // Empty/pending responses and forced checks use the original full-history path.
     const certain=recent.length>0&&!recent.some(message=>isIncompleteAiSourceMessage(message));
-    if(!force&&certain&&cached&&cached.signature===signature&&cached.basis===basis&&now-cached.at<AI_MEMORY_HISTORY_AUDIT_MS)return settledAutomaticTurns(cached.turns);
+    if(!force&&certain&&cached&&cached.signature===signature&&cached.basis===basis&&now-cached.at<AI_MEMORY_HISTORY_AUDIT_MS)return cached.turns;
     const config=aiMemoryConfig(room),areas=Object.keys(AI_MEMORY_AREAS).filter(area=>config.areas[area].enabled);
     const turns=await aiMemoryScopedTurns(room,areas.length?areas:Object.keys(AI_MEMORY_AREAS));
     if(state.currentRoom!==room)throw new Error('RP 조회 중 채팅방이 바뀌었습니다.');
     aiMemoryHistoryCache.clear(); // Keep at most the current room's full history.
     if(certain)aiMemoryHistoryCache.set(roomId,{signature,basis:aiMemoryCacheBasis(room),at:Date.now(),turns});
-    return settledAutomaticTurns(turns);
+    return turns;
   }
 
   // Local precision layer. Never changes the legacy eligibility gate or the budget.
@@ -14864,11 +14840,11 @@ ${dialogueText}`;
             resolve(parsed ?? { ok: true });
           } else {
             const detail = parsed?.message || parsed?.error || res.responseText?.slice(0, 250) || '';
-            reject(Object.assign(new Error(`API 오류 ${res.status}${detail ? `: ${detail}` : ''}`),{code:'CRACK_HTTP',httpStatus:res.status}));
+            reject(new Error(`API 오류 ${res.status}${detail ? `: ${detail}` : ''}`));
           }
         },
-        ontimeout: () => reject(Object.assign(new Error('API 요청 시간 초과'),{code:'CRACK_TIMEOUT'})),
-        onerror: () => reject(Object.assign(new Error('네트워크 오류'),{code:'CRACK_NETWORK'})),
+        ontimeout: () => reject(new Error('API 요청 시간 초과')),
+        onerror: () => reject(new Error('네트워크 오류')),
       });
     });
   }
@@ -14892,40 +14868,29 @@ ${dialogueText}`;
   }
 
   async function patchMessage(chatId, messageId, nextText) {
-    const tail=encodeURIComponent(String(chatId))+'/messages/'+encodeURIComponent(String(messageId));
-    const base='https://crack-api.wrtn.ai/crack-gen/v3/chats/'+tail;
-    const equal=(a,b)=>String(a).replace(/\r\n?/g,'\n')===String(b).replace(/\r\n?/g,'\n');
-    const read=async()=>{
-      const payload=await apiRequest('GET',base),row=payload?.data||payload;
-      if(!row||String(messageIdOf(row)||'')!==String(messageId)||!['content','message','text'].some(k=>typeof row[k]==='string'))throw Error('수정 대상 메시지의 ID와 본문을 확인하지 못했습니다.');
-      return messageTextOf(row);
-    };
-    // Capture the server version before any write; later fallback must not overwrite an unrelated concurrent edit.
-    const original=await read();if(equal(original,nextText))return true;
-    const candidates=[
-      'https://contents-api.wrtn.ai/character-chat/v3/chats/'+tail,
-      base,
-      'https://contents-api.wrtn.ai/character-chat/character-chats/'+tail,
+    // Primary endpoint verified by existing Crack scripts.
+    const candidates = [
+      `https://contents-api.wrtn.ai/character-chat/v3/chats/${chatId}/messages/${messageId}`,
+      `https://contents-api.wrtn.ai/character-chat/character-chats/${chatId}/messages/${messageId}`,
+      `https://crack-api.wrtn.ai/crack-gen/v3/chats/${chatId}/messages/${messageId}`,
     ];
-    const errors=[],metrics=carrierRequestMetrics(nextText);
-    for(const [i,url] of candidates.entries()) {
-      let failure=null;
-      try { await apiRequest('PATCH',url,{message:nextText}); }
-      catch(error) { failure=error;if(!wishCrackReadRetryable(error))throw error; }
-      let observed;
-      try {
-        observed=await read();
-        if(!equal(observed,nextText)&&!failure){await sleep(300);observed=await read();}
-      } catch(error) {
-        const e=Error('메시지 저장 여부를 다시 확인하지 못했습니다. 자동 재전송은 멈췄습니다. 다시 시도하면 현재 본문부터 확인합니다. '+String(error?.message||error));
-        e.code='CRACK_PATCH_UNVERIFIED';throw e;
+    let lastErr = null;
+    const requestMetrics = carrierRequestMetrics(nextText);
+    for (const url of candidates) {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          await apiRequest('PATCH', url, { message: nextText });
+          return true;
+        } catch (e) {
+          lastErr = e;
+          const retryable = /(?:API 오류\s+(?:500|502|503|504)|API 요청 시간 초과|네트워크 오류)/i.test(String(e?.message || e));
+          if (!retryable || attempt > 0) break;
+          // 같은 본문을 다시 보내는 PATCH는 멱등이므로 일시적인 5xx에 한 번만 재시도합니다.
+          await sleep(350);
+        }
       }
-      if(equal(observed,nextText))return true;
-      if(!equal(observed,original)){const e=Error('메시지 저장 확인 중 다른 수정이 발견되어 추가 전송을 멈췄습니다. 최신 원문을 다시 확인해 주세요.');e.code='CRACK_PATCH_STALE';throw e;}
-      errors.push((i===0?'contents v3':i===1?'crack-gen v3':'contents legacy')+': '+(failure?String(failure.message||failure):'성공 응답 뒤 본문 미반영'));
     }
-    const e=Error('메시지 PATCH 실패 · '+errors.join(' / ')+` · 전송 ${formatCount(metrics.chars)}자 / 메시지 UTF-8 ${formatCount(metrics.messageBytes)}바이트 / 요청 본문 ${formatCount(metrics.payloadBytes)}바이트`);
-    e.code='CRACK_PATCH_UNVERIFIED';throw e;
+    throw new Error(`${lastErr?.message || '메시지 PATCH 실패'} · 전송 ${formatCount(requestMetrics.chars)}자 / 메시지 UTF-8 ${formatCount(requestMetrics.messageBytes)}바이트 / 요청 본문 ${formatCount(requestMetrics.payloadBytes)}바이트`);
   }
 
   async function fetchRoomMeta(chatId) {
@@ -25539,7 +25504,7 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
     room.aiMemorySourceAnchors||={};if(turn)room.aiMemorySourceAnchors[area]={key:String(turn.key),hash:aiMemoryAnchorFingerprint(turn),chatId:String(apiChatIdOf(room)),...(ignoreCheckpoint?{supersededCheckpoint:String(manualCheckpointForTask(room,AI_MEMORY_AREAS[area].manual).endMessageId||'')}:{})};else delete room.aiMemorySourceAnchors[area];
   }
   function aiMemoryCheckAnchorEvidence(room,areas,turns){
-    for(const area of areas){const record=room.aiMemorySourceAnchors?.[area],row=aiMemoryConfig(room).areas[area];if(!record||record.key!==String(row.cursor||row.baseline))continue;const turn=turns[rpcmFindTurnIndex(turns,record.key)];if(!turn||record.chatId!==String(apiChatIdOf(room))||record.hash!==aiMemoryAnchorFingerprint(turn))throw new Error(`${AI_MEMORY_AREAS[area].label}: 기준 RP의 원문·리롤·분기가 바뀌었습니다. 시작점을 다시 설정해 주세요.`);}
+    for(const area of areas){const record=room.aiMemorySourceAnchors?.[area],row=aiMemoryConfig(room).areas[area];if(!record||record.key!==String(row.cursor||row.baseline))continue;const turn=turns[rpcmFindTurnIndex(turns,record.key)];if(!turn||record.chatId!==String(apiChatIdOf(room))||record.hash!==aiMemoryAnchorFingerprint(turn)&&record.hash!==semanticSourceHash(JSON.stringify([record.key,turn.text,(turn.reviewSources||[]).map(row=>row.id)])))throw new Error(`${AI_MEMORY_AREAS[area].label}: 기준 RP의 원문·리롤·분기가 바뀌었습니다. 시작점을 다시 설정해 주세요.`);}
   }
   async function aiMemoryScopedTurns(room,areas){
     const anchors=aiMemoryScopeAnchors(room,areas),needsBeginning=areas.some(area=>!aiMemoryConfig(room).areas[area].cursor&&!aiMemoryConfig(room).areas[area].baseline&&!manualCheckpointForTask(room,AI_MEMORY_AREAS[area].manual).endMessageId);
@@ -26460,7 +26425,7 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
       const longTermAnchor=String(longTermState(room).firstStage.autoCursor||longTermState(room).firstStage.autoBaseline||'');
       const longTermIndex=longTermAnchor?rpcmFindTurnIndex(turns,longTermAnchor):-1;
       result.longterm={anchor:longTermAnchor,...(longTermAnchor&&longTermIndex<0?{error:'장기기억 기준 RP 확인 필요'}:{count:turns.length-longTermIndex-1})};
-      if (state.currentRoom === room) {manualUpdateRuntime.counts.set(key, result);personCollectAppearances(room,turns);if(state.workView==='people')renderPersonCoreUi(room,overlay);if(longTermRuntime.roomId===key)longTermRuntime.turns=turns;aiMemoryCollectCounts(room,settledAutomaticTurns(turns));noticeReconcile(room);}
+      if (state.currentRoom === room) {manualUpdateRuntime.counts.set(key, result);personCollectAppearances(room,turns);if(state.workView==='people')renderPersonCoreUi(room,overlay);if(longTermRuntime.roomId===key)longTermRuntime.turns=turns;aiMemoryCollectCounts(room,turns);noticeReconcile(room);}
     } catch (error) {
       if (state.currentRoom === room) manualUpdateRuntime.counts.set(key, { checkedAt:Date.now(), ...Object.fromEntries(Object.keys(MANUAL_UPDATE_TASKS).map(task => [task, { error:'RP 조회 실패' }])) });
       notify(`업데이트 범위 확인 실패: ${error.message}`, 'warn');
@@ -26948,46 +26913,41 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
       diffParts.push({ label, before, after, stats:diff.stats, rows:diff.rows });
     };
     if (task === 'currentItems') {
-      const rawState = stripAiOutputWrapper(values.currentState);
-      const checked = validateGeneratedCurrentState(rawState);
-      if (checked.errors.length) throw new Error(checked.errors.join(' / '));
-      if (!checked.sections.length || !rawState.startsWith(CURRENT_STATE_SECTION_RULE + '\n')) throw new Error('현재상태.txt의 첫 줄과 최상위 섹션 구분선을 확인해 주세요.');
-      if (draft.guideSource.startsWith('수동 업데이트 기본 지침') && checked.sections[0].title !== '기준 시점 / 진행 단계') throw new Error('현재상태 첫 섹션은 “1. 기준 시점 / 진행 단계”여야 합니다.');
-      const rawItems = stripAiOutputWrapper(values.importantItems);
-      const parsedItems = parseImportantItemBulkText(rawItems);
-      const headings = rawItems.match(/^[-*]\s+\*\*.+?\*\*/gm) || [];
-      if (rawItems && !rawItems.startsWith('- **')) throw new Error('중요물품.txt의 첫 줄은 “- **” 상위 물품 불릿이어야 합니다.');
-      if (headings.length !== parsedItems.length || (rawItems && !parsedItems.length)) throw new Error('중요물품.txt에서 일부 물품을 읽지 못했습니다. 모든 상위 물품에 제목과 본문이 필요합니다.');
-      if (new Set(parsedItems.map(item => item.title.toLocaleLowerCase('ko-KR'))).size !== parsedItems.length) throw new Error('중요 물품에 중복 제목이 있습니다. 기존 카드와 병합할 수 없습니다.');
-      const stateSlot = aiFixedSlot(candidate, 'currentState');
-      if (!stateSlot) throw new Error('현재상태 저장칸을 찾지 못했습니다.');
-      addDiff('현재상태.txt', stateSlot.content || '', rawState);
-      stateSlot.content = rawState;
-      const oldItems = (candidate.slots || []).filter(slot => slot.group === 'item');
-      const byTitle = new Map(oldItems.map(slot => [cleanImportantItemTitle(slot.title).toLocaleLowerCase('ko-KR'), slot]));
-      if (byTitle.size !== oldItems.length) throw new Error('기존 중요 물품에 같은 제목의 카드가 있어 ID와 포함 설정을 안전하게 이어받을 수 없습니다. 중복 카드를 먼저 확인해 주세요.');
-      const nextItems = parsedItems.map(item => {
-        const old = byTitle.get(item.title.toLocaleLowerCase('ko-KR'));
-        return old ? { ...old, title:item.title, content:item.content } : { ...makeDynamicSlot('item', item.title), content:item.content };
-      });
-      addDiff('중요물품.txt', allImportantItemRawText(room), rawItems);
-      candidate.slots = (candidate.slots || []).filter(slot => slot.group !== 'item').concat(nextItems);
-      summary.push(`현재상태 ${checked.sections.length}개 섹션`, `중요 물품 ${oldItems.length}개 → ${nextItems.length}개`);
-      const missingOldItems = oldItems.filter(slot => !parsedItems.some(item => item.title.toLocaleLowerCase('ko-KR') === cleanImportantItemTitle(slot.title).toLocaleLowerCase('ko-KR')));
-      if (missingOldItems.length) summary.push(`기존 물품 ${missingOldItems.length}개 제외·이름 변경 가능성 · 해당 카드 ID와 포함 설정은 이어받지 않음`);
-      if (checked.warnings.length) summary.push(`주의 · ${checked.warnings.join(' / ')}`);
-      if (candidate.pending) {
-        const slots = new Map(candidate.slots.map(slot => [String(slot.id), slot]));
-        const refresh = items => (items || []).map(item => {
-          const isCurrent = item.slotId === 'currentState';
-          const isItem = oldItems.some(slot => slot.id === item.slotId);
-          if (!isCurrent && !isItem) return item;
-          const slot = slots.get(String(item.slotId));
-          if (!slot) return null;
-          return { ...item, title:slot.title, content:String(slot.content || '').trim() };
+      const stateOnly=draft.aiMemoryArea==='currentState',itemsOnly=draft.aiMemoryArea==='importantItems';
+      const oldItems=(candidate.slots||[]).filter(slot=>slot.group==='item');
+      if(!itemsOnly){
+        const rawState=stripAiOutputWrapper(values.currentState),checked=validateGeneratedCurrentState(rawState);
+        if(checked.errors.length)throw new Error(checked.errors.join(' / '));
+        if(!checked.sections.length||!rawState.startsWith(CURRENT_STATE_SECTION_RULE+'\n'))throw new Error('현재상태.txt의 첫 줄과 최상위 섹션 구분선을 확인해 주세요.');
+        if(draft.guideSource.startsWith('수동 업데이트 기본 지침')&&checked.sections[0].title!=='기준 시점 / 진행 단계')throw new Error('현재상태 첫 섹션은 “1. 기준 시점 / 진행 단계”여야 합니다.');
+        const slot=aiFixedSlot(candidate,'currentState');if(!slot)throw new Error('현재상태 저장칸을 찾지 못했습니다.');
+        addDiff('현재상태.txt',slot.content||'',rawState);slot.content=rawState;
+        summary.push(`현재상태 ${checked.sections.length}개 섹션`);
+        if(checked.warnings.length)summary.push(`주의 · ${checked.warnings.join(' / ')}`);
+      }
+      if(!stateOnly){
+        const rawItems=stripAiOutputWrapper(values.importantItems),parsedItems=parseImportantItemBulkText(rawItems);
+        const headings=rawItems.match(/^[-*]\s+\*\*.+?\*\*/gm)||[];
+        if(rawItems&&!rawItems.startsWith('- **'))throw new Error('중요물품.txt의 첫 줄은 “- **” 상위 물품 불릿이어야 합니다.');
+        if(headings.length!==parsedItems.length||(rawItems&&!parsedItems.length))throw new Error('중요물품.txt에서 일부 물품을 읽지 못했습니다. 모든 상위 물품에 제목과 본문이 필요합니다.');
+        if(new Set(parsedItems.map(item=>item.title.toLocaleLowerCase('ko-KR'))).size!==parsedItems.length)throw new Error('중요 물품에 중복 제목이 있습니다. 기존 카드와 병합할 수 없습니다.');
+        const byTitle=new Map(oldItems.map(slot=>[cleanImportantItemTitle(slot.title).toLocaleLowerCase('ko-KR'),slot]));
+        if(byTitle.size!==oldItems.length)throw new Error('기존 중요 물품에 같은 제목의 카드가 있어 ID와 포함 설정을 안전하게 이어받을 수 없습니다. 중복 카드를 먼저 확인해 주세요.');
+        const nextItems=parsedItems.map(item=>{const old=byTitle.get(item.title.toLocaleLowerCase('ko-KR'));return old?{...old,title:item.title,content:item.content}:{...makeDynamicSlot('item',item.title),content:item.content};});
+        addDiff('중요물품.txt',allImportantItemRawText(room),rawItems);
+        candidate.slots=(candidate.slots||[]).filter(slot=>slot.group!=='item').concat(nextItems);
+        summary.push(`중요 물품 ${oldItems.length}개 → ${nextItems.length}개`);
+        const missing=oldItems.filter(slot=>!parsedItems.some(item=>item.title.toLocaleLowerCase('ko-KR')===cleanImportantItemTitle(slot.title).toLocaleLowerCase('ko-KR')));
+        if(missing.length)summary.push(`기존 물품 ${missing.length}개 제외·이름 변경 가능성 · 해당 카드 ID와 포함 설정은 이어받지 않음`);
+      }
+      if(candidate.pending){
+        const slots=new Map(candidate.slots.map(slot=>[String(slot.id),slot]));
+        const refresh=items=>(items||[]).map(item=>{
+          const selected=!itemsOnly&&item.slotId==='currentState'||!stateOnly&&oldItems.some(slot=>slot.id===item.slotId);
+          if(!selected)return item;const slot=slots.get(String(item.slotId));
+          return slot?{...item,title:slot.title,content:String(slot.content||'').trim()}:null;
         }).filter(Boolean);
-        candidate.pending.items = refresh(candidate.pending.items);
-        candidate.pending.quickRemovedItems = refresh(candidate.pending.quickRemovedItems);
+        candidate.pending.items=refresh(candidate.pending.items);candidate.pending.quickRemovedItems=refresh(candidate.pending.quickRemovedItems);
       }
     } else if (task === 'logSummary') {
       const raw = stripAiOutputWrapper(values.result);
@@ -30682,7 +30642,7 @@ RP 원문과 사용자 확정 메모를 사실 근거로 삼는다. Crack의 미
     const counts={...(aiMemoryRuntime.lastCounts.get(String(room.chatId))||{}),lastKey:String(turns.at(-1)?.key||'')};
     for(const area of Object.keys(AI_MEMORY_AREAS)){
       if(!config.areas[area].enabled)continue;
-      try{counts[area]=aiMemoryPending(room,area,turns).count;}catch(error){counts[area]=null;config.areas[area].error=error.message;}
+      try{counts[area]=aiMemoryPending(room,area,turns).count;aiMemoryClearRangeError(config.areas[area]);}catch(error){counts[area]=null;config.areas[area].error=error.message;}
     }
     aiMemoryRuntime.lastCounts.set(String(room.chatId),counts);aiMemoryRefreshStatusUi(room);
   }
@@ -30696,7 +30656,7 @@ RP 원문과 사용자 확정 메모를 사실 근거로 삼는다. Crack의 미
   async function aiMemorySetEnabled(room,area,enabled,control){
     const config=aiMemoryConfig(room),row=config.areas[area],oldEnabled=row.enabled,oldGlobal=config.enabled,oldBaseline=row.baseline;
     if(control)control.disabled=true;
-    try{if(enabled&&!row.cursor&&!row.baseline){const turns=await loadLatestCompletedTurns(room);row.baseline=String(turns.at(-1).key);aiMemorySetAnchorEvidence(room,area,turns.at(-1),true);}
+    try{if(enabled&&!row.cursor&&!row.baseline){const turns=await loadLatestCompletedTurns(room),last=turns.at(-1);row.baseline=String(last?.key||'');aiMemorySetAnchorEvidence(room,area,last,true);}
       row.applyRevision++;row.enabled=enabled;if(enabled)config.enabled=true;else if(!Object.values(config.areas).some(value=>value.enabled))config.enabled=false;
       await saveRoom(room);aiMemoryRefreshStatusUi(room);
       state.modal?.querySelectorAll('[data-ai-memory-enable]').forEach(input=>input.checked=config.areas[input.dataset.aiMemoryEnable].enabled);
@@ -33517,14 +33477,21 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
     for(const candidate of keys){const found=rpcmFindTurnIndex(turns,candidate);if(found<0)throw new Error(`${AI_MEMORY_AREAS[area].label}: 기준 턴 ID를 현재 기록에서 찾지 못했습니다. 메시지 ID 변경·리롤·분기 가능성을 확인해 주세요.`);if(found>index){index=found;key=candidate;}}
     return {index,key};
   }
+  function aiMemoryClearRangeError(row) {
+    if (/기준 턴 ID를 현재 기록에서 찾지 못했습니다/.test(String(row.error||''))) {
+      row.error='';if(row.status==='실패'&&!row.draft)row.status='대기';
+    }
+  }
   function aiMemoryPending(room,area,turns) {
     const {index,key}=aiMemoryEffectiveCursor(room,area,turns);
-    return {count:Math.max(0,turns.length-index-1),index,key};
+    const ready=settledAutomaticTurns(turns,index+1);
+    return {count:Math.max(0,ready.length-index-1),index,key};
   }
   function aiMemoryReadyCount(room,area,turns) {
     const pending=aiMemoryPending(room,area,turns).count,row=aiMemoryConfig(room).areas[area];
     const gate=rpcmFindTurnIndex(turns,row.lastAttemptKey||row.failedEnd);
-    return gate<0?pending:Math.min(pending,Math.max(0,turns.length-gate-1));
+    const ready=settledAutomaticTurns(turns,aiMemoryEffectiveCursor(room,area,turns).index+1);
+    return gate<0?pending:Math.min(pending,Math.max(0,ready.length-gate-1));
   }
   function aiMemoryTurnLabel(room,key){
     if(!key)return '없음';
@@ -33623,19 +33590,32 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
   function aiMemoryOutputValues(area,raw,draft=null) {
     if(area==='currentState'||area==='importantItems'){
       if(draft?.sharedCurrentItems){
-        // Each shared call produces two separately editable drafts. Keep the other
-        // output only as parser context; it is never applied by this area's draft.
+        if(typeof raw!=='string')throw new Error(area+' 결과 본문이 없습니다. 해당 항목은 적용하지 않습니다.');
         return area==='currentState'
           ? {currentState:String(raw||''),importantItems:String(draft.sharedOtherOutput||'')}
           : {currentState:String(draft.sharedOtherOutput||''),importantItems:String(raw||'')};
       }
-      const text=String(raw||'').trim().replace(/^```(?:json)?\s*\n|\n```\s*$/g,'');let object;
-      try{object=JSON.parse(text);}catch(_){throw new Error('현재상태·중요물품 AI 결과는 두 문자열을 가진 JSON이어야 합니다.');}
-      if(!object||typeof object.currentState!=='string'||typeof object.importantItems!=='string')throw new Error('currentState / importantItems 전체본이 모두 필요합니다.');
-      return {currentState:object.currentState,importantItems:object.importantItems};
+      const text=String(raw||'').trim(),prepared=manualLoreJsonCandidates(text);
+      let object=null;
+      for(const candidate of prepared.candidates){
+        for(const variant of [candidate,normalizeSmartJsonQuotes(candidate)]){
+          try{const parsed=JSON.parse(variant);if(parsed&&typeof parsed==='object'&&!Array.isArray(parsed)){object=parsed;break;}}catch(_){}
+        }
+        if(object)break;
+      }
+      const field=area==='currentState'?'currentState':'importantItems';
+      if(object){
+        if(typeof object[field]!=='string')throw new Error(field+' 전체 본문 문자열이 필요합니다. 다른 항목의 결과로 대신 적용하지 않습니다.');
+        return {currentState:object.currentState,importantItems:object.importantItems};
+      }
+      const plain=stripAiOutputWrapper(text);
+      if(area==='currentState'&&plain.startsWith(CURRENT_STATE_SECTION_RULE+'\n'))return {currentState:plain};
+      if(area==='importantItems'&&(plain===''||plain.startsWith('- **')))return {importantItems:plain};
+      throw new Error(field+' 결과를 읽지 못했습니다. 완성된 JSON 문자열 또는 해당 항목의 전체 본문이 필요합니다.');
     }
     return {result:String(raw||'')};
   }
+
   function aiMemoryPrepare(room,area,draft,raw) {
     const task=AI_MEMORY_AREAS[area].manual;
     let parseRoom=room;
@@ -33648,7 +33628,7 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
         .concat(structuredClone(draft.sharedCurrentItemsSlots||[]));
     }
     const parserDraft=(area==='currentState'||area==='importantItems')
-      ? {...draft.packetDraft,existing:manualExistingResult(parseRoom,task)} : draft.packetDraft;
+      ? {...draft.packetDraft,existing:manualExistingResult(parseRoom,task),aiMemoryArea:area} : draft.packetDraft;
     const prepared=prepareManualUpdateResult(parseRoom,task,parserDraft,aiMemoryOutputValues(area,raw,draft));
     prepared.baseSnapshot=JSON.stringify(room);
     const candidate=prepared.candidate;
@@ -33754,10 +33734,10 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
     return {room:snapshot,longTermText,longTermCount};
   }
 
-  function settledAutomaticTurns(turns) {
+  function settledAutomaticTurns(turns, startIndex=0) {
     const refiner=window.__WISH_RP_MANAGER_REFINER__;
     if(!refiner?.canUseTurn)return turns;
-    const stop=turns.findIndex((turn,index)=>(turn.reviewSources?.length?turn.reviewSources:[{id:turn.key,content:turn.assistantText}]).some(source=>!refiner.canUseTurn(String(source.id),String(source.content||''),index===turns.length-1)));
+    const stop=turns.findIndex((turn,index)=>index>=startIndex&&(turn.reviewSources?.length?turn.reviewSources:[{id:turn.key,content:turn.assistantText}]).some(source=>!refiner.canUseTurn(String(source.id),String(source.content||''),index===turns.length-1)));
     return stop<0?turns:turns.slice(0,stop);
   }
 
@@ -33799,8 +33779,10 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
     let pairedArea='',pairedRow=null;
     try{
       const allTurns=await aiMemoryScopedTurns(room,[area,options.pairArea].filter(key=>AI_MEMORY_AREAS[key]));
-      const turns=options.force?allTurns:settledAutomaticTurns(allTurns);
-      if(options.force&&turns.length!==settledAutomaticTurns(allTurns).length)notify('응답교정 확인 전인 RP를 명시한 수동 실행에 사용합니다.','warn');
+      const sourceStart=aiMemoryEffectiveCursor(room,area,allTurns).index+1;
+      const settled=settledAutomaticTurns(allTurns,sourceStart);
+      const turns=options.force?allTurns:settled;
+      if(options.force&&turns.length!==settled.length)notify('응답교정 확인 전인 RP를 명시한 수동 실행에 사용합니다.','warn');
       if(!turns.length)throw new Error('완료된 USER+AI 턴이 없습니다.');
       const {startIndex,endIndex,bundle}=await aiMemoryPacketPlan(room,area,turns,options);
       if(options.pairArea && AI_MEMORY_AREAS[area].manual==='currentItems' && AI_MEMORY_AREAS[options.pairArea]?.manual==='currentItems'){
@@ -33866,7 +33848,7 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
     try{
       const turns=await aiMemoryPlanningTurns(room,force),counts={...(aiMemoryRuntime.lastCounts.get(id)||{}),lastKey:String(turns.at(-1)?.key||'')};
       if(state.currentRoom!==room||!aiMemoryConfig(room).enabled)return;
-      for(const area of enabled){const row=aiMemoryConfig(room).areas[area];if(!row.enabled)continue;try{counts[area]=aiMemoryPending(room,area,turns).count;}catch(error){counts[area]=null;row.error=error.message;}}
+      for(const area of enabled){const row=aiMemoryConfig(room).areas[area];if(!row.enabled)continue;try{counts[area]=aiMemoryPending(room,area,turns).count;aiMemoryClearRangeError(row);}catch(error){counts[area]=null;row.error=error.message;}}
       counts.ready=Object.fromEntries(enabled.map(area=>{try{return [area,aiMemoryReadyCount(room,area,turns)];}catch(_){return [area,null];}}));
       aiMemoryRuntime.lastCounts.set(id,counts);
       aiMemoryRefreshStatusUi(room);
@@ -34100,7 +34082,7 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
         if(aiMemoryIsNoChange(room,area,prepared)){
           draft.noChange=true;prepared.candidate=structuredClone(room);
           const turns=await aiMemoryAssertSource(room,draft);
-          if(settledAutomaticTurns(turns).length<=draft.endIndex)return false;
+          if(settledAutomaticTurns(turns,draft.startIndex).length<=draft.endIndex)return false;
           await aiMemoryCommitDraft(room,area,draft,prepared,false);
           aiMemoryRuntime.lastCounts.delete(String(room.chatId));aiMemoryRefreshStatusUi(room);return true;
         }
@@ -34110,7 +34092,7 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
     if(row.autoApplyError||aiMemoryEditingNow())return false;
     try{
       const turns=await aiMemoryAssertSource(room,draft);
-      if(settledAutomaticTurns(turns).length<=draft.endIndex)throw new Error('응답교정 확인 전인 원문은 초안 검토 후 적용해 주세요.');
+      if(settledAutomaticTurns(turns,draft.startIndex).length<=draft.endIndex)throw new Error('응답교정 확인 전인 원문은 초안 검토 후 적용해 주세요.');
       const cursor=aiMemoryEffectiveCursor(room,area,turns);
       if(cursor.index>=draft.startIndex)throw new Error('다른 작업이 이 구간을 이미 처리했습니다. 중복 자동 반영을 보류합니다.');
       const prepared=aiMemoryPrepare(room,area,draft,draft.output);
@@ -37345,7 +37327,7 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
   // Invalidate only message mutation routes. Read-only calls never touch the cache.
   const rpcmBaseApiRequest=apiRequest;
   apiRequest=async function(method,url,body=undefined){
-    const verb=String(method||'GET').toUpperCase();const result=verb==='GET'?await wishCrackReadFallback(url,u=>rpcmBaseApiRequest(method,u,body)):await rpcmBaseApiRequest(method,url,body);
+    const result=await rpcmBaseApiRequest(method,url,body);const verb=String(method||'GET').toUpperCase();
     if(verb!=='GET'&&/\/chats\/([^/?]+)\/messages(?:\/|\?|$)/.test(String(url||''))){const match=String(url).match(/\/chats\/([^/?]+)\/messages/);if(match)rpcmHistoryInvalidate(decodeURIComponent(match[1]),verb);}
     return result;
   };
@@ -37359,14 +37341,13 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
       off=typeof control?.onAbort==='function'?control.onAbort(()=>{try{handle?.abort?.();}catch{}finish(reject,rpcmHistoryUserAbort());}):()=>{};
     });
   }
-  async function rpcmHistoryPage(chatId,cursor,limit,control,diag,context,transport={host:'crack-api',accepted:false,switched:false}){
+  async function rpcmHistoryPage(chatId,cursor,limit,control,diag,context){
     let last=null;
     for(let round=0;round<RPCM_CORE_PORT.recoveryRounds;round++){
       for(let attempt=0;attempt<RPCM_CORE_PORT.retryCount;attempt++){
         if(control?.cancelled)throw rpcmHistoryUserAbort();if(context)rpcmAssertHistoryContext(context);
-        const host=transport.host==='contents-api'?'https://contents-api.wrtn.ai/character-chat/v3/chats/':'https://crack-api.wrtn.ai/crack-gen/v3/chats/';
-        const url=host+encodeURIComponent(chatId)+`/messages?limit=${limit}${cursor?'&cursor='+encodeURIComponent(cursor):''}`;
-        try{return await wishCrackReadFallback(url,u=>rpcmHistoryHttpGet(u,control),{locked:transport.accepted||transport.switched,check:()=>{if(control?.cancelled)throw rpcmHistoryUserAbort();if(context)rpcmAssertHistoryContext(context);},onSwitch:alternate=>{transport.host=alternate.includes('contents-api.wrtn.ai')?'contents-api':'crack-api';transport.switched=true;}});}catch(error){last=error;if(context)rpcmAssertHistoryContext(context);if(rpcmIsHistoryAuthError(error)||rpcmIsHistoryAbort(error)||rpcmIsHistoryStale(error)||!rpcmIsTransientHistoryError(error))throw error;if(attempt>=RPCM_CORE_PORT.retryCount-1)break;RpcmHistoryDiagnostics.retry(diag);await rpcmHistorySleep(rpcmHistoryBackoff(error,attempt),control);}
+        const url=`https://crack-api.wrtn.ai/crack-gen/v3/chats/${chatId}/messages?limit=${limit}${cursor?'&cursor='+encodeURIComponent(cursor):''}`;
+        try{return await rpcmHistoryHttpGet(url,control);}catch(error){last=error;if(context)rpcmAssertHistoryContext(context);if(rpcmIsHistoryAuthError(error)||rpcmIsHistoryAbort(error)||rpcmIsHistoryStale(error)||!rpcmIsTransientHistoryError(error))throw error;if(attempt>=RPCM_CORE_PORT.retryCount-1)break;RpcmHistoryDiagnostics.retry(diag);await rpcmHistorySleep(rpcmHistoryBackoff(error,attempt),control);}
       }
       if(round<RPCM_CORE_PORT.recoveryRounds-1&&last&&rpcmIsTransientHistoryError(last)){RpcmHistoryDiagnostics.recovery(diag);await rpcmHistorySleep(Math.max(RPCM_CORE_PORT.recoveryCooldownMs,Number(last.rpcmRetryAfterMs||0)),control);continue;}
       break;
@@ -37377,20 +37358,19 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
   // Preserve Manager's completed-turn semantics; only the physical page transport changes.
   createRpcmTurnPager=function(room,options={}){
     const context=rpcmHistoryContext(room),chatId=context.chatId,seenCursors=new Set(),seenMessages=new Map(),control=options.control||null,onProgress=typeof options.onProgress==='function'?options.onProgress:null;
-    let cursor='',carry=[],done=false,messageCount=0,pageCount=0,mode='fast-300',headSignature='';const transport={host:'crack-api',accepted:false,switched:false};
+    let cursor='',carry=[],done=false,messageCount=0,pageCount=0,mode='fast-300',headSignature='';
     const diag=options.diag||RpcmHistoryDiagnostics.begin(mode);
     return {get done(){return done;},get messageCount(){return messageCount;},get pageCount(){return pageCount;},get mode(){return mode;},get headSignature(){return headSignature;},async next(){
       if(done)return [];if(control?.cancelled)throw rpcmHistoryUserAbort();rpcmAssertHistoryContext(context);
       if(pageCount>=RPCM_CORE_PORT.maxPages||messageCount>=RPCM_CORE_PORT.maxMessages){RpcmHistoryDiagnostics.runaway();throw rpcmHistoryError(`전체 대화 읽기가 안전 한도(${RPCM_CORE_PORT.maxPages}페이지 / ${RPCM_CORE_PORT.maxMessages}메시지)에 도달했습니다. 일부 원문을 전체로 가장하지 않고 중단했습니다.`);}
       let data,raw,usedMode=mode;RpcmHistoryDiagnostics.page(diag,mode);
-      try{data=await rpcmHistoryPage(chatId,cursor,mode==='fast-300'?RPCM_CORE_PORT.fastPageSize:RPCM_CORE_PORT.legacyPageSize,control,diag,context,transport);raw=data?.data?.messages||data?.messages;if(!Array.isArray(raw))throw rpcmHistoryError('RP 페이지의 메시지 형식이 올바르지 않습니다.');}
+      try{data=await rpcmHistoryPage(chatId,cursor,mode==='fast-300'?RPCM_CORE_PORT.fastPageSize:RPCM_CORE_PORT.legacyPageSize,control,diag,context);raw=data?.data?.messages||data?.messages;if(!Array.isArray(raw))throw rpcmHistoryError('RP 페이지의 메시지 형식이 올바르지 않습니다.');}
       catch(error){
         const canFallback=mode==='fast-300'&&!rpcmIsHistoryAuthError(error)&&!rpcmIsHistoryAbort(error)&&!rpcmIsHistoryStale(error)&&(rpcmIsTransientHistoryError(error)||rpcmIsFastCompatibilityError(error));
         if(!canFallback)throw error;
-        RpcmHistoryDiagnostics.fallback(diag);mode='legacy-50';usedMode=mode;await rpcmHistorySleep(RPCM_CORE_PORT.fallbackCooldownMs,control);RpcmHistoryDiagnostics.page(diag,mode);data=await rpcmHistoryPage(chatId,cursor,RPCM_CORE_PORT.legacyPageSize,control,diag,context,transport);raw=data?.data?.messages||data?.messages;if(!Array.isArray(raw))throw rpcmHistoryError('RP 페이지의 메시지 형식이 올바르지 않습니다.');
+        RpcmHistoryDiagnostics.fallback(diag);mode='legacy-50';usedMode=mode;await rpcmHistorySleep(RPCM_CORE_PORT.fallbackCooldownMs,control);RpcmHistoryDiagnostics.page(diag,mode);data=await rpcmHistoryPage(chatId,cursor,RPCM_CORE_PORT.legacyPageSize,control,diag,context);raw=data?.data?.messages||data?.messages;if(!Array.isArray(raw))throw rpcmHistoryError('RP 페이지의 메시지 형식이 올바르지 않습니다.');
       }
       if(control?.cancelled)throw rpcmHistoryUserAbort();rpcmAssertHistoryContext(context);
-      transport.accepted=true;
       if(!headSignature)headSignature=rpcmFrontierSignature(raw);
       const page=[];for(const message of raw){const id=String(messageIdOf(message)||''),signature=semanticSourceHash(JSON.stringify([messageRoleOf(message),messageTextOf(message),message.turnId,message.status,message.generationStatus]));if(id&&seenMessages.has(id)){if(seenMessages.get(id)!==signature)throw rpcmHistoryStale('페이지 조회 도중 RP 원문이 바뀌었습니다. 다시 조회해 주세요.');continue;}if(id)seenMessages.set(id,signature);page.push(message);}
       messageCount+=page.length;pageCount++;diag.mode=usedMode;diag.pages=pageCount;diag.messages=messageCount;
@@ -38606,7 +38586,7 @@ A correction requires a supported contradiction, a materially relevant persisten
     try { json = JSON.parse(res.responseText || ''); } catch (_) {}
     if (res.status < 200 || res.status >= 300) {
       const full = String(res.responseText || '');
-      const error = Object.assign(new Error(`Crack API HTTP ${res.status}: ${full.slice(0,180)}`),{code:'CRACK_HTTP',httpStatus:res.status});
+      const error = new Error(`Crack API HTTP ${res.status}: ${full.slice(0,180)}`);
       error.fullDetails = `Crack API HTTP ${res.status}\n${full || '(응답 본문 없음)'}`;
       throw error;
     }
@@ -38618,7 +38598,7 @@ A correction requires a supported contradiction, a materially relevant persisten
     if (!chatId) return [];
     const bridge=window.__WISH_RP_MANAGER_AI_BRIDGE__;
     if(bridge?.readResponseMessages)return bridge.readResponseMessages(chatId,limit);
-    const json = await wishCrackReadFallback(`https://contents-api.wrtn.ai/character-chat/v3/chats/${encodeURIComponent(chatId)}/messages?limit=${limit}`,url=>authJson('GET',url));
+    const json = await authJson('GET', `https://contents-api.wrtn.ai/character-chat/v3/chats/${chatId}/messages?limit=${limit}`);
     return Array.isArray(json?.data?.messages) ? json.data.messages : [];
   }
 
