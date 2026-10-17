@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🪽위시 RP Manager
 // @namespace    local.rp.context.manager
-// @version      0.17.17
+// @version      0.17.18
 // @description  장기 RP용 현재상태·날짜로그·연속성 타임라인·캐릭터 설정을 관리하고, 검수형 AI 생성과 필요한 컨텍스트 자동 주입을 지원합니다.
 // @author       User
 // @license      All Rights Reserved
@@ -69,7 +69,7 @@
         const style=document.createElement('style');
         style.textContent=':host{all:initial}section{box-sizing:border-box;width:280px;border:1px solid #d898ba;border-radius:12px;background:#fff4f9;color:#442d3b;padding:12px;font:13px/1.5 system-ui;box-shadow:0 4px 20px #0003}strong,span{display:block}span{white-space:pre-wrap;overflow-wrap:anywhere;margin-top:5px}button{font:inherit;margin-top:8px;padding:5px 9px;border:1px solid #b982a2;border-radius:6px;background:white;color:#442d3b;cursor:pointer}';
         const card=document.createElement('section');
-        card.innerHTML='<strong>WISH 0.17.17 · 실행 상태</strong><span role="status" aria-live="polite"></span><button type="button">닫기</button>';
+        card.innerHTML='<strong>WISH 0.17.18 · 실행 상태</strong><span role="status" aria-live="polite"></span><button type="button">닫기</button>';
         card.querySelector('button').onclick=()=>{dismissed=true;host?.remove();host=null;};
         root.append(style,card);document.documentElement.appendChild(host);
         for(const [key,value] of Object.entries({position:'fixed',right:'16px',top:'112px','z-index':'2147483647',display:'block',visibility:'visible',opacity:'1',width:'280px',height:'auto'}))host.style.setProperty(key,value,'important');
@@ -93,13 +93,13 @@
     wishBoot.status('duplicate', '다른 RP Manager 실행이 감지됐습니다. 버전: '+String(window.__WISH_RP_MANAGER_LOADED__.version||'알 수 없음'));
     return;
   }
-  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.17.17', loadedAt: Date.now() };
+  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.17.18', loadedAt: Date.now() };
   // 같은 페이지에 남아 있는 v0.8.10 복사본이 뒤늦게 시작되는 경우도 차단합니다.
   window.__RP_MANAGER_0810_LOADED__ = true;
 
   const APP = {
     name: '🪽위시 RP Manager',
-    version: '0.17.17',
+    version: '0.17.18',
     dbName: 'RPContextManagerDB',
     dbVersion: 2,
     storeName: 'rooms',
@@ -26310,7 +26310,7 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
     if(integratedFingerprint(room)!==job.fingerprint)throw new Error('작업자료 생성 후 기억·시작점·지침이 바뀌었습니다. 통합 패킷을 다시 만들어 주세요.');
     const turns=job.anchorKey?await loadRpcmCompletedRange(room,[job.anchorKey],{finalFresh:true}):await loadManualCompletedTurns(room,{finalFresh:true}),index=job.anchorKey?rpcmFindTurnIndex(turns,job.anchorKey):0;
     if(index<0)throw new Error('시작점 RP가 사라졌습니다. 리롤·삭제·분기를 확인하세요.');
-    const current=turns.slice(index).map(t=>[String(t.key),String(t.text)]);
+    const current=turns.slice(index);
     manualAssertSourceSnapshot(current,job.sourceTurns,true);
     return {newerTurns:current.length-job.sourceTurns.length};
   }
@@ -27347,35 +27347,64 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
     return { candidate, baseSnapshot, summary, diffParts, rawInputs:manualResultInputs(task, values) };
   }
 
-  function manualAssertSourceSnapshot(current,expected,allowAppended=false){
-    if(!Array.isArray(expected)||!expected.length||current.length<expected.length||JSON.stringify(current.slice(0,expected.length))!==JSON.stringify(expected))throw new Error('작업 범위의 기존 RP 원문이 수정·삭제되었거나 순서가 바뀌었습니다. 새 원문으로 작업자료를 다시 만들어 주세요.');
-    const appended=current.length-expected.length;
+  function manualSourceError(reason,message) {
+    const error=new Error(message);error.code='RPCM_SOURCE_CHANGED';error.sourceReason=reason;return error;
+  }
+  function manualSourceRow(row) {
+    if(Array.isArray(row)&&row.length===2&&typeof row[0]==='string'&&typeof row[1]==='string')return {key:row[0],text:row[1],aliases:[]};
+    if(row&&!Array.isArray(row)&&typeof row.key==='string'&&typeof row.text==='string')return {key:row.key,text:row.text,aliases:Array.isArray(row.aliases)?row.aliases.filter(key=>typeof key==='string'):[]};
+    throw manualSourceError('snapshot','작업자료의 원문 검증 정보가 불완전합니다. 작업자료를 다시 만들어 주세요.');
+  }
+  function manualAssertSourceSnapshot(current,expected,allowAppended=false) {
+    if(!Array.isArray(current)||!Array.isArray(expected)||!expected.length)throw manualSourceError('snapshot','작업자료의 원문 검증 정보가 불완전합니다. 작업자료를 다시 만들어 주세요.');
+    const rows=current.map(manualSourceRow),snapshot=expected.map(manualSourceRow),indexById=new Map(),expectedIds=new Set();
+    for(const [index,row] of rows.entries())for(const key of new Set([row.key,...row.aliases].filter(Boolean)))indexById.set(key,indexById.has(key)?-1:index);
+    for(const [index,row] of snapshot.entries()) {
+      if(!row.key||expectedIds.has(row.key))throw manualSourceError('snapshot','작업자료의 기준 RP 식별자가 비어 있거나 중복됩니다. 작업자료를 다시 만들어 주세요.');
+      expectedIds.add(row.key);
+      if(indexById.get(row.key)===-1)throw manualSourceError('ambiguous','같은 RP 식별자가 여러 턴에 있습니다. 현재 원문을 다시 조회해 주세요.');
+      if(!indexById.has(row.key))throw manualSourceError('missing','작업자료에 포함된 RP를 현재 기록에서 찾지 못했습니다. 리롤·삭제·분기를 확인하고 작업자료를 다시 만들어 주세요.');
+      if(indexById.get(row.key)!==index)throw manualSourceError('order','작업자료에 포함된 RP 순서가 바뀌었습니다. 현재 원문으로 작업자료를 다시 만들어 주세요.');
+      if(rows[index].text!==row.text)throw manualSourceError('content','작업자료 생성 후 RP 본문이 바뀌었습니다. 응답교정·직접 수정·리롤이 있었다면 현재 원문으로 작업자료를 다시 만들어 주세요.');
+    }
+    const appended=rows.length-snapshot.length;
     if(appended&&!allowAppended){const error=new Error(`작업자료 생성 후 완료 RP ${appended}턴이 추가되었습니다. ‘추가된 RP는 다음 갱신으로 남기고 적용’을 선택한 뒤 다시 검증하세요.`);error.code='RPCM_RP_APPENDED';error.appended=appended;throw error;}
     return {appended};
   }
-  async function assertManualUpdateSourceCurrent(room, task, draft, options={}) {
-    if(draft.stale)throw new Error(draft.staleReason||'원문 변경으로 재검토가 필요합니다.');
-    if (state.currentRoom !== room || (!draft.recovery&&manualUpdateRuntime.packets.get(manualPacketKey(room, task)) !== draft)) throw new Error('방 또는 작업자료가 바뀌었습니다. 현재 범위로 다시 만들어 주세요.');
-    if(draft.recoveryJobId){const turns=await loadManualCompletedTurns(room,{finalFresh:true}),byKey=new Map(turns.map(turn=>[String(turn.key),String(turn.text)]));if(!(draft.sourceTurns||[]).length||(draft.sourceTurns||[]).some(([key,text])=>byKey.get(String(key))!==String(text)))throw new Error('보관된 작업자료의 원문이 바뀌었습니다. 복구 범위를 다시 확인해 주세요.');return {appended:0};}
-    if(draft.recovery&&draft.sourceVerified===false){
+  async function assertManualUpdateSourceCurrent(room,task,draft,options={}) {
+    if(draft.stale)throw manualSourceError('stale',draft.staleReason||'원문 변경으로 재검토가 필요합니다.');
+    if(state.currentRoom!==room||(!draft.recovery&&manualUpdateRuntime.packets.get(manualPacketKey(room,task))!==draft))throw new Error('방 또는 작업자료가 바뀌었습니다. 현재 범위로 다시 만들어 주세요.');
+    if(draft.recoveryJobId) {
+      const turns=await loadManualCompletedTurns(room,{finalFresh:true}),source=draft.sourceTurns;
+      if(!Array.isArray(source)||!source.length)throw manualSourceError('snapshot','보관된 작업자료의 원문 검증 정보가 없습니다. 복구 범위를 다시 확인해 주세요.');
+      const first=rpcmFindTurnIndex(turns,String(source[0][0]));
+      if(first<0)throw manualSourceError('missing','보관된 작업자료의 RP를 현재 기록에서 찾지 못했습니다. 복구 범위를 다시 확인해 주세요.');
+      manualAssertSourceSnapshot(turns.slice(first,first+source.length),source);
+      return {appended:0};
+    }
+    if(draft.recovery&&draft.sourceVerified===false) {
       if(!draft.explicitUnknownApproval)throw new Error('원문 범위 미확인 복구를 명시적으로 승인해야 합니다.');
       return {appended:0};
     }
-    if (draft.rangeMode === 'full' || draft.rangeMode === 'custom') {
-      const turns = await loadManualCompletedTurns(room,{finalFresh:true});
-      const currentHistory = turns.map(turn => [String(turn.key), String(turn.text)]);
-      const source=manualAssertSourceSnapshot(currentHistory,draft.historyTurns,options.allowAppended===true);
-      if (JSON.stringify(currentHistory.slice(draft.startIndex, draft.endIndex + 1)) !== JSON.stringify(draft.sourceTurns)) throw new Error('선택한 RP 범위가 바뀌었습니다. 작업자료를 다시 만들어 주세요.');
+    if(draft.rangeMode==='full'||draft.rangeMode==='custom') {
+      const turns=await loadManualCompletedTurns(room,{finalFresh:true});
+      const source=manualAssertSourceSnapshot(turns,draft.historyTurns,options.allowAppended===true);
+      manualAssertSourceSnapshot(turns.slice(draft.startIndex,draft.endIndex+1),draft.sourceTurns);
       return source;
     }
-    const turns = await loadRpcmCompletedRange(room,draft.checkpoint.endMessageId?[draft.checkpoint.endMessageId]:[]);
-    const index = draft.checkpoint.endMessageId ? rpcmFindTurnIndex(turns,draft.checkpoint.endMessageId) : -1;
-    if (draft.checkpoint.endMessageId && index < 0) throw new Error('기준 RP가 사라졌습니다. 리롤·삭제·분기 후 작업자료를 다시 만들어 주세요.');
-    if (draft.anchorTurn && JSON.stringify([String(turns[index].key), String(turns[index].text)]) !== JSON.stringify(draft.anchorTurn)) throw new Error('기준 RP 원문이 바뀌었습니다. 리롤 후 작업자료를 다시 만들어 주세요.');
-
-    const current = turns.slice(index + 1).map(turn => [String(turn.key), String(turn.text)]);
-    return manualAssertSourceSnapshot(current,draft.sourceTurns,options.allowAppended===true);
+    const turns=await loadRpcmCompletedRange(room,draft.checkpoint.endMessageId?[draft.checkpoint.endMessageId]:[]);
+    const index=draft.checkpoint.endMessageId?rpcmFindTurnIndex(turns,draft.checkpoint.endMessageId):-1;
+    if(draft.checkpoint.endMessageId&&index<0)throw manualSourceError('missing','기준 RP가 사라졌습니다. 리롤·삭제·분기 후 작업자료를 다시 만들어 주세요.');
+    if(draft.anchorTurn)manualAssertSourceSnapshot([turns[index]],[draft.anchorTurn]);
+    return manualAssertSourceSnapshot(turns.slice(index+1),draft.sourceTurns,options.allowAppended===true);
   }
+  function manualResultFailureTitle(error) {
+    if(error?.code==='RPCM_SOURCE_CHANGED')return '원문 확인 필요';
+    if(error?.code==='RPCM_RP_APPENDED')return '새 RP 추가됨 · 범위 확인';
+    if(/(?:\bREF\b|\bref\b)/i.test(String(error?.message||'')))return '결과 REF 확인 필요';
+    return '결과 검증 실패';
+  }
+
 
   async function readManualStoredRoom(room) {
     return new Promise((resolve, reject) => {
@@ -27828,7 +27857,7 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
         diff.innerHTML = `<p class="rpcm-update-diff-summary">${prepared.summary.map(esc).join(' · ')} · 기준 RP ${esc(draft.endMessageId)}</p>${manualUpdateDiffHtml(prepared)}`;
         diff.hidden = false; applyButton.disabled = false;
         status.textContent = `검증 완료 · ${sourceCheck.appended?`추가 RP ${sourceCheck.appended}턴은 다음 갱신 범위로 남습니다. `:''}아래 기존/적용 후 내용을 확인한 뒤 저장할 수 있습니다.`;
-      } catch (error) { prepared = null; diff.hidden = task !== 'lore'; if (task === 'lore') diff.innerHTML = `<p class="rpcm-update-diff-summary">잘못된 REF / 검증 실패 · ${esc(error.message)}</p>`; status.textContent = `적용 불가: ${error.message}`;if(personSelection&&error.personImportName){personSelection.open=true;const row=personSelection.querySelector(`[data-person-choice="${CSS.escape(manualPersonName(error.personImportName))}"]`);row?.classList.add('is-conflict');row?.scrollIntoView({block:'nearest'});} }
+      } catch (error) { prepared = null; diff.hidden = task !== 'lore'; if (task === 'lore') diff.innerHTML = `<p class="rpcm-update-diff-summary">${esc(manualResultFailureTitle(error))} · ${esc(error.message)}</p>`; status.textContent = `적용 불가: ${error.message}`;if(personSelection&&error.personImportName){personSelection.open=true;const row=personSelection.querySelector(`[data-person-choice="${CSS.escape(manualPersonName(error.personImportName))}"]`);row?.classList.add('is-conflict');row?.scrollIntoView({block:'nearest'});} }
       finally { previewButton.disabled = false;backdrop.querySelectorAll('[data-manual-input],[data-manual-file],[data-manual-allow-appended],[data-person-import-exclude],[data-person-import-restore]').forEach(input=>input.disabled=input.hasAttribute('data-deleted-person')||input.hasAttribute('data-person-restore-unavailable')); }
     });
     applyButton.addEventListener('click', async () => {
