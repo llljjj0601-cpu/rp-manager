@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🪽위시 RP Manager
 // @namespace    local.rp.context.manager
-// @version      0.17.22
+// @version      0.17.23
 // @description  장기 RP용 현재상태·날짜로그·연속성 타임라인·캐릭터 설정을 관리하고, 검수형 AI 생성과 필요한 컨텍스트 자동 주입을 지원합니다.
 // @author       User
 // @license      All Rights Reserved
@@ -69,7 +69,7 @@
         const style=document.createElement('style');
         style.textContent=':host{all:initial}section{box-sizing:border-box;width:280px;border:1px solid #d898ba;border-radius:12px;background:#fff4f9;color:#442d3b;padding:12px;font:13px/1.5 system-ui;box-shadow:0 4px 20px #0003}strong,span{display:block}span{white-space:pre-wrap;overflow-wrap:anywhere;margin-top:5px}button{font:inherit;margin-top:8px;padding:5px 9px;border:1px solid #b982a2;border-radius:6px;background:white;color:#442d3b;cursor:pointer}';
         const card=document.createElement('section');
-        card.innerHTML='<strong>WISH 0.17.22 · 실행 상태</strong><span role="status" aria-live="polite"></span><button type="button">닫기</button>';
+        card.innerHTML='<strong>WISH 0.17.23 · 실행 상태</strong><span role="status" aria-live="polite"></span><button type="button">닫기</button>';
         card.querySelector('button').onclick=()=>{dismissed=true;host?.remove();host=null;};
         root.append(style,card);document.documentElement.appendChild(host);
         for(const [key,value] of Object.entries({position:'fixed',right:'16px',top:'112px','z-index':'2147483647',display:'block',visibility:'visible',opacity:'1',width:'280px',height:'auto'}))host.style.setProperty(key,value,'important');
@@ -93,13 +93,13 @@
     wishBoot.status('duplicate', '다른 RP Manager 실행이 감지됐습니다. 버전: '+String(window.__WISH_RP_MANAGER_LOADED__.version||'알 수 없음'));
     return;
   }
-  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.17.22', loadedAt: Date.now() };
+  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.17.23', loadedAt: Date.now() };
   // 같은 페이지에 남아 있는 v0.8.10 복사본이 뒤늦게 시작되는 경우도 차단합니다.
   window.__RP_MANAGER_0810_LOADED__ = true;
 
   const APP = {
     name: '🪽위시 RP Manager',
-    version: '0.17.22',
+    version: '0.17.23',
     dbName: 'RPContextManagerDB',
     dbVersion: 2,
     storeName: 'rooms',
@@ -5529,7 +5529,7 @@ try {
   }
 
   function aiPemBytes(pem) {
-    const compact = String(pem || '').replace(/-----BEGIN PRIVATE KEY-----|-----END PRIVATE KEY-----|\s+/g, '');
+    const compact = String(pem || '').replace(/\\r\\n|\\n|\\r/g, '\n').replace(/-----BEGIN PRIVATE KEY-----|-----END PRIVATE KEY-----|\s+/g, '');
     if (!compact) throw new Error('Vertex JSON에 private_key가 없습니다.');
     let binary;
     try { binary = atob(compact); }
@@ -5541,23 +5541,36 @@ try {
 
   function parseVertexServiceAccount(value) {
     let data;
-    try { data = JSON.parse(String(value || '')); }
+    try {
+      data = JSON.parse(String(value || '').trim());
+      if (typeof data === 'string') data = JSON.parse(data);
+    }
     catch (_) { throw new Error('Vertex 서비스 계정 JSON을 해석하지 못했습니다.'); }
-    if (!data || data.type !== 'service_account' || !data.client_email || !data.private_key) {
+    if (!data || data.type !== 'service_account' || typeof data.client_email !== 'string' || !data.client_email.trim() || typeof data.private_key !== 'string' || !data.private_key.trim()) {
       throw new Error('type, client_email, private_key가 포함된 서비스 계정 JSON이 필요합니다.');
     }
-    return data;
+    return {
+      ...data,
+      client_email:data.client_email.trim(),
+      private_key:data.private_key.replace(/\\r\\n|\\n|\\r/g, '\n').trim(),
+      private_key_id:String(data.private_key_id || '').trim(),
+      token_uri:String(data.token_uri || AI_VERTEX_OAUTH_URL).trim(),
+    };
   }
 
   async function getVertexAccessToken(serviceAccount) {
-    const cacheKey = String(serviceAccount.client_email || '');
+    const email = String(serviceAccount.client_email || '').trim();
+    const tokenUri = String(serviceAccount.token_uri || AI_VERTEX_OAUTH_URL).trim();
+    const keyId = String(serviceAccount.private_key_id || '').trim();
+    const keyBytes = aiPemBytes(serviceAccount.private_key);
+    const fingerprint = aiBase64Url(new Uint8Array(await crypto.subtle.digest('SHA-256', keyBytes)));
+    const cacheKey = JSON.stringify([email, tokenUri, keyId, fingerprint]);
     const cached = AI_VERTEX_TOKEN_CACHE.get(cacheKey);
     if (cached && cached.expiresAt > Date.now() + 60000) return cached.token;
     const now = Math.floor(Date.now() / 1000);
-    const tokenUri = String(serviceAccount.token_uri || AI_VERTEX_OAUTH_URL);
-    const header = aiBase64Url(JSON.stringify({ alg:'RS256', typ:'JWT' }));
+    const header = aiBase64Url(JSON.stringify({ alg:'RS256', typ:'JWT', ...(keyId ? { kid:keyId } : {}) }));
     const claims = aiBase64Url(JSON.stringify({
-      iss:serviceAccount.client_email,
+      iss:email,
       scope:'https://www.googleapis.com/auth/cloud-platform',
       aud:tokenUri,
       iat:now,
@@ -5565,7 +5578,7 @@ try {
     }));
     const unsigned = `${header}.${claims}`;
     const key = await crypto.subtle.importKey(
-      'pkcs8', aiPemBytes(serviceAccount.private_key),
+      'pkcs8', keyBytes,
       { name:'RSASSA-PKCS1-v1_5', hash:'SHA-256' }, false, ['sign']
     );
     const signature = new Uint8Array(await crypto.subtle.sign('RSASSA-PKCS1-v1_5', key, aiUtf8Bytes(unsigned)));
