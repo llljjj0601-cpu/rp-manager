@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🪽위시 RP Manager
 // @namespace    local.rp.context.manager
-// @version      0.17.18
+// @version      0.17.22
 // @description  장기 RP용 현재상태·날짜로그·연속성 타임라인·캐릭터 설정을 관리하고, 검수형 AI 생성과 필요한 컨텍스트 자동 주입을 지원합니다.
 // @author       User
 // @license      All Rights Reserved
@@ -69,7 +69,7 @@
         const style=document.createElement('style');
         style.textContent=':host{all:initial}section{box-sizing:border-box;width:280px;border:1px solid #d898ba;border-radius:12px;background:#fff4f9;color:#442d3b;padding:12px;font:13px/1.5 system-ui;box-shadow:0 4px 20px #0003}strong,span{display:block}span{white-space:pre-wrap;overflow-wrap:anywhere;margin-top:5px}button{font:inherit;margin-top:8px;padding:5px 9px;border:1px solid #b982a2;border-radius:6px;background:white;color:#442d3b;cursor:pointer}';
         const card=document.createElement('section');
-        card.innerHTML='<strong>WISH 0.17.18 · 실행 상태</strong><span role="status" aria-live="polite"></span><button type="button">닫기</button>';
+        card.innerHTML='<strong>WISH 0.17.22 · 실행 상태</strong><span role="status" aria-live="polite"></span><button type="button">닫기</button>';
         card.querySelector('button').onclick=()=>{dismissed=true;host?.remove();host=null;};
         root.append(style,card);document.documentElement.appendChild(host);
         for(const [key,value] of Object.entries({position:'fixed',right:'16px',top:'112px','z-index':'2147483647',display:'block',visibility:'visible',opacity:'1',width:'280px',height:'auto'}))host.style.setProperty(key,value,'important');
@@ -93,13 +93,13 @@
     wishBoot.status('duplicate', '다른 RP Manager 실행이 감지됐습니다. 버전: '+String(window.__WISH_RP_MANAGER_LOADED__.version||'알 수 없음'));
     return;
   }
-  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.17.18', loadedAt: Date.now() };
+  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.17.22', loadedAt: Date.now() };
   // 같은 페이지에 남아 있는 v0.8.10 복사본이 뒤늦게 시작되는 경우도 차단합니다.
   window.__RP_MANAGER_0810_LOADED__ = true;
 
   const APP = {
     name: '🪽위시 RP Manager',
-    version: '0.17.18',
+    version: '0.17.22',
     dbName: 'RPContextManagerDB',
     dbVersion: 2,
     storeName: 'rooms',
@@ -10894,6 +10894,25 @@ ${dialogueText}`;
     return blockKey === timelineKey;
   }
 
+  function parseClockLogHeading(inner) {
+    const civil='(?:(?:\\d{1,6}년[ \\t]*)?\\d{1,2}월[ \\t]*\\d{1,2}일|\\d{4,6}[-/.]\\d{1,2}[-/.]\\d{1,2})';
+    const period='(?:오전|오후|새벽|아침|낮|저녁|밤|정오|자정)';
+    const clock='(?:'+period+'[ \\t]*)?(?:\\d{1,2}[:：]\\d{2}(?:[:：]\\d{2})?|\\d{1,2}[ \\t]*시(?:[ \\t]*\\d{1,2}[ \\t]*분|[ \\t]*반)?)(?:[ \\t]*(?:AM|PM))?';
+    const weekday='[ \\t]*[（(](?:[월화수목금토일](?:요일)?|Mon(?:day)?|Tue(?:sday)?|Wed(?:nesday)?|Thu(?:rsday)?|Fri(?:day)?|Sat(?:urday)?|Sun(?:day)?)[)）]';
+    const suffix='(?:'+weekday+')?(?:[ \\t]*(?:T[ \\t]*)?'+clock+'(?:[ \\t]*[~～–—-][ \\t]*'+clock+')?|[ \\t]*'+period+')?';
+    const m=String(inner).match(new RegExp('^('+civil+')('+suffix+')(?:[ \\t]*·[ \\t]*([^\\-–—|｜]+?))?(?:[ \\t]*[-–—|｜][ \\t]*(.+))?$','i'));
+    if(!m||!m[2].trim())return null;
+    const k=m[1].match(/^(?:(\d{1,6})년[ \t]*)?(\d{1,2})월[ \t]*(\d{1,2})일$/),iso=k?null:m[1].match(/^(\d{4,6})([-/.])(\d{1,2})\2(\d{1,2})$/);
+    if(!k&&!iso)return null;
+    const year=Number(k?k[1]:iso[1])||null,month=Number(k?k[2]:iso[3]),day=Number(k?k[3]:iso[4]);
+    if((k?.[1]||iso)&&!year)return null;
+    const y=year||2000,leap=y%4===0&&(y%100!==0||y%400===0),days=[31,leap?29:28,31,30,31,30,31,31,30,31,30,31];
+    if(month<1||month>12||day<1||day>days[month-1])return null;
+    for(const t of m[2].matchAll(/(\d{1,2})[:：](\d{2})(?:[:：](\d{2}))?/g))if(Number(t[1])>23||Number(t[2])>59||Number(t[3]||0)>59)return null;
+    for(const t of m[2].matchAll(/(\d{1,2})[ \t]*시(?:[ \t]*(\d{1,2})[ \t]*분)?/g))if(Number(t[1])>23||Number(t[2]||0)>59)return null;
+    return {fullDate:m[1]+m[2],calendarDate:(year?year+'년 ':'')+month+'월 '+day+'일',timeLabel:m[2].trim(),year,month,day,events:String(m[4]||'').trim(),sourceTimelineLabel:sanitizeLogTimelineLabel(m[3])};
+  }
+
   function parseDatedLogBlocks(text) {
     const src = normalizeLineBreaks(text);
     // 기본 양력형 외에 작품 고유 표기인 BC206·기원전 206년·AD714도 날짜 블록으로 인식합니다.
@@ -10908,7 +10927,8 @@ ${dialogueText}`;
       const eraNamePattern = 'B\\.?[ \\t]*C\\.?(?:[ \\t]*E\\.?)?|A\\.?[ \\t]*D\\.?|C\\.?[ \\t]*E\\.?|기원전|서기';
       const eraRe = new RegExp(`^((${eraNamePattern})[ \\t]*(\\d{1,6})(?:년)?(?:[ \\t]*(\\d{1,2})월[ \\t]*(\\d{1,2})일)?(?:[ \\t]*[~～](?:[ \\t]*(?:${eraNamePattern}[ \\t]*)?\\d{1,6}(?:년)?(?:[ \\t]*\\d{1,2}월[ \\t]*\\d{1,2}일)?)?)?)(?:[ \\t]*·[ \\t]*([^\\-–—|｜]+?))?(?:[ \\t]*[-–—|｜][ \\t]*(.+))?$`, 'i');
       const era = inner.match(eraRe);
-      if (!standard && !unknown && !era) continue;
+      const clockDate = !standard && !unknown && !era ? parseClockLogHeading(inner) : null;
+      if (!standard && !unknown && !era && !clockDate) continue;
 
       const isUnknown = !!unknown;
       const isSpecialDate = !!era;
@@ -10921,7 +10941,11 @@ ${dialogueText}`;
       let timelineLabel = '';
       let sourceTimelineLabel = '';
       let events = '';
-      if (standard) {
+      if (clockDate) {
+        ({fullDate,year,month,day,events,sourceTimelineLabel} = clockDate);
+        sortYear = year;
+        timelineLabel = cleanLogTimelineLabel(sourceTimelineLabel);
+      } else if (standard) {
         fullDate = standard[1];
         year = standard[2] ? Number(standard[2]) : null;
         month = Number(standard[3]);
@@ -10965,6 +10989,7 @@ ${dialogueText}`;
         events,
         heading: m[0].trim(),
         headingRaw: m[0],
+        ...(clockDate ? { calendarDate:clockDate.calendarDate, timeLabel:clockDate.timeLabel } : {}),
       });
     }
     if (!hits.length) return [];
@@ -10995,7 +11020,7 @@ ${dialogueText}`;
           ? `${h.unknownLabel}${h.events ? ` ${h.events}` : ''}`
           : h.isSpecialDate
             ? `${h.fullDate}${h.timelineLabel && h.timelineLabel !== DEFAULT_LOG_TIMELINE ? ` · ${h.timelineLabel}` : ''}${h.events ? ` ${h.events}` : ''}`
-            : `${yearPrefix}${h.month}/${h.day}${h.timelineLabel && h.timelineLabel !== DEFAULT_LOG_TIMELINE ? ` · ${h.timelineLabel}` : ''}${h.events ? ` ${h.events}` : ''}`,
+            : `${yearPrefix}${h.month}/${h.day}${h.timeLabel ? ` ${h.timeLabel}` : ''}${h.timelineLabel && h.timelineLabel !== DEFAULT_LOG_TIMELINE ? ` · ${h.timelineLabel}` : ''}${h.events ? ` ${h.events}` : ''}`,
         sourceStart: h.index,
         sourceEnd: end,
       };
@@ -11167,8 +11192,9 @@ ${dialogueText}`;
     const timeline = cleanLogTimelineLabel(timelineLabel);
     const timelineSuffix = timeline && timeline !== DEFAULT_LOG_TIMELINE ? `·${timeline}` : '';
     const suffix = block.events ? `-${block.events}` : '';
-    if (year && month && day) return `[${Number(year)}년 ${Number(month)}월 ${Number(day)}일${timelineSuffix}${suffix}]`;
-    if (!block.isUnknown && month && day) return `[${Number(month)}월 ${Number(day)}일${timelineSuffix}${suffix}]`;
+    const timeSuffix = block.timeLabel ? ` ${block.timeLabel}` : '';
+    if (year && month && day) return `[${Number(year)}년 ${Number(month)}월 ${Number(day)}일${timeSuffix}${timelineSuffix}${suffix}]`;
+    if (!block.isUnknown && month && day) return `[${Number(month)}월 ${Number(day)}일${timeSuffix}${timelineSuffix}${suffix}]`;
     return `[${block.unknownLabel || '날짜 미상'}${timelineSuffix}${suffix}]`;
   }
 
@@ -13219,7 +13245,7 @@ ${dialogueText}`;
 
       backdrop.innerHTML = `
         <div class="rpcm-log-dialog" role="dialog" aria-modal="true">
-          <div class="rpcm-lib-dialog-head"><div><div class="rpcm-lib-dialog-title">날짜 / 연도 수정</div><div class="rpcm-lib-dialog-desc">연도 누락 보정뿐 아니라 이미 정리한 날짜도 언제든 다시 수정합니다. 로그 본문은 건드리지 않고 [날짜-사건명] 제목만 변경합니다.</div></div><button type="button" class="rpcm-lib-close" aria-label="닫기" data-rpcm-close="icon">✕</button></div>
+          <div class="rpcm-lib-dialog-head"><div><div class="rpcm-lib-dialog-title">날짜 / 연도 수정</div><div class="rpcm-lib-dialog-desc">연도는 선택사항이며 비워 둘 수 있습니다. 이미 정리한 날짜도 언제든 다시 수정합니다. 로그 본문은 건드리지 않고 [날짜-사건명] 제목만 변경합니다.</div></div><button type="button" class="rpcm-lib-close" aria-label="닫기" data-rpcm-close="icon">✕</button></div>
           <div class="rpcm-log-list">${datedHtml}${specialHtml}${unknownHtml}</div>
           <div class="rpcm-lib-dialog-actions"><div class="rpcm-spacer"></div><button type="button" class="rpcm-btn secondary" data-act="cancel">취소</button><button type="button" class="rpcm-btn primary" data-act="confirm">날짜 수정 적용</button></div>
         </div>`;
@@ -13832,7 +13858,7 @@ ${dialogueText}`;
           const body = String(choice?.querySelector('.rpcm-dup-editor')?.value || '').trim();
           const edited = `${heading}${body ? `\n${body}` : ''}`.trim();
           if (!heading || parseDatedLogBlocks(edited).length !== 1) {
-            notify(`${group.label}: 날짜 제목을 [2027년 10월 4일-키워드] 형태로 입력해 주세요.`, 'warn', 5200);
+            notify(`${group.label}: 날짜 제목을 [10월 4일-키워드] 또는 [2027년 10월 4일-키워드] 형태로 입력해 주세요. 연도는 선택사항입니다.`, 'warn', 5200);
             return;
           }
           selectedByDate.set(group.dateKey, { index: Number(selected.value), text: edited });
@@ -16554,12 +16580,10 @@ ${dialogueText}`;
     const warnings = [];
     const log = (room.slots || []).find(x => x.id === 'logSummary');
     const blocks = parseDatedLogBlocks(log?.content || '');
-    if (String(log?.content || '').trim() && !blocks.length && String(log.content || '').length > APP.legacyWholeLogFallbackMax) warnings.push('로그요약이 길지만 날짜 블록을 감지하지 못해 통짜 주입을 차단함. [2026년 8월 31일-사건명]·[BC206-사건명] 같은 형식을 사용해 주세요.');
+    if (String(log?.content || '').trim() && !blocks.length && String(log.content || '').length > APP.legacyWholeLogFallbackMax) warnings.push('로그요약이 길지만 날짜 블록을 감지하지 못해 통짜 주입을 차단함. [8월 31일-사건명]·[2026년 8월 31일-사건명]·[BC206-사건명] 같은 형식을 사용해 주세요. 연도는 선택사항입니다.');
     if (blocks.length) {
-      const noYearCount = blocks.filter(b => !b.isUnknown && !b.isSpecialDate && b.year == null).length;
       const acceptedUnknown = new Set((room.acceptedUnknownLogKeys || []).map(String));
       const unknownCount = blocks.filter(b => b.isUnknown && !acceptedUnknown.has(String(b.key))).length;
-      if (noYearCount) warnings.push(`연도 없는 날짜 로그 ${noYearCount}개 있음. ‘날짜 정리’에서 선택한 항목에 2024년/2025년처럼 연도를 일괄 적용할 수 있음.`);
       if (unknownCount) warnings.push(`확인하지 않은 날짜 미상 로그 ${unknownCount}개 있음. ‘날짜 수정’에서 ‘날짜 미상으로 계속 유지’를 체크하면 이 안내를 숨길 수 있음.`);
       const byDate = new Map();
       for (const b of blocks) {
@@ -17427,7 +17451,7 @@ ${dialogueText}`;
       if (kind === 'logSummary') {
         nextLogBlocks = parseDatedLogBlocks(nextText);
         if (nextText && !nextLogBlocks.length) {
-          notify('날짜 블록을 찾지 못했습니다. 제목을 [2027년 9월 24일-키워드] 형태로 입력해 주세요.', 'warn', 5600);
+          notify('날짜 블록을 찾지 못했습니다. 제목을 [9월 24일-키워드] 또는 [2027년 9월 24일-키워드] 형태로 입력해 주세요. 연도는 선택사항입니다.', 'warn', 5600);
           return;
         }
         logKeyMap = new Map();
@@ -18705,7 +18729,7 @@ ${dialogueText}`;
     return fallback;
   }
 
-  // The monitor lives in the stable header action row; composer controls are never used as anchors.
+  // PC uses the stable header row; mobile places the same monitor beside the composer send control.
   function rpcmBindMonitorPress(trigger) {
     let holdTimer=0, openTimer=0, resetTimer=0, fired=false, pointerId=null, pressRoomId='', pressedAt=0, startX=0, startY=0;
     const tapMs=360, holdMs=540;
@@ -24107,6 +24131,9 @@ html.rpcm-mobile-layout #rpcm-modal .rpcm-workspace #rpcm-section-preferences{di
       #rpcm-fab.rpcm-header-monitor.is-on .rpcm-header-status-dot{display:block}
       @keyframes rpcm-wish-fill{from{transform:translate(-50%,-50%) scale(var(--rpcm-fill-start,0))}to{transform:translate(-50%,-50%) scale(1)}}
       @media(max-width:600px){#rpcm-fab.rpcm-header-monitor,#rpcm-fab.rpcm-header-monitor.rpcm-mobile-fab{width:88px!important;min-width:88px!important;height:34px!important;min-height:34px!important;margin-right:4px!important}}
+      #rpcm-fab.rpcm-header-monitor.rpcm-composer-launcher{width:48px!important;min-width:48px!important;height:32px!important;min-height:32px!important;padding:0 4px!important;margin:0 6px 0 auto!important;flex-shrink:0!important;vertical-align:middle}
+      #rpcm-fab.rpcm-header-monitor.rpcm-composer-launcher .rpcm-header-monitor-label{font-size:10px;letter-spacing:0}
+      #rpcm-fab.rpcm-header-monitor.rpcm-composer-launcher .rpcm-header-status-dot{width:5px;height:5px;margin-left:3px}
       @media(prefers-reduced-motion:reduce){#rpcm-fab.rpcm-header-monitor.is-holding::before{animation:none;transform:translate(-50%,-50%) scale(1)}}
 #rpcm-modal #rpcm-section-ai .rpcm-ai-helper-card{display:grid;grid-template-columns:minmax(240px,.9fr) minmax(300px,1.2fr) 124px;grid-template-rows:auto auto;align-items:center;gap:6px 14px;min-height:104px;margin:13px 0 18px;padding:14px 16px;border:1px solid #945f7e;border-radius:11px;background:linear-gradient(110deg,#342631,#28232a);box-shadow:0 8px 24px #0003}
 #rpcm-modal #rpcm-section-ai .rpcm-ai-helper-card .rpcm-ai-card-head{grid-column:1;grid-row:1}
@@ -24185,6 +24212,23 @@ html.rpcm-mobile-layout #rpcm-modal :is(.rpcm-section,.rpcm-overview,.rpcm-tools
 html.rpcm-mobile-layout #rpcm-modal :is(input:not([type=checkbox]):not([type=radio]),select,textarea){max-width:100%;min-width:0;box-sizing:border-box}
 html.rpcm-mobile-layout #rpcm-modal :is(.rpcm-section-head,.rpcm-charlib-actions,.rpcm-item-folder-field,.rpcm-extra-category-field,.rpcm-tool-actions,.rpcm-maintenance-actions){min-width:0;max-width:100%;flex-wrap:wrap}
 html.rpcm-mobile-layout #rpcm-modal :is(.rpcm-section-title,.rpcm-section-desc,.rpcm-slot-name,.rpcm-item-readable,.rpcm-read-text,.rpcm-tool-card p,.rpcm-settings-card p){overflow-wrap:anywhere;word-break:break-word}
+/* Mobile overview: compact existing cards without changing their controls. */
+html.rpcm-mobile-layout #rpcm-modal #rpcm-section-overview .rpcm-context-refresh-shortcut{flex-direction:row;align-items:center;gap:10px;padding:10px 12px;margin-bottom:8px;background:var(--wish-card);box-shadow:none}
+html.rpcm-mobile-layout #rpcm-modal #rpcm-section-overview .rpcm-context-refresh-shortcut>.rpcm-recheck-copy{display:grid;gap:3px;flex:1;min-width:0}
+html.rpcm-mobile-layout #rpcm-modal #rpcm-section-overview .rpcm-context-refresh-shortcut b{font-size:12px;line-height:1.5}
+html.rpcm-mobile-layout #rpcm-modal #rpcm-section-overview #rpcm-context-refresh{align-self:center;min-height:40px;padding:6px 9px;font-size:11px;white-space:normal;max-width:46%}
+html.rpcm-mobile-layout #rpcm-modal #rpcm-section-overview .rpcm-recheck-help{margin:3px 0 0;border:0!important;background:transparent!important;padding:0!important;box-shadow:none!important}
+html.rpcm-mobile-layout #rpcm-modal #rpcm-section-overview .rpcm-recheck-help>summary{min-height:32px;padding:5px 0!important;font-size:11px;line-height:1.5;cursor:pointer;background:transparent!important;border:0!important}
+html.rpcm-mobile-layout #rpcm-modal #rpcm-section-overview .rpcm-recheck-help small{display:block;padding-top:3px;font-size:11px;line-height:1.6}
+html.rpcm-mobile-layout #rpcm-modal #rpcm-section-overview .rpcm-recheck-empty{margin:4px 2px 10px;font-size:11px;line-height:1.5;color:var(--wish-muted)}
+html.rpcm-mobile-layout #rpcm-modal #rpcm-section-overview .rpcm-overview{grid-template-columns:minmax(0,1fr)!important;gap:8px;margin-bottom:10px}
+html.rpcm-mobile-layout #rpcm-modal #rpcm-section-overview .rpcm-overview-card{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-column:1/-1!important;grid-row:auto!important;align-items:center;gap:4px 10px;min-height:0!important;padding:10px 12px!important;box-shadow:none!important}
+html.rpcm-mobile-layout #rpcm-modal #rpcm-section-overview .rpcm-overview-card>small{grid-column:1;grid-row:1;font-size:11px!important}
+html.rpcm-mobile-layout #rpcm-modal #rpcm-section-overview .rpcm-overview-card>strong{grid-column:2;grid-row:1;font-size:18px!important;line-height:1.4}
+html.rpcm-mobile-layout #rpcm-modal #rpcm-section-overview .rpcm-overview-card>span{grid-column:1/-1;font-size:11px;line-height:1.5;overflow-wrap:anywhere}
+html.rpcm-mobile-layout #rpcm-modal #rpcm-section-overview .rpcm-overview-card>:is(.rpcm-overview-progress,.rpcm-overview-issues,.rpcm-maintenance-actions){grid-column:1/-1}
+html.rpcm-mobile-layout #rpcm-modal #rpcm-section-overview .rpcm-maintenance-actions{display:flex!important;flex-wrap:nowrap!important;margin-top:3px;padding-top:6px;gap:8px}
+html.rpcm-mobile-layout #rpcm-modal #rpcm-section-overview .rpcm-maintenance-actions button{width:auto!important;flex:none!important;min-height:36px}
     `);
   }
 
@@ -24602,12 +24646,68 @@ html.rpcm-mobile-layout #rpcm-modal :is(.rpcm-section-title,.rpcm-section-desc,.
     return true;
   }
 
+  function findManagerMobileSendControl() {
+    // Core와 같은 입력창·전송 행 구조를 사용합니다. 팝업/확장 버튼은 후보에서 제외합니다.
+    const excluded = '#rpcm-overlay,#rpcm-quick-backdrop,#rpcm-mobile-button-host,#wish-rp-root,#wish-rp-quick,#wish-rp-monitor,#crack-pure-send-left-group';
+    const input = ['.__chat_input_textarea','div[contenteditable="true"][translate="no"]','div[contenteditable="true"]','textarea']
+      .flatMap(selector => [...document.querySelectorAll(selector)])
+      .find(el => !el.closest(excluded) && isElementVisible(el));
+    if (!input) return null;
+    const rect = input.getBoundingClientRect();
+    const midX = rect.left + rect.width / 2, midY = rect.top + rect.height / 2;
+    const eligible = button => {
+      if (button === state.fab || button.hidden || button.getAttribute('aria-hidden') === 'true' ||
+          button.contains(input) || button.closest(excluded) || /^(?:crack-|rpcm-|wish-)/.test(button.id || '') || !isElementVisible(button)) return false;
+      const r = button.getBoundingClientRect();
+      if (r.left + r.width / 2 < midX || r.top + r.height / 2 < midY - 40) return false;
+      return true;
+    };
+    const siteButton = button => {
+      try { return Object.keys(button).some(key => key.startsWith('__reactFiber$') || key.startsWith('__reactProps$')); }
+      catch (_) { return false; }
+    };
+    for (let node = input, depth = 0; node && node !== document.body && depth < 8; node = node.parentElement, depth++) {
+      const rows = node.querySelectorAll('div.justify-between');
+      for (let index = rows.length - 1; index >= 0; index--) {
+        const buttons = [...rows[index].children].flatMap(child => child.tagName === 'BUTTON' ? [child] : [...child.children].filter(el => el.tagName === 'BUTTON')).filter(eligible);
+        const own = buttons.filter(siteButton), candidates = own.length ? own : buttons;
+        if (candidates.length) return candidates[candidates.length - 1];
+      }
+      // 입력창이 속한 첫 전송 행까지만 탐색해 다른 입력창의 버튼을 가져오지 않습니다.
+      if (rows.length) break;
+    }
+    return null;
+  }
+
+  function mountManagerMobileComposer(fab) {
+    hideManagerMobileHost();
+    const send = findManagerMobileSendControl();
+    if (!send?.parentNode) {
+      fab.rpcmCancelHold?.();
+      fab.remove();
+      delete fab.dataset.rpcmPlacement;
+      return false;
+    }
+    const group = document.getElementById('crack-pure-send-left-group');
+    const anchor = group?.parentNode === send.parentNode && group.nextElementSibling === send ? group : send;
+    // 기존 전송·중지·다른 확장 버튼을 옮기지 않고 WISH만 앞에 넣습니다.
+    if (fab.parentNode !== anchor.parentNode || fab.nextElementSibling !== anchor) {
+      fab.rpcmCancelHold?.();
+      anchor.parentNode.insertBefore(fab, anchor);
+    }
+    fab.classList.remove('rpcm-fallback', 'rpcm-compact-fallback', 'rpcm-mobile-fab');
+    fab.classList.add('rpcm-composer-launcher');
+    for (const prop of ['position','top','right','left','bottom','z-index','margin','margin-right']) fab.style.removeProperty(prop);
+    fab.dataset.rpcmPlacement = 'composer-before-send';
+    return true;
+  }
+
   function updateFab() {
     if (!state.fab) {
       updateQuickInjectionTrigger();
       return;
     }
-    const visible = !!state.currentChatId && !state.modal;
+    const visible = !!state.currentChatId && !state.modal && (!isMobileManagerLayout() || (state.fab.isConnected && state.fab.dataset.rpcmPlacement === 'composer-before-send'));
     state.fab.hidden = !visible;
     const armed = !!state.currentRoom?.pending;
     state.fab.classList.toggle('rpcm-armed', armed);
@@ -24629,12 +24729,24 @@ html.rpcm-mobile-layout #rpcm-modal :is(.rpcm-section-title,.rpcm-section-desc,.
       return false;
     }
     const fab = state.fab || createManagerButton();
+    const mobileLayout = isMobileManagerLayout();
+    if (mobileLayout) {
+      managerInlineMounted = false;
+      const mounted = mountManagerMobileComposer(fab);
+      state.fab = fab;
+      scheduleMobileSettingsMenuEntry(0);
+      updateFab();
+      return mounted;
+    }
+    if (fab.classList.contains('rpcm-composer-launcher')) {
+      fab.rpcmCancelHold?.();
+      fab.classList.remove('rpcm-composer-launcher');
+    }
     // React나 다른 확장이 헤더를 다시 그렸다면 같은 위치에 계속 재삽입하지 않습니다.
     if (managerInlineMounted && !fab.isConnected) {
       fab.rpcmCancelHold?.();
       managerFallbackLocked = true;
     }
-    const mobileLayout = isMobileManagerLayout();
     fab.classList.toggle('rpcm-mobile-fab', mobileLayout);
     scheduleMobileSettingsMenuEntry(0);
     if (!managerFallbackLocked && mountManagerNextToModelSelector(fab)) {
@@ -34592,7 +34704,7 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
         <label class="rpcm-pref-row"><span>관련도 기준<small>최근 연속성 로그에는 적용되지 않음</small></span><select data-rpcm-pref-field="autoLogRelevance"><option value="strict" ${room.autoLogRelevance==='strict'?'selected':''}>엄격</option><option value="balanced" ${room.autoLogRelevance==='balanced'?'selected':''}>균형</option><option value="broad" ${room.autoLogRelevance==='broad'?'selected':''}>넓게</option></select></label>
         <label class="rpcm-pref-row"><span>AI 맥락 검토 ${rpcmHelpButton('context')}<small>관련 날짜로그 후보만 API로 재검토</small></span><input type="checkbox" data-rpcm-pref-field="aiContextLogRerankEnabled" ${room.aiContextLogRerankEnabled?'checked':''}></label></article>
       ${semanticUiHtml(room)}
-      <article class="rpcm-pref-card"><header><h3>화면·모니터</h3><span class="rpcm-pref-scope">이 기기</span></header><p>상단 WISH 버튼을 짧게 누르면 빠른 관리, 길게 누르면 전체 Manager가 열립니다. 작은 초록색 표시가 있으면 주입이 켜진 상태입니다.</p>
+      <article class="rpcm-pref-card"><header><h3>화면·모니터</h3><span class="rpcm-pref-scope">이 기기</span></header><p>${isMobileManagerLayout()?'모바일에서는 전송 버튼 옆 WISH를 짧게 누르면 빠른 관리, 길게 누르면 전체 Manager가 열립니다. 크랙 오른쪽 메뉴의 RP Manager에서도 열 수 있습니다.':'상단 WISH 버튼을 짧게 누르면 빠른 관리, 길게 누르면 전체 Manager가 열립니다. 작은 초록색 표시가 있으면 주입이 켜진 상태입니다.'}</p>
         <label class="rpcm-pref-row"><span>응답교정 바로가기 표시<small>크랙 채팅 상단의 🪽 응답교정 버튼을 표시합니다. 꺼도 Manager의 AI 화면에서 응답교정 설정을 열 수 있습니다.</small></span><input type="checkbox" data-rpcm-refiner-ui-field="showButton" ${refinerDisplay.showButton?'checked':''}></label>
         <label class="rpcm-pref-row"><span>응답교정 검토 알림 표시<small>검토 중·검토 완료 상태를 채팅 화면 상단에 잠시 표시합니다.</small></span><input type="checkbox" data-rpcm-refiner-ui-field="showBadge" ${refinerDisplay.showBadge?'checked':''}></label>
         <button type="button" class="rpcm-btn secondary" data-rpcm-pref-action="quick">Quick Panel 열기</button></article>
@@ -34701,7 +34813,7 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
     const duplicateBranchHint = duplicateGroups.map(timelineBranchHintForGroup).find(Boolean) || '';
     const logBlocksForIssues = parseDatedLogBlocks((room.slots || []).find(s => s.id === 'logSummary')?.content || '');
     const acceptedUnknownForUi = new Set((room.acceptedUnknownLogKeys || []).map(String));
-    const hasLogDateIssues = logBlocksForIssues.some(b => (b.isUnknown && !acceptedUnknownForUi.has(String(b.key))) || (!b.isUnknown && !b.isSpecialDate && b.year == null));
+    const hasLogDateIssues = logBlocksForIssues.some(b => b.isUnknown && !acceptedUnknownForUi.has(String(b.key)));
     const manualLogStats = manualLogSelectionStats(room);
     const storyStats = storyTimelineSummary(room);
     const aiReviewItems = normalizeAiReviewInbox(room);
@@ -34829,7 +34941,7 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
               <div class="rpcm-overview-card"><small>용량 · 45,000자 / UTF-8 ${formatCount(APP.safeCarrierPayloadBytes)}B</small><strong>${formatCount(capacity.total)}자</strong><span>${esc(st.label)} · ${esc(carrierCapacityDetailText(room, capacity))}</span><div class="rpcm-overview-progress" role="progressbar" aria-label="carrier 글자 용량" aria-valuenow="${Math.max(0, Math.min(45000, capacity.total))}" aria-valuemin="0" aria-valuemax="45000"><i style="width:${Math.max(0, Math.min(100, capacity.total / 45000 * 100))}%"></i></div></div>
               <div class="rpcm-overview-card" data-lore-omitted="${loreOmitted}"><small>확인할 일</small><strong>${duplicateItemGroups.length + duplicateGroups.length + (storyReviewDue ? 1 : 0) + knowledgeConflictCount + (loreOmitted ? 1 : 0) + maintenanceExtraImmediate.length}건</strong><span>${[duplicateItemGroups.length ? '중복 물품 ' + duplicateItemGroups.length : '', duplicateGroups.length ? '중복 로그 ' + duplicateGroups.length : '', storyReviewDue ? '타임라인 검토' : '', knowledgeConflictCount ? '인지 카드 충돌' : '', loreOmitted ? '자료집 용량 제외' : '', ...maintenanceExtraImmediate.map(entry => entry.title)].filter(Boolean).join(' · ') || '현재 표시할 검토 알림 없음'}</span>${duplicateItemGroups.length || duplicateGroups.length || storyReviewDue || knowledgeConflictCount || loreOmitted || maintenanceExtraImmediate.length ? `<div class="rpcm-overview-issues">${duplicateGroups.length ? `<button type="button" data-overview-issue="logs">중복 로그 ${duplicateGroups.length}건</button>` : ''}${duplicateItemGroups.length ? `<button type="button" data-overview-issue="items">중복 물품 ${duplicateItemGroups.length}건</button>` : ''}${storyReviewDue ? '<button type="button" data-overview-issue="timeline">타임라인 검토</button>' : ''}${knowledgeConflictCount ? `<button type="button" data-overview-issue="knowledge">인지 충돌 ${knowledgeConflictCount}건</button>` : ''}${loreOmitted ? `<button type="button" data-overview-issue="lore">자료집 용량 제외 ${loreOmitted}개</button>` : ''}${maintenanceExtraImmediate.map((entry, index) => `<button type="button" data-overview-maintenance="${index}">${esc(entry.title)}</button>`).join('')}</div>` : ''}<div class="rpcm-maintenance-actions"><em data-maintenance-count>정리 추천 ${maintenanceReport.updates.length + maintenanceReport.capacityItems.length}건</em><button type="button" class="rpcm-btn secondary" id="rpcm-maintenance-open">정리 점검</button></div></div>
             </div>
-            <div class="rpcm-context-refresh-shortcut" role="group" aria-label="최신 RP 기준 주입 재검사"><span><b>↻ 최신 RP 기준 주입 재검사</b><small>최근 3회 USER↔AI 흐름을 다시 읽고 인물·물품·자료집·인물정보·날짜로그 선택을 최신화합니다.</small></span><button type="button" class="rpcm-btn secondary" id="rpcm-context-refresh">주입 내용 새로고침</button></div>
+            <div class="rpcm-context-refresh-shortcut" role="group" aria-label="최신 RP 기준 주입 재검사">${isMobileManagerLayout()?'<div class="rpcm-recheck-copy"><b>↻ 최신 RP 기준 주입 재검사</b><details class="rpcm-recheck-help"><summary>선택 기준 안내</summary><small>최근 3회 USER↔AI 흐름을 다시 읽고 인물·물품·자료집·인물정보·날짜로그 선택을 최신화합니다.</small></details></div>':'<span><b>↻ 최신 RP 기준 주입 재검사</b><small>최근 3회 USER↔AI 흐름을 다시 읽고 인물·물품·자료집·인물정보·날짜로그 선택을 최신화합니다.</small></span>'}<button type="button" class="rpcm-btn secondary" id="rpcm-context-refresh">주입 내용 새로고침</button></div>
             <div class="rpcm-log-count-shortcut" role="group" aria-label="날짜로그 주입 바로가기"><span>📅 날짜로그 자동 주입 <strong>최근 ${recentLogInjectionCount(room)}개 · 관련 최대 ${relatedLogInjectionCount(room)}개</strong></span><button type="button" class="rpcm-btn secondary" id="rpcm-log-count-quick">개수 조절 ↗</button></div>
             ${renderManualUpdateOverviewHtml(room)}
             ${renderManualUpdateCenterHtml(room)}
