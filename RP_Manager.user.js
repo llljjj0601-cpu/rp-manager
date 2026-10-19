@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🪽위시 RP Manager
 // @namespace    local.rp.context.manager
-// @version      0.17.23
+// @version      0.17.24
 // @description  장기 RP용 현재상태·날짜로그·연속성 타임라인·캐릭터 설정을 관리하고, 검수형 AI 생성과 필요한 컨텍스트 자동 주입을 지원합니다.
 // @author       User
 // @license      All Rights Reserved
@@ -69,7 +69,7 @@
         const style=document.createElement('style');
         style.textContent=':host{all:initial}section{box-sizing:border-box;width:280px;border:1px solid #d898ba;border-radius:12px;background:#fff4f9;color:#442d3b;padding:12px;font:13px/1.5 system-ui;box-shadow:0 4px 20px #0003}strong,span{display:block}span{white-space:pre-wrap;overflow-wrap:anywhere;margin-top:5px}button{font:inherit;margin-top:8px;padding:5px 9px;border:1px solid #b982a2;border-radius:6px;background:white;color:#442d3b;cursor:pointer}';
         const card=document.createElement('section');
-        card.innerHTML='<strong>WISH 0.17.23 · 실행 상태</strong><span role="status" aria-live="polite"></span><button type="button">닫기</button>';
+        card.innerHTML='<strong>WISH 0.17.24 · 실행 상태</strong><span role="status" aria-live="polite"></span><button type="button">닫기</button>';
         card.querySelector('button').onclick=()=>{dismissed=true;host?.remove();host=null;};
         root.append(style,card);document.documentElement.appendChild(host);
         for(const [key,value] of Object.entries({position:'fixed',right:'16px',top:'112px','z-index':'2147483647',display:'block',visibility:'visible',opacity:'1',width:'280px',height:'auto'}))host.style.setProperty(key,value,'important');
@@ -93,13 +93,13 @@
     wishBoot.status('duplicate', '다른 RP Manager 실행이 감지됐습니다. 버전: '+String(window.__WISH_RP_MANAGER_LOADED__.version||'알 수 없음'));
     return;
   }
-  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.17.23', loadedAt: Date.now() };
+  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.17.24', loadedAt: Date.now() };
   // 같은 페이지에 남아 있는 v0.8.10 복사본이 뒤늦게 시작되는 경우도 차단합니다.
   window.__RP_MANAGER_0810_LOADED__ = true;
 
   const APP = {
     name: '🪽위시 RP Manager',
-    version: '0.17.23',
+    version: '0.17.24',
     dbName: 'RPContextManagerDB',
     dbVersion: 2,
     storeName: 'rooms',
@@ -4719,7 +4719,7 @@ USER 캐릭터의 다음 항목은 직접 RP, USER의 명시적 서술 또는 �
 
   function classifyAiFailure(error) {
     const detail = String(error?.message || error || '알 수 없는 오류');
-    const lower = detail.toLowerCase();
+    const lower = detail.split(' [V24 서명 점검:')[0].toLowerCase();
     let category = '기타 오류';
     if (/quotaexceedederror|storage quota|dom exception.*quota|the quota has been exceeded/.test(lower)) category = '브라우저 저장공간 오류';
     else if (/app.?check|firebaseappcheck|attestation|recaptcha enterprise/.test(lower)) category = 'Firebase App Check 인증';
@@ -5558,6 +5558,54 @@ try {
     };
   }
 
+  async function inspectVertexSignature(serviceAccount, unsigned, signature) {
+    try {
+      const privateKey = await crypto.subtle.importKey('pkcs8', aiPemBytes(serviceAccount.private_key), { name:'RSASSA-PKCS1-v1_5', hash:'SHA-256' }, true, ['sign']);
+      const jwk = await crypto.subtle.exportKey('jwk', privateKey);
+      const publicKey = await crypto.subtle.importKey('jwk', { kty:'RSA', n:jwk.n, e:jwk.e, alg:'RS256', ext:true }, { name:'RSASSA-PKCS1-v1_5', hash:'SHA-256' }, false, ['verify']);
+      if (!await crypto.subtle.verify('RSASSA-PKCS1-v1_5', publicKey, signature, aiUtf8Bytes(unsigned))) {
+        return { label:'로컬 서명 검증 실패', matched:false };
+      }
+    } catch (_) { return { label:'브라우저 로컬 서명 점검 불가', matched:false }; }
+    let response;
+    try {
+      response = await aiHttpRequest(`https://www.googleapis.com/service_accounts/v1/jwk/${encodeURIComponent(String(serviceAccount.client_email || '').trim())}`, {
+        method:'GET', headers:{ Accept:'application/json' }, timeout:10000,
+      });
+    } catch (_) { return { label:'로컬 서명 정상 · Google 공개키 조회 실패', matched:false }; }
+    if (!response.ok) return { label:`로컬 서명 정상 · Google 공개키 조회 HTTP ${Number(response.status) || 0}`, matched:false };
+    let keys;
+    try { keys = JSON.parse(response.text)?.keys; } catch (_) {}
+    if (!Array.isArray(keys)) return { label:'로컬 서명 정상 · Google 공개키 응답 형식 확인 불가', matched:false };
+    let checked = 0;
+    for (const jwk of keys) {
+      if (!jwk || jwk.kty !== 'RSA' || typeof jwk.n !== 'string' || typeof jwk.e !== 'string' || !/^[A-Za-z0-9_-]+$/.test(jwk.n) || !/^[A-Za-z0-9_-]+$/.test(jwk.e)) continue;
+      try {
+        const key = await crypto.subtle.importKey('jwk', { kty:'RSA', n:jwk.n, e:jwk.e, alg:'RS256', ext:true }, { name:'RSASSA-PKCS1-v1_5', hash:'SHA-256' }, false, ['verify']);
+        const matches = await crypto.subtle.verify('RSASSA-PKCS1-v1_5', key, signature, aiUtf8Bytes(unsigned));
+        checked++;
+        if (matches) {
+          return { label:'로컬·Google 공개키 서명 일치', matched:true, keyId:typeof jwk.kid === 'string' ? jwk.kid : '' };
+        }
+      } catch (_) {}
+    }
+    return { label:checked ? '로컬 서명 정상 · Google 공개목록에서 일치 키 없음' : '로컬 서명 정상 · 대조 가능한 Google 공개키 없음', matched:false };
+  }
+
+  async function requestVertexTokenDirect(assertion) {
+    if (typeof fetch !== 'function' || typeof AbortController !== 'function') throw new Error('직접 인증 재시도를 지원하지 않는 브라우저입니다.');
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10000);
+    try {
+      const response = await fetch(AI_VERTEX_OAUTH_URL, {
+        method:'POST', headers:{ 'Content-Type':'application/x-www-form-urlencoded' },
+        body:`grant_type=${encodeURIComponent('urn:ietf:params:oauth:grant-type:jwt-bearer')}&assertion=${encodeURIComponent(assertion)}`,
+        credentials:'omit', referrerPolicy:'no-referrer', cache:'no-store', redirect:'error', signal:controller.signal,
+      });
+      return { ok:response.ok, status:Number(response.status || 0), text:String(await response.text()), finalUrl:AI_VERTEX_OAUTH_URL };
+    } finally { clearTimeout(timer); }
+  }
+
   async function getVertexAccessToken(serviceAccount) {
     const email = String(serviceAccount.client_email || '').trim();
     const tokenUri = String(serviceAccount.token_uri || AI_VERTEX_OAUTH_URL).trim();
@@ -5583,11 +5631,37 @@ try {
     );
     const signature = new Uint8Array(await crypto.subtle.sign('RSASSA-PKCS1-v1_5', key, aiUtf8Bytes(unsigned)));
     const assertion = `${unsigned}.${aiBase64Url(signature)}`;
-    const response = await aiHttpRequest(tokenUri, {
+    let response = await aiHttpRequest(tokenUri, {
       headers:{ 'Content-Type':'application/x-www-form-urlencoded' },
       body:`grant_type=${encodeURIComponent('urn:ietf:params:oauth:grant-type:jwt-bearer')}&assertion=${encodeURIComponent(assertion)}`,
       timeout:30000,
     });
+    let rejection;
+    try { if (!response.ok && Number(response.status) === 400) rejection = JSON.parse(response.text); } catch (_) {}
+    if (rejection?.error === 'invalid_grant' && /Invalid JWT Signature/i.test(String(rejection.error_description || ''))) {
+      const diagnostic = await inspectVertexSignature(serviceAccount, unsigned, signature);
+      let retryLabel = '';
+      let googleEndpoint = false;
+      try { googleEndpoint = ['https://oauth2.googleapis.com', 'https://accounts.google.com'].includes(new URL(tokenUri).origin); } catch (_) {}
+      if (diagnostic.matched && googleEndpoint) {
+        try {
+          const issuedAt = Math.floor(Date.now() / 1000);
+          const retryKeyId = diagnostic.keyId || keyId;
+          const retryHeader = aiBase64Url(JSON.stringify({ alg:'RS256', typ:'JWT', ...(retryKeyId ? { kid:retryKeyId } : {}) }));
+          const retryClaims = aiBase64Url(JSON.stringify({ iss:email, scope:'https://www.googleapis.com/auth/cloud-platform', aud:AI_VERTEX_OAUTH_URL, iat:issuedAt, exp:issuedAt + 3600 }));
+          const retryUnsigned = `${retryHeader}.${retryClaims}`;
+          const retrySignature = new Uint8Array(await crypto.subtle.sign('RSASSA-PKCS1-v1_5', key, aiUtf8Bytes(retryUnsigned)));
+          const retried = await requestVertexTokenDirect(`${retryUnsigned}.${aiBase64Url(retrySignature)}`);
+          if (retried.ok) response = retried;
+          else retryLabel = ` · 직접 재시도 HTTP ${Number(retried.status) || 0}`;
+        } catch (_) { retryLabel = ' · 직접 재시도 실패'; }
+      }
+      if (!response.ok) {
+        let message = 'Vertex 인증 오류 400: Invalid JWT Signature.';
+        try { parseAiJsonResponse(response, 'Vertex 인증'); } catch (error) { message = error.message; }
+        throw new Error(`${message} [V24 서명 점검: ${diagnostic.label}${retryLabel}]`);
+      }
+    }
     const data = parseAiJsonResponse(response, 'Vertex 인증');
     if (!data.access_token) throw new Error('Vertex 액세스 토큰을 받지 못했습니다.');
     const expiresIn = Math.max(300, Number(data.expires_in) || 3600);
