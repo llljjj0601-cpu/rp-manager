@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🪽위시 RP Manager
 // @namespace    local.rp.context.manager
-// @version      0.17.27
+// @version      0.17.28
 // @description  장기 RP용 현재상태·날짜로그·연속성 타임라인·캐릭터 설정을 관리하고, 검수형 AI 생성과 필요한 컨텍스트 자동 주입을 지원합니다.
 // @author       User
 // @license      All Rights Reserved
@@ -69,7 +69,7 @@
         const style=document.createElement('style');
         style.textContent=':host{all:initial}section{box-sizing:border-box;width:280px;border:1px solid #d898ba;border-radius:12px;background:#fff4f9;color:#442d3b;padding:12px;font:13px/1.5 system-ui;box-shadow:0 4px 20px #0003}strong,span{display:block}span{white-space:pre-wrap;overflow-wrap:anywhere;margin-top:5px}button{font:inherit;margin-top:8px;padding:5px 9px;border:1px solid #b982a2;border-radius:6px;background:white;color:#442d3b;cursor:pointer}';
         const card=document.createElement('section');
-        card.innerHTML='<strong>WISH 0.17.27 · 실행 상태</strong><span role="status" aria-live="polite"></span><button type="button">닫기</button>';
+        card.innerHTML='<strong>WISH 0.17.28 · 실행 상태</strong><span role="status" aria-live="polite"></span><button type="button">닫기</button>';
         card.querySelector('button').onclick=()=>{dismissed=true;host?.remove();host=null;};
         root.append(style,card);document.documentElement.appendChild(host);
         for(const [key,value] of Object.entries({position:'fixed',right:'16px',top:'112px','z-index':'2147483647',display:'block',visibility:'visible',opacity:'1',width:'280px',height:'auto'}))host.style.setProperty(key,value,'important');
@@ -93,13 +93,13 @@
     wishBoot.status('duplicate', '다른 RP Manager 실행이 감지됐습니다. 버전: '+String(window.__WISH_RP_MANAGER_LOADED__.version||'알 수 없음'));
     return;
   }
-  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.17.27', loadedAt: Date.now() };
+  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.17.28', loadedAt: Date.now() };
   // 같은 페이지에 남아 있는 v0.8.10 복사본이 뒤늦게 시작되는 경우도 차단합니다.
   window.__RP_MANAGER_0810_LOADED__ = true;
 
   const APP = {
     name: '🪽위시 RP Manager',
-    version: '0.17.27',
+    version: '0.17.28',
     dbName: 'RPContextManagerDB',
     dbVersion: 2,
     storeName: 'rooms',
@@ -5175,12 +5175,41 @@ USER 캐릭터의 다음 항목은 직접 RP, USER의 명시적 서술 또는 �
     const ordered=all.reverse();rpcmNewBadgeObserveMessages(chatId,ordered,true);return ordered;
   }
 
+  // API 요약 전용: 저장 기준점이 최근 500메시지 밖에 있어도 그 지점까지 찾아갑니다.
+  // 기존 RP 원문 페이저의 인증/재시도/300→50 폴백과 완료 턴 판정을 재사용합니다.
+  function aiSummaryNeededCursorKeys(room, settings) {
+    if (!settings?.preferUnprocessed) return [];
+    return [...new Set(['logSummary', 'currentState']
+      .filter(id => settings.targets?.[id])
+      .map(id => String(room?.aiSummaryLastAppliedTurnKeys?.[id] || room?.aiSummaryLastAppliedTurnKey || ''))
+      .filter(Boolean))];
+  }
+
+  async function loadAiSummaryTurns(room, requiredKeys = [], minRecentTurns = 100) {
+    if (!room || String(apiChatIdOf(state.currentRoom)) !== String(apiChatIdOf(room))) {
+      throw new Error('AI 요약 중 현재 RP 방이 변경되었습니다. 원래 방으로 돌아가 다시 확인해 주세요.');
+    }
+    const keys = [...new Set((requiredKeys || []).map(String).filter(Boolean))];
+    const minTurns = Math.max(0, Math.min(100, Number(minRecentTurns) || 0));
+    const pager = createRpcmTurnPager(state.currentRoom);
+    const chunks = [];
+    let count = 0;
+    while (!pager.done) {
+      const chunk = await pager.next();
+      chunks.push(chunk);
+      count += chunk.length;
+      // 페이지가 최신→과거 순으로 오므로, 모든 기준을 찾을 때까지만 더 읽습니다.
+      if (count >= minTurns && keys.every(key => chunks.some(part => rpcmFindTurnIndex(part, key) >= 0))) break;
+    }
+    return {turns:chunks.reverse().flat(), exhausted:pager.done};
+  }
+
   function selectAiDialogueTurns(turns, room, settings, targetId = '') {
     const count = Math.max(0, Math.min(100, Number(settings.turnCount) || 0));
     const lastKey = String(room.aiSummaryLastAppliedTurnKeys?.[targetId] || room.aiSummaryLastAppliedTurnKey || '');
     if (settings.preferUnprocessed && lastKey) {
       const index = rpcmFindTurnIndex(turns,lastKey);
-      if (index < 0) throw new Error('저장된 이어 요약 기준을 최근 대화에서 찾지 못했습니다. “최근 N턴 다시 요약”을 선택하거나 기준을 리셋해 주세요.');
+      if (index < 0) throw new Error('저장된 이어 요약 기준이 전체 RP 원문에서도 확인되지 않습니다. 해당 턴이 삭제·리롤·수정되었는지 확인해 주세요. 기준을 자동 초기화하지 않았습니다.');
       const fresh = turns.slice(index + 1);
       if (!fresh.length) throw new Error('저장된 이어 요약 기준 이후 새로 완료된 대화가 없습니다.');
       return count ? fresh.slice(0, count) : [];
@@ -6111,7 +6140,7 @@ try {
   function aiTurnsAfterSavedKey(turns, savedKey) {
     const key = String(savedKey || '');
     if (!key) return null;
-    const index = (turns || []).findIndex(turn => String(turn.key) === key);
+    const index = rpcmFindTurnIndex(turns, key);
     return index < 0 ? -1 : Math.max(0, turns.length - index - 1);
   }
 
@@ -6208,8 +6237,8 @@ try {
     const source = Array.isArray(turns) ? turns : [];
     const lastKey = String(room?.aiSummaryLastAppliedTurnKeys?.[targetId] || room?.aiSummaryLastAppliedTurnKey || '');
     if (settings.preferUnprocessed && lastKey) {
-      const index = source.findIndex(turn => String(turn.key) === lastKey);
-      if (index < 0) throw new Error('저장된 이어 요약 기준을 최근 대화에서 찾지 못했습니다. ‘최근 N턴 다시 요약’을 선택하거나 기준을 리셋해 주세요.');
+      const index = rpcmFindTurnIndex(source, lastKey);
+      if (index < 0) throw new Error('저장된 이어 요약 기준이 전체 RP 원문에서도 확인되지 않습니다. 해당 턴이 삭제·리롤·수정되었는지 확인해 주세요. 기준을 자동 초기화하지 않았습니다.');
       return { turns:source.slice(index + 1), fromStart:true };
     }
     return { turns:source, fromStart:false };
@@ -6495,8 +6524,8 @@ ${dialogueText}`;
     const chatId = apiChatIdOf(room);
     if (!chatId) throw new Error('현재 채팅방 ID를 찾지 못했습니다.');
     onStatus('완료된 최근 대화를 불러오는 중…');
-    const history = await fetchAiMessageHistory(chatId, '', Math.max(160, Math.min(500, settings.turnCount * 6 + 80)));
-    const allTurns = buildCompletedAiDialogueTurns(history);
+    const loaded = await loadAiSummaryTurns(room, aiSummaryNeededCursorKeys(room, settings), settings.turnCount);
+    const allTurns = loaded.turns;
     const turnsByTarget = {};
     if (settings.targets.logSummary) turnsByTarget.logSummary = selectAiDialogueTurns(allTurns, room, settings, 'logSummary');
     if (settings.targets.currentState) turnsByTarget.currentState = selectAiDialogueTurns(allTurns, room, settings, 'currentState');
@@ -20950,6 +20979,21 @@ ${dialogueText}`;
     const inputPreviewEl = $('#rpcm-ai-input-preview');
     let currentInputPlan = null;
     let inputPreviewTurns = null;
+    let inputPreviewExhausted = false;
+    let inputPreviewLoad = null;
+    const getSummaryPreviewTurns = async (requiredKeys = []) => {
+      const keys = [...new Set(requiredKeys.map(String).filter(Boolean))];
+      if (inputPreviewTurns && (inputPreviewExhausted || keys.every(key => rpcmFindTurnIndex(inputPreviewTurns, key) >= 0))) return inputPreviewTurns;
+      if (inputPreviewLoad) await inputPreviewLoad;
+      if (inputPreviewTurns && (inputPreviewExhausted || keys.every(key => rpcmFindTurnIndex(inputPreviewTurns, key) >= 0))) return inputPreviewTurns;
+      inputPreviewLoad = loadAiSummaryTurns(room, keys, 100);
+      try {
+        const loaded = await inputPreviewLoad;
+        inputPreviewTurns = loaded.turns;
+        inputPreviewExhausted = loaded.exhausted;
+        return inputPreviewTurns;
+      } finally { inputPreviewLoad = null; }
+    };
     let inputPreviewTimer = 0;
     let inputPreviewSequence = 0;
     const historyDetailsEl = $('#rpcm-ai-history');
@@ -21061,10 +21105,8 @@ ${dialogueText}`;
       try {
         const chatId = apiChatIdOf(room);
         if (!chatId) throw new Error('현재 채팅방 ID를 찾지 못했습니다.');
-        const history = await fetchAiMessageHistory(chatId, '', 500);
-        const turns = buildCompletedAiDialogueTurns(history);
+        const turns = await getSummaryPreviewTurns(selectedTargets.map(([id]) => keys[id]).filter(Boolean));
         if (sequence !== resumeRefreshSequence || !document.contains(backdrop)) return;
-        inputPreviewTurns = turns;
         const counts = new Map();
         const labels = selectedTargets.map(([id, label]) => {
           if (!keys[id]) return `${label} 첫 적용 전`;
@@ -21306,21 +21348,18 @@ ${dialogueText}`;
           inputPreviewEl.textContent = '날짜요약 또는 현재상태를 하나 이상 선택해 주세요.';
           return;
         }
-        if (!inputPreviewTurns) {
-          const chatId = apiChatIdOf(room);
-          if (!chatId) throw new Error('현재 채팅방 ID를 찾지 못했습니다.');
-          const history = await fetchAiMessageHistory(chatId, '', 500);
-          inputPreviewTurns = buildCompletedAiDialogueTurns(history);
-        }
+        const planRoom = aiRoomWithPendingDraft(room, generatedDraft);
+        const turns = await getSummaryPreviewTurns(aiSummaryNeededCursorKeys(planRoom, next));
         if (sequence !== inputPreviewSequence || !document.contains(backdrop)) return;
-        renderInputPlan(calculateAiSummaryInputPlan(aiRoomWithPendingDraft(room, generatedDraft), next, inputPreviewTurns));
+        renderInputPlan(calculateAiSummaryInputPlan(planRoom, next, turns));
       } catch (error) {
         if (sequence !== inputPreviewSequence || !document.contains(backdrop)) return;
         currentInputPlan = null;
         inputPreviewEl.className = 'rpcm-ai-progress rpcm-ai-input-preview caution';
         inputPreviewEl.textContent = `입력량을 미리 계산하지 못했습니다. 생성 전 범위를 확인해 주세요. · ${friendlyAiErrorMessage(error)}`;
-        generateBtn.dataset.inputBlocked = 'false';
-        if (!state.aiSummaryBusy) generateBtn.disabled = false;
+        // 입력량을 검증하지 못한 상태에서 유료 API 호출을 허용하지 않습니다.
+        generateBtn.dataset.inputBlocked = 'true';
+        if (!state.aiSummaryBusy) generateBtn.disabled = true;
       }
     };
     const scheduleInputPreview = () => {
@@ -21541,6 +21580,7 @@ ${dialogueText}`;
         settings.targets = { logSummary:!!$('#rpcm-ai-target-log').checked, currentState:!!$('#rpcm-ai-target-state').checked };
         saveAiSummarySettings(settings);
         inputPreviewTurns = null;
+        inputPreviewExhausted = false;
         refreshResumeInfo();
         await refreshResumeProgress();
         scheduleInputPreview();
@@ -21644,6 +21684,7 @@ ${dialogueText}`;
         saveAiSummarySettings(settings);
         await persistGeneratedDraft();
         inputPreviewTurns = null;
+        inputPreviewExhausted = false;
         refreshResumeInfo();
         await refreshResumeProgress();
         scheduleInputPreview();
@@ -21684,6 +21725,7 @@ ${dialogueText}`;
         await saveRoom(room);
         $('#rpcm-ai-draft-banner').hidden = true;
         inputPreviewTurns = null;
+        inputPreviewExhausted = false;
         refreshResumeInfo();
         refreshResumeProgress();
         setBusy(false, '적용 완료 · 다음 API 요약은 이번 마지막 대화턴 이후부터 이어집니다.', 'success');
