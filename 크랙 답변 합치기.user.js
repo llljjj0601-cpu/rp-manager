@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         크랙 답변 합치기
 // @namespace    local.crack.answer-merge
-// @version      1.0.2
+// @version      1.0.3
 // @description  이어진 AI 답변 사이의 + 버튼 · 연결 지점 표시 · 서버 저장 확인 후 합치기
 // @match        https://crack.wrtn.ai/*
 // @run-at       document-idle
@@ -418,7 +418,7 @@
             dialog.querySelector('[data-save]').textContent = '다시 확인하고 마무리';
             dialog.querySelector('[data-save]').disabled = false;
             try { dialog.querySelector('[data-abandon]').hidden = pendingJob(job.chat)?.operationId !== job.operationId; } catch (_) {}
-        } finally { busy = false; schedule(); }
+        } finally { busy = false; if (job.complete) closeDialog(); else schedule(); }
     }
     function render() {
         timer = 0;
