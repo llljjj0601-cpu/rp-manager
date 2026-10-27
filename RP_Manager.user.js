@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🪽위시 RP Manager
 // @namespace    local.rp.context.manager
-// @version      0.17.29
+// @version      0.17.30
 // @description  장기 RP용 현재상태·날짜로그·연속성 타임라인·캐릭터 설정을 관리하고, 검수형 AI 생성과 필요한 컨텍스트 자동 주입을 지원합니다.
 // @author       User
 // @license      All Rights Reserved
@@ -69,7 +69,7 @@
         const style=document.createElement('style');
         style.textContent=':host{all:initial}section{box-sizing:border-box;width:280px;border:1px solid #d898ba;border-radius:12px;background:#fff4f9;color:#442d3b;padding:12px;font:13px/1.5 system-ui;box-shadow:0 4px 20px #0003}strong,span{display:block}span{white-space:pre-wrap;overflow-wrap:anywhere;margin-top:5px}button{font:inherit;margin-top:8px;padding:5px 9px;border:1px solid #b982a2;border-radius:6px;background:white;color:#442d3b;cursor:pointer}';
         const card=document.createElement('section');
-        card.innerHTML='<strong>WISH 0.17.29 · 실행 상태</strong><span role="status" aria-live="polite"></span><button type="button">닫기</button>';
+        card.innerHTML='<strong>WISH 0.17.30 · 실행 상태</strong><span role="status" aria-live="polite"></span><button type="button">닫기</button>';
         card.querySelector('button').onclick=()=>{dismissed=true;host?.remove();host=null;};
         root.append(style,card);document.documentElement.appendChild(host);
         for(const [key,value] of Object.entries({position:'fixed',right:'16px',top:'112px','z-index':'2147483647',display:'block',visibility:'visible',opacity:'1',width:'280px',height:'auto'}))host.style.setProperty(key,value,'important');
@@ -93,13 +93,13 @@
     wishBoot.status('duplicate', '다른 RP Manager 실행이 감지됐습니다. 버전: '+String(window.__WISH_RP_MANAGER_LOADED__.version||'알 수 없음'));
     return;
   }
-  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.17.29', loadedAt: Date.now() };
+  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.17.30', loadedAt: Date.now() };
   // 같은 페이지에 남아 있는 v0.8.10 복사본이 뒤늦게 시작되는 경우도 차단합니다.
   window.__RP_MANAGER_0810_LOADED__ = true;
 
   const APP = {
     name: '🪽위시 RP Manager',
-    version: '0.17.29',
+    version: '0.17.30',
     dbName: 'RPContextManagerDB',
     dbVersion: 2,
     storeName: 'rooms',
@@ -5811,6 +5811,7 @@ try {
     let text = '';
     let usage = {};
     let finishReason = '';
+    const requestTimeoutMs = options.test ? 60000 : options.responseRefiner ? Math.max(35000,Math.min(180000,Number(options.reviewTimeoutMs)||180000)) : 0;
 
     if (provider === 'gemini') {
       if (!secret.trim()) throw new Error('Gemini API 키를 입력해 주세요.');
@@ -5818,7 +5819,7 @@ try {
       const response = await aiHttpRequest(url, {
         headers:{ 'Content-Type':'application/json' },
         body:JSON.stringify(aiGeminiPayload(systemInstruction, prompt, maxOutputTokens, { ...options, model })),
-        ...(options.responseRefiner?{timeout:Math.max(35000,Math.min(180000,Number(options.reviewTimeoutMs)||180000))+5000}:{}),
+        ...(requestTimeoutMs ? {timeout:requestTimeoutMs + (options.test ? 0 : 5000)} : {}),
       });
       const data = parseAiJsonResponse(response, 'Gemini');
       text = extractGeminiText(data);
@@ -5831,7 +5832,7 @@ try {
       const result = await callFirebaseAi({
         firebaseConfig,
         appName:`rpcm-ai-${simpleHash(JSON.stringify(firebaseConfig))}`,
-        ...(options.responseRefiner ? {requestTimeoutMs:Math.max(35000,Math.min(180000,Number(options.reviewTimeoutMs)||180000))} : {}),
+        ...(requestTimeoutMs ? {requestTimeoutMs} : {}),
         model,
         systemInstruction:String(systemInstruction || ''),
         prompt:String(prompt || ''),
@@ -5841,7 +5842,7 @@ try {
           ...(options.responseJsonSchema ? { responseMimeType:'application/json', responseSchema:options.responseJsonSchema } : {}),
           ...(thinkingConfig ? { thinkingConfig } : {}),
         },
-      }, options.responseRefiner ? Math.max(35000,Math.min(180000,Number(options.reviewTimeoutMs)||180000))+5000 : 120000);
+      }, requestTimeoutMs ? requestTimeoutMs + 5000 : 120000);
       text = result.text;
       finishReason = String(result.finishReason || '');
       usage = {
@@ -5860,7 +5861,7 @@ try {
       const response = await aiHttpRequest(url, {
         headers:{ Authorization:`Bearer ${token}`, 'Content-Type':'application/json' },
         body:JSON.stringify(aiGeminiPayload(systemInstruction, prompt, maxOutputTokens, { ...options, model })),
-        ...(options.responseRefiner?{timeout:Math.max(35000,Math.min(180000,Number(options.reviewTimeoutMs)||180000))+5000}:{}),
+        ...(requestTimeoutMs ? {timeout:requestTimeoutMs + (options.test ? 0 : 5000)} : {}),
       });
       const data = parseAiJsonResponse(response, 'Vertex AI');
       text = extractGeminiText(data);
@@ -5879,6 +5880,7 @@ try {
         headers,
         // 안드로이드 Edge 등 GM 요청 호환 문제가 있는 환경에서만 실패 후 일반 fetch로 재시도합니다.
         nativeFetchFallback:provider === 'openai',
+        ...(options.test ? {timeout:60000} : {}),
         body:JSON.stringify(aiOpenAiChatPayload(model, systemInstruction, prompt, maxOutputTokens, {
           ...options,
           openAiTokenField:tokenField,
@@ -5922,8 +5924,9 @@ try {
   }
 
   async function callAiSummaryProvider(provider, settings, secret, systemInstruction, prompt, maxOutputTokens = 8192, onRetry = () => {}, options = {}) {
-    // Keep one provider/model for the entire request. Connection tests never retry.
-    const memoRule = options.room && maxOutputTokens > 128 ? userCanonMemoAiRule(options.room) : '';
+    // Keep one provider/model for the entire request. Connection tests never retry or include RP memory.
+    if (options.test) { options = {...options, thinkingLevel:'low'}; maxOutputTokens = 2048; }
+    const memoRule = !options.test && options.room && maxOutputTokens > 128 ? userCanonMemoAiRule(options.room) : '';
     const instructionWithMemo = `${systemInstruction}${memoRule}`;
     const isRefinerRuntime = options.responseRefiner === true && options.test !== true;
     const retryDelays = options.test ? [] : (isRefinerRuntime ? [3000] : [4000, 12000]);
@@ -20818,7 +20821,7 @@ ${dialogueText}`;
       if (!mount) document.querySelector('#rpcm-api-settings-backdrop')?.remove();
       let settings = loadAiSummarySettings();
       let provider = settings.provider;
-      let semanticKeyDraft=readSemanticApiKey(),semanticResult=null,semanticBusy=false;
+      let semanticKeyDraft=readSemanticApiKey(),semanticResult=null,semanticBusy=false,apiTestBusy=false;
       const rememberSemantic=()=>{const input=backdrop.querySelector('#rpcm-api-semantic-key');if(input)semanticKeyDraft=input.value.trim();};
       const semanticFeedback=(kind,message)=>{
         const node=backdrop.querySelector('#rpcm-api-semantic-status');if(!node)return;
@@ -20943,19 +20946,25 @@ ${dialogueText}`;
         }
         if (action === 'save') { try{await persist();notify('API 설정을 저장했습니다.', 'success');finish(true);}catch(error){backdrop.querySelector('#rpcm-api-settings-status').textContent=String(error.message||'설정을 저장하지 못했습니다.');}return; }
         if (action === 'test') {
+          if (apiTestBusy) return;
+          apiTestBusy = true;
           const button = event.target.closest('button');
           const status = backdrop.querySelector('#rpcm-api-settings-status');
           try {
-            await persist(); backdrop.querySelectorAll('[data-api-act="test"],[data-api-act="save"]').forEach(el=>el.disabled=true); status.textContent = '기능별 연결을 확인하는 중…';const commonStatus=backdrop.querySelector('[data-api-common-status]');if(commonStatus)commonStatus.textContent=status.textContent;
+            backdrop.querySelectorAll('[data-api-act="test"],[data-api-act="save"]').forEach(el=>el.disabled=true); await persist(); status.textContent = '기능별 연결을 확인하는 중…';const commonStatus=backdrop.querySelector('[data-api-common-status]');if(commonStatus)commonStatus.textContent=status.textContent;
+            const testedConnections = new Map();
             for (const feature of ['summary','timeline','context','itemFolder','utility','responseRefiner']) {
               if (feature === 'context' && !room.aiContextLogRerankEnabled) { setAiFeatureStatus(feature, 'off', provider, settings.featureModels?.[feature]?.model, '사용 안 함'); continue; }
               const next = feature==='responseRefiner'?responseRefinerConnectionInfo():aiFeatureSettings(settings, feature);
               const model = feature==='responseRefiner'?next.model:next.models?.[next.provider] || '';
-              const started=Date.now();
+              const started=Date.now(), connectionKey=JSON.stringify([next.provider,String(model).trim()]);
+              status.textContent = `연결 확인 · ${aiFeatureStatusLabel(feature)} · ${next.provider} / ${model}`;
+              if(commonStatus)commonStatus.textContent=status.textContent;
               try {
-                const result = feature==='responseRefiner'
+                if(!testedConnections.has(connectionKey))testedConnections.set(connectionKey,Promise.resolve().then(async()=>feature==='responseRefiner'
                   ? await window.__WISH_RP_MANAGER_AI_BRIDGE__.call('연결 테스트입니다. 정확히 OK만 출력하세요.',{test:true,responseRefiner:true,model,thinkingLevel:next.thinkingLevel})
-                  : await callAiSummaryProvider(next.provider, next, draftSecrets.get(next.provider) || '', '짧게 응답하세요.', '연결 테스트입니다. 정확히 OK만 출력하세요.', 64, () => {}, { feature, room, test:true });
+                  : await callAiSummaryProvider(next.provider, next, readAiSecret(next.provider), '짧게 응답하세요.', '연결 테스트입니다. 정확히 OK만 출력하세요.', 64, () => {}, { feature, room, test:true })));
+                const result = await testedConnections.get(connectionKey);
                 setAiFeatureStatus(feature, 'ok', next.provider, result.model || model, `연결 및 모델 호출 정상 · ${((Date.now()-started)/1000).toFixed(1)}초`);
               } catch (error) {
                 const failure = classifyAiFailure(error);
@@ -20964,7 +20973,7 @@ ${dialogueText}`;
             }
             settings = loadAiSummarySettings(); render(); backdrop.querySelector('#rpcm-api-settings-status').textContent = '기능별 연결 테스트를 마쳤습니다. 각 항목의 정상·오류 상태를 확인해 주세요.';backdrop.querySelector('[data-api-common-status]').textContent=backdrop.querySelector('#rpcm-api-settings-status').textContent;
           } catch (error) { status.textContent = `테스트 실패 · ${friendlyAiErrorMessage(error)}`;const commonStatus=backdrop.querySelector('[data-api-common-status]');if(commonStatus)commonStatus.textContent=status.textContent; }
-          finally { backdrop.querySelectorAll('[data-api-act="test"],[data-api-act="save"]').forEach(el=>el.disabled=false); }
+          finally { apiTestBusy = false; backdrop.querySelectorAll('[data-api-act="test"],[data-api-act="save"]').forEach(el=>el.disabled=false); }
         }
       });
       backdrop.onkeydown = event => { if (event.key === 'Escape') finish(false); };
@@ -21781,7 +21790,7 @@ ${dialogueText}`;
         const next = collectSettings(true);
         if (!confirm('연결 테스트도 짧은 API 호출 1회를 사용합니다. 계속할까요?')) return;
         setBusy(true, 'API 연결을 확인하는 중…');
-        const result = await callAiSummaryProvider(next.provider, next, draftSecrets.get(next.provider) || '', '요청에 한 단어로만 답하세요.', '연결됨이라고 답하세요.', 64, () => {}, { feature:'summary', room });
+        const result = await callAiSummaryProvider(next.provider, next, draftSecrets.get(next.provider) || '', '요청에 한 단어로만 답하세요.', '연결됨이라고 답하세요.', 64, () => {}, { feature:'summary', room, test:true });
         updateUsage();
         setBusy(false, `연결 성공 · ${result.model} · 이번 호출 예상 ${formatAiCostUsd(result.estimatedCostUsd)}`, 'success');
         updateConnectionSummary();
@@ -38089,8 +38098,8 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
 
   // Invalidate only message mutation routes. Read-only calls never touch the cache.
   const rpcmBaseApiRequest=apiRequest;
-  apiRequest=async function(method,url,body=undefined){
-    const result=await rpcmBaseApiRequest(method,url,body);const verb=String(method||'GET').toUpperCase();
+  apiRequest=async function(method,url,body=undefined,areaResetToken=null,options={}){
+    const result=await rpcmBaseApiRequest(method,url,body,areaResetToken,options);const verb=String(method||'GET').toUpperCase();
     if(verb!=='GET'&&/\/chats\/([^/?]+)\/messages(?:\/|\?|$)/.test(String(url||''))){const match=String(url).match(/\/chats\/([^/?]+)\/messages/);if(match)rpcmHistoryInvalidate(decodeURIComponent(match[1]),verb);}
     return result;
   };
