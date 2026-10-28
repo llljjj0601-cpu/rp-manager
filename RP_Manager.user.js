@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🪽위시 RP Manager
 // @namespace    local.rp.context.manager
-// @version      0.17.30
+// @version      0.17.31
 // @description  장기 RP용 현재상태·날짜로그·연속성 타임라인·캐릭터 설정을 관리하고, 검수형 AI 생성과 필요한 컨텍스트 자동 주입을 지원합니다.
 // @author       User
 // @license      All Rights Reserved
@@ -69,7 +69,7 @@
         const style=document.createElement('style');
         style.textContent=':host{all:initial}section{box-sizing:border-box;width:280px;border:1px solid #d898ba;border-radius:12px;background:#fff4f9;color:#442d3b;padding:12px;font:13px/1.5 system-ui;box-shadow:0 4px 20px #0003}strong,span{display:block}span{white-space:pre-wrap;overflow-wrap:anywhere;margin-top:5px}button{font:inherit;margin-top:8px;padding:5px 9px;border:1px solid #b982a2;border-radius:6px;background:white;color:#442d3b;cursor:pointer}';
         const card=document.createElement('section');
-        card.innerHTML='<strong>WISH 0.17.30 · 실행 상태</strong><span role="status" aria-live="polite"></span><button type="button">닫기</button>';
+        card.innerHTML='<strong>WISH 0.17.31 · 실행 상태</strong><span role="status" aria-live="polite"></span><button type="button">닫기</button>';
         card.querySelector('button').onclick=()=>{dismissed=true;host?.remove();host=null;};
         root.append(style,card);document.documentElement.appendChild(host);
         for(const [key,value] of Object.entries({position:'fixed',right:'16px',top:'112px','z-index':'2147483647',display:'block',visibility:'visible',opacity:'1',width:'280px',height:'auto'}))host.style.setProperty(key,value,'important');
@@ -93,13 +93,13 @@
     wishBoot.status('duplicate', '다른 RP Manager 실행이 감지됐습니다. 버전: '+String(window.__WISH_RP_MANAGER_LOADED__.version||'알 수 없음'));
     return;
   }
-  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.17.30', loadedAt: Date.now() };
+  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.17.31', loadedAt: Date.now() };
   // 같은 페이지에 남아 있는 v0.8.10 복사본이 뒤늦게 시작되는 경우도 차단합니다.
   window.__RP_MANAGER_0810_LOADED__ = true;
 
   const APP = {
     name: '🪽위시 RP Manager',
-    version: '0.17.30',
+    version: '0.17.31',
     dbName: 'RPContextManagerDB',
     dbVersion: 2,
     storeName: 'rooms',
@@ -6199,6 +6199,8 @@ try {
       return {kind:'기준 턴 확인 실패',steps:'현재 방과 대화 범위가 맞는지 확인한 뒤 「새 RP 범위 확인」을 실행해 주세요. 그래도 실패하면 최근 N턴 재처리 또는 기준점 재설정을 검토하되, 먼저 백업하세요.'};
     if (/자료집.*json|wish_lore|json\.parse|unexpected token|unexpected end of json|응답 형식/.test(lower))
       return {kind:'자료집·JSON 형식',steps:'결과 전체를 다시 복사하고 version·operations·필수 필드 및 마커를 확인해 주세요. 먼저 「형식 검증·Diff」만 실행하고, 오류가 사라지기 전에는 저장하지 마세요.'};
+    if (/날짜[ \t]*(?:미상|미정|불명|없음)[ \t]*블록은[ \t]*자동[ \t]*병합[ \t]*기준이[ \t]*불명확/.test(raw))
+      return {kind:'날짜 미상 기록 확인',steps:'새 결과에 날짜 미상 기록이 포함되어 적용을 보류한 안내입니다. 이 문구만으로 동시 저장 충돌이 확인된 것은 아닙니다. 날짜를 임의로 만들거나 기록을 삭제하지 말고, 원문과 생성 결과를 보관한 뒤 날짜 미상 기록을 보존하는 최신 버전에서 변경 내용을 다시 확인해 주세요.'};
     if (/최신 저장본|자동 병합|revision|동시에 수정|다른 변경과 충돌|stale/i.test(raw))
       return {kind:'동시 저장 충돌',steps:'다른 크랙 탭이나 자동 작업을 멈추고 현재 내용을 별도로 복사·백업한 뒤 화면을 다시 열어 비교해 주세요. 강제 덮어쓰기는 하지 마세요.'};
     if (/indexeddb|transaction.*abort|저장.*실패|저장.*취소/.test(lower))
@@ -6495,9 +6497,16 @@ ${dialogueText}`;
       if (a.day != null && b.day != null && a.day !== b.day) return a.day > b.day;
       return false;
     };
+    // 날짜 미상은 날짜별 교체 대상이 아닙니다. 시간선·표제·본문이 같은 기록만 반복 추가를 막습니다.
+    const unknownSignature = block => JSON.stringify([block.timelineKey, block.unknownLabel, block.events, block.body]);
+    const unknownSeen = new Set(oldBlocks.filter(block => block.isUnknown).map(unknownSignature));
     for (const block of checked.blocks) {
       if (!block.isUnknown && (consumed.has(block.dateKey) || oldBlocks.some(old => old.dateKey === block.dateKey))) continue;
-      if (block.isUnknown) { mergedParts.push(block.raw.trim()); continue; }
+      if (block.isUnknown) {
+        const signature = unknownSignature(block);
+        if (!unknownSeen.has(signature)) { mergedParts.push(block.raw.trim()); unknownSeen.add(signature); }
+        continue;
+      }
       let inserted = false;
       for (let i = 0; i < mergedParts.length; i++) {
         const current = parseDatedLogBlocks(mergedParts[i])[0];
@@ -27685,13 +27694,13 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
       if (rawBlocks.some(block => normalizedLogTimelineKey(logTimelineLabelOfBlock(block)) !== normalizedLogTimelineKey(activeLogTimelineLabel(candidate)))) throw new Error('결과 날짜의 시간선이 현재 활성 시간선과 다릅니다. 다른 시간선 블록을 자동으로 옮기지 않았습니다.');
       const checked = validateGeneratedDateSummary(alignGeneratedLogTimeline(candidate, raw));
       if (checked.errors.length) throw new Error(checked.errors.join(' / '));
-      if (checked.blocks.some(block => block.isUnknown)) throw new Error('날짜 미상 블록은 자동 병합 기준이 불명확합니다. 날짜가 확정된 블록만 적용해 주세요.');
       const merged = mergeGeneratedLogText(candidate, raw);
       const slot = aiFixedSlot(candidate, 'logSummary');
       addDiff('날짜요약 전체 저장본', slot.content || '', merged.text);
       slot.content = merged.text;
       remapLogSelectionKeys(candidate, merged.byOldKey, merged.newBlocks);
-      summary.push(`결과 ${merged.generatedBlocks.length}개 날짜`, `저장본 ${merged.oldBlocks.length}개 → ${merged.newBlocks.length}개`);
+      summary.push(`결과 ${merged.generatedBlocks.length}개 블록`, `저장본 ${merged.oldBlocks.length}개 → ${merged.newBlocks.length}개`);
+      if (checked.blocks.some(block => block.isUnknown)) summary.push(`날짜 미상 기록 ${merged.newBlocks.filter(block => block.isUnknown).length}개 보존 · 날짜 추정 없음 · 동일 기록은 중복 추가하지 않음`);
       if (merged.warnings.length) summary.push(`주의 · ${merged.warnings.join(' / ')}`);
     } else if (task === 'personInfo') {
       const raw = stripAiOutputWrapper(values.result);
