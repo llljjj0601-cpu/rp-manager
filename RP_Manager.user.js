@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🪽위시 RP Manager
 // @namespace    local.rp.context.manager
-// @version      0.17.31
+// @version      0.17.33
 // @description  장기 RP용 현재상태·날짜로그·연속성 타임라인·캐릭터 설정을 관리하고, 검수형 AI 생성과 필요한 컨텍스트 자동 주입을 지원합니다.
 // @author       User
 // @license      All Rights Reserved
@@ -69,7 +69,7 @@
         const style=document.createElement('style');
         style.textContent=':host{all:initial}section{box-sizing:border-box;width:280px;border:1px solid #d898ba;border-radius:12px;background:#fff4f9;color:#442d3b;padding:12px;font:13px/1.5 system-ui;box-shadow:0 4px 20px #0003}strong,span{display:block}span{white-space:pre-wrap;overflow-wrap:anywhere;margin-top:5px}button{font:inherit;margin-top:8px;padding:5px 9px;border:1px solid #b982a2;border-radius:6px;background:white;color:#442d3b;cursor:pointer}';
         const card=document.createElement('section');
-        card.innerHTML='<strong>WISH 0.17.31 · 실행 상태</strong><span role="status" aria-live="polite"></span><button type="button">닫기</button>';
+        card.innerHTML='<strong>WISH 0.17.33 · 실행 상태</strong><span role="status" aria-live="polite"></span><button type="button">닫기</button>';
         card.querySelector('button').onclick=()=>{dismissed=true;host?.remove();host=null;};
         root.append(style,card);document.documentElement.appendChild(host);
         for(const [key,value] of Object.entries({position:'fixed',right:'16px',top:'112px','z-index':'2147483647',display:'block',visibility:'visible',opacity:'1',width:'280px',height:'auto'}))host.style.setProperty(key,value,'important');
@@ -93,13 +93,13 @@
     wishBoot.status('duplicate', '다른 RP Manager 실행이 감지됐습니다. 버전: '+String(window.__WISH_RP_MANAGER_LOADED__.version||'알 수 없음'));
     return;
   }
-  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.17.31', loadedAt: Date.now() };
+  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.17.33', loadedAt: Date.now() };
   // 같은 페이지에 남아 있는 v0.8.10 복사본이 뒤늦게 시작되는 경우도 차단합니다.
   window.__RP_MANAGER_0810_LOADED__ = true;
 
   const APP = {
     name: '🪽위시 RP Manager',
-    version: '0.17.31',
+    version: '0.17.33',
     dbName: 'RPContextManagerDB',
     dbVersion: 2,
     storeName: 'rooms',
@@ -3600,6 +3600,7 @@ USER 캐릭터의 다음 항목은 직접 RP, USER의 명시적 서술 또는 �
   const AI_SUMMARY_PROVIDER_MODELS = Object.freeze({
     gemini:[
       { value:'gemini-3.8-flash', label:'Gemini 3.8 Flash · 추천' },
+      { value:'gemini-4-argon', label:'Gemini 4 Argon · 아르곤 · 유료' },
       { value:'gemini-3.7-flash', label:'Gemini 3.7 Flash · 이전 안정 버전' },
       { value:'gemini-3.5-flash', label:'Gemini 3.5 Flash' },
       { value:'gemini-3.5-flash-lite', label:'Gemini 3.5 Flash-Lite · 저비용' },
@@ -3611,6 +3612,7 @@ USER 캐릭터의 다음 항목은 직접 RP, USER의 명시적 서술 또는 �
     ],
     firebase:[
       { value:'gemini-3.8-flash', label:'Gemini 3.8 Flash · 추천' },
+      { value:'gemini-4-argon', label:'Gemini 4 Argon · 아르곤 · 유료' },
       { value:'gemini-3.7-flash', label:'Gemini 3.7 Flash · 이전 안정 버전' },
       { value:'gemini-3.5-flash', label:'Gemini 3.5 Flash' },
       { value:'gemini-3.5-flash-lite', label:'Gemini 3.5 Flash-Lite · 저비용' },
@@ -3622,6 +3624,7 @@ USER 캐릭터의 다음 항목은 직접 RP, USER의 명시적 서술 또는 �
     ],
     vertex:[
       { value:'gemini-3.8-flash', label:'Gemini 3.8 Flash · 추천' },
+      { value:'gemini-4-argon', label:'Gemini 4 Argon · 아르곤 · 유료' },
       { value:'gemini-3.7-flash', label:'Gemini 3.7 Flash · 이전 안정 버전' },
       { value:'gemini-3.5-flash', label:'Gemini 3.5 Flash' },
       { value:'gemini-3.5-flash-lite', label:'Gemini 3.5 Flash-Lite · 저비용' },
@@ -4761,7 +4764,7 @@ USER 캐릭터의 다음 항목은 직접 RP, USER의 명시적 서술 또는 �
     return { calls:0, inputTokens:0, outputTokens:0, estimatedCostUsd:0, pricedCalls:0, last:null };
   }
 
-  function defaultAiPricing(provider, model) {
+  function defaultAiPricing(provider, model, at = Date.now()) {
     const providerId = String(provider || '').toLowerCase();
     const google = ['gemini','firebase','vertex'].includes(providerId);
     const name = String(model || '').trim().toLowerCase();
@@ -4778,6 +4781,12 @@ USER 캐릭터의 다음 항목은 직접 RP, USER의 명시적 서술 또는 �
       if (/^(?:gpt-5\.6|gpt-5\.6-sol)(?:$|-)/.test(name)) {
         return { inputPerMillion:4.00, outputPerMillion:20.00, source:'OpenAI 공식 기본 단가' };
       }
+    }
+    if (google && name === 'gemini-4-argon') {
+      // 공식 Standard 단가(USD/100만 토큰), 2026-10-30 확인. 출력에 사고 토큰 포함.
+      // https://ai.google.dev/gemini-api/docs/pricing
+      const introductory = at < Date.UTC(2026,11,1);
+      return { inputPerMillion:introductory ? 2.00 : 4.00, outputPerMillion:introductory ? 10.00 : 20.00, source:introductory ? 'Google 공식 Standard global 단가 · 2026-11-30까지' : 'Google 공식 Standard global 단가 · 2026-12-01부터' };
     }
     if (google && /^gemini-3\.8-flash(?:$|-)/.test(name)) {
       return { inputPerMillion:0.75, outputPerMillion:3.75, source:'Google 공식 Standard 단가 · 2026-12-31까지' };
@@ -4818,11 +4827,15 @@ USER 캐릭터의 다음 항목은 직접 RP, USER의 명시적 서술 또는 �
     }
   }
 
-  function getAiPricing(settings, provider, model) {
+  function getAiPricing(settings, provider, model, at = Date.now()) {
     if (String(provider || '').toLowerCase() === 'openai' && !isOfficialOpenAiBaseUrl(settings?.openaiBaseUrl)) {
       return { inputPerMillion:null, outputPerMillion:null, source:'OpenAI 호환 API · 단가 직접 확인 필요' };
     }
-    return defaultAiPricing(provider, model);
+    const pricing = defaultAiPricing(provider, model, at);
+    if (String(provider || '').toLowerCase() === 'vertex' && String(model || '').trim().toLowerCase() === 'gemini-4-argon' && (String(settings?.vertexLocation || 'global').trim() || 'global') !== 'global') {
+      return { inputPerMillion:pricing.inputPerMillion * 1.1, outputPerMillion:pricing.outputPerMillion * 1.1, source:pricing.source.replace('global','지역 지정 · 10% 추가') };
+    }
+    return pricing;
   }
 
   function estimateAiCostUsd(usage = {}, pricing = {}) {
@@ -4903,6 +4916,18 @@ USER 캐릭터의 다음 항목은 직접 RP, USER의 명시적 서술 또는 �
       }
       history.sort((a, b) => String(b.at || '').localeCompare(String(a.at || '')));
       history = history.slice(0, AI_ROOM_USAGE_HISTORY_LIMIT);
+    }
+    // 저장 날짜·토큰이 남은 아르곤 미산정 내역만 당시 단가로 보완합니다. 이미 계산된 비용은 유지합니다.
+    // 과거 Vertex 내역에는 리전이 없어 정확한 단가를 확인할 수 없으므로 복원하지 않습니다.
+    for (const entry of history) {
+      if (entry.costUsd != null || entry.model !== 'gemini-4-argon' || !['gemini','firebase'].includes(entry.provider) || !/^\d{4}-\d{2}-\d{2}T/.test(entry.at)) continue;
+      const at = Date.parse(entry.at), aggregate = features[entry.feature];
+      if (!Number.isFinite(at) || aggregate.unpricedCalls < entry.callCount || entry.inputTokens + entry.outputTokens <= 0) continue;
+      const costUsd = estimateAiCostUsd(entry, defaultAiPricing(entry.provider, entry.model, at));
+      if (costUsd == null) continue;
+      entry.costUsd = costUsd;
+      aggregate.costUsd += costUsd;
+      aggregate.unpricedCalls -= entry.callCount;
     }
     room.aiApiUsage = { version:1, features, history, legacyImported:true };
     return room.aiApiUsage;
@@ -5125,7 +5150,7 @@ USER 캐릭터의 다음 항목은 직접 RP, USER의 명시적 서술 또는 �
     };
     for (const message of (messages || [])) {
       const role = String(messageRoleOf(message) || '').toLowerCase();
-      const clean = stripAutomationNoise(messageTextOf(message), true);
+      const clean = stripAutomationNoise(messageTextOf(message), true, { preserveStatus:true });
       if (!clean) continue;
       if (role === 'user') {
         push();
@@ -5715,7 +5740,7 @@ try {
   function refinerThinkingLevels(provider,model){
     if(!['gemini','firebase','vertex'].includes(provider))return [];
     const name=String(model||'').toLowerCase();
-    if(/^gemini-(?:3\.(?:8|7|6)-flash|3\.5-flash(?:-lite)?|3\.1-(?:pro-preview|flash-lite)|3-flash-preview|2\.5-(?:pro|flash(?:-lite)?))$/.test(name))return ['low','medium','high'];
+    if(/^gemini-(?:4-argon|3\.(?:8|7|6)-flash|3\.5-flash(?:-lite)?|3\.1-(?:pro-preview|flash-lite)|3-flash-preview|2\.5-(?:pro|flash(?:-lite)?))$/.test(name))return ['low','medium','high'];
     if(name==='gemini-3-pro-preview')return ['low','high'];
     return [];
   }
@@ -5727,7 +5752,7 @@ try {
       if(/^gemini-2\.5/.test(name))return {thinkingBudget:{low:/flash-lite$/.test(name)?512:256,medium:4096,high:8192}[level],includeThoughts:false};
       return {thinkingLevel:level.toUpperCase(),includeThoughts:false};
     }
-    if (/^gemini-3\.8-flash(?:$|-)/.test(name)) return { thinkingLevel:['low','medium','high'].includes(level) ? level.toUpperCase() : 'MEDIUM', includeThoughts:false };
+    if (/^(?:gemini-3\.8-flash(?:$|-)|gemini-4-argon$)/.test(name)) return { thinkingLevel:['low','medium','high'].includes(level) ? level.toUpperCase() : 'MEDIUM', includeThoughts:false };
     if (level !== 'low') return null;
     if (/^gemini-3(?:[.-]|$)/.test(name)) return { thinkingLevel:'LOW', includeThoughts:false };
     if (/^gemini-2\.5(?:[.-]|$)/.test(name)) return { thinkingBudget:128, includeThoughts:false };
@@ -5735,7 +5760,8 @@ try {
   }
 
   function aiGeminiPayload(systemInstruction, prompt, maxOutputTokens = 8192, options = {}) {
-    const generationConfig = { ...(/^gemini-3\.8-flash(?:$|-)/i.test(String(options.model || '')) ? {} : { temperature:0.2 }), maxOutputTokens:Math.max(128, Number(maxOutputTokens) || 8192) };
+    const argon = /^gemini-4-argon$/i.test(String(options.model || '').trim());
+    const generationConfig = { ...((argon || /^gemini-3\.8-flash(?:$|-)/i.test(String(options.model || ''))) ? {} : { temperature:0.2 }), maxOutputTokens:argon && !options.test ? 32768 : Math.max(128, Number(maxOutputTokens) || 8192) };
     if (options.responseJsonSchema) {
       generationConfig.responseMimeType = 'application/json';
       generationConfig.responseSchema = options.responseJsonSchema;
@@ -5806,12 +5832,13 @@ try {
   }
 
   async function callAiSummaryProviderOnce(provider, settings, secret, systemInstruction, prompt, maxOutputTokens = 8192, options = {}) {
+    const requestAt = Date.now();
     const model = String(settings.models?.[provider] || AI_SUMMARY_PROVIDER_DEFAULTS[provider]?.model || '').trim();
     if (!model) throw new Error('사용할 모델명을 입력해 주세요.');
     let text = '';
     let usage = {};
     let finishReason = '';
-    const requestTimeoutMs = options.test ? 60000 : options.responseRefiner ? Math.max(35000,Math.min(180000,Number(options.reviewTimeoutMs)||180000)) : 0;
+    const requestTimeoutMs = options.test ? 60000 : options.responseRefiner ? Math.max(35000,Math.min(180000,Number(options.reviewTimeoutMs)||180000)) : ['gemini','firebase','vertex'].includes(provider) && model === 'gemini-4-argon' ? 1200000 : 0;
 
     if (provider === 'gemini') {
       if (!secret.trim()) throw new Error('Gemini API 키를 입력해 주세요.');
@@ -5828,7 +5855,6 @@ try {
     } else if (provider === 'firebase') {
       const firebaseConfig = parseFirebaseConfig(secret);
       if (!firebaseConfig) throw new Error('Firebase 설정 코드 또는 firebaseConfig JSON을 확인해 주세요.');
-      const thinkingConfig = aiGeminiThinkingConfig(model, options);
       const result = await callFirebaseAi({
         firebaseConfig,
         appName:`rpcm-ai-${simpleHash(JSON.stringify(firebaseConfig))}`,
@@ -5836,12 +5862,7 @@ try {
         model,
         systemInstruction:String(systemInstruction || ''),
         prompt:String(prompt || ''),
-        generationConfig:{
-          ...(/^gemini-3\.8-flash(?:$|-)/i.test(model) ? {} : { temperature:0.2 }),
-          maxOutputTokens:Math.max(128, Number(maxOutputTokens) || 8192),
-          ...(options.responseJsonSchema ? { responseMimeType:'application/json', responseSchema:options.responseJsonSchema } : {}),
-          ...(thinkingConfig ? { thinkingConfig } : {}),
-        },
+        generationConfig:aiGeminiPayload(systemInstruction, prompt, maxOutputTokens, { ...options, model }).generationConfig,
       }, requestTimeoutMs ? requestTimeoutMs + 5000 : 120000);
       text = result.text;
       finishReason = String(result.finishReason || '');
@@ -5905,7 +5926,7 @@ try {
     }
 
     text = stripAiOutputWrapper(text);
-    const pricing = getAiPricing(settings, provider, model);
+    const pricing = getAiPricing(settings, provider, model, requestAt);
     const savedUsage = saveAiSummaryUsage(provider, model, usage, pricing);
     const roomUsage = recordRoomAiUsage(options.room || state.currentRoom, options.feature || 'summary', provider, model, usage, pricing, { systemInstruction, prompt, text });
     if (options.room || state.currentRoom) {
@@ -7029,7 +7050,7 @@ ${dialogueText}`;
       .replace(/-->/g, '--\u200B>');
   }
 
-  function stripAutomationNoise(text, preserveLineBreaks = false) {
+  function stripAutomationNoise(text, preserveLineBreaks = false, options = {}) {
     let src = String(text || '');
     src = stripOurContextBlock(src).text || src;
     // 마커가 이스케이프되거나 본문 중간에 남은 경우도 자동 검색 자료에서 제거합니다.
@@ -7044,7 +7065,8 @@ ${dialogueText}`;
     // RP 답변에 표시되는 상태창은 실제 지문·대사가 아닙니다. 캐릭터 이름이나 사건 키워드가
     // 상태창에 반복됐다는 이유만으로 자동 캐릭터/관련로그가 호출되지 않게 공통으로 제거합니다.
     // 일반 코드 블록까지 지우지는 않고 info/status 계열 또는 상태 필드가 확실한 무표기 펜스만 제외합니다.
-    src = stripRpStatusFences(src);
+    // 요약·타임라인·수동 작업 원문에서는 상태창 안의 날짜도 사실 근거로 보존합니다.
+    if (!options.preserveStatus) src = stripRpStatusFences(src);
     if (preserveLineBreaks) {
       return normalizeLineBreaks(src)
         .replace(/[^\S\n]+/g, ' ')
@@ -25917,7 +25939,7 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
       if(next&&(next===cursor||seenCursors.has(next)))throw new Error('RP 페이지 cursor가 반복되었습니다. 일부 기록을 전체로 처리하지 않았습니다.');
       if(next){seenCursors.add(next);cursor=next;}else done=true;
       if(next&&!raw.length)throw new Error('빈 RP 페이지에 다음 cursor가 있습니다. 전체 원문을 확인하지 못했습니다.');
-      const combined=page.reverse().concat(carry),firstUser=combined.findIndex(row=>messageRoleOf(row)==='user'&&stripAutomationNoise(messageTextOf(row),true).trim());
+      const combined=page.reverse().concat(carry),firstUser=combined.findIndex(row=>messageRoleOf(row)==='user'&&stripAutomationNoise(messageTextOf(row),true,{preserveStatus:true}).trim());
       const turns=firstUser<0?[]:buildCompletedAiDialogueTurns(combined.slice(firstUser));
       carry=firstUser<0?combined:combined.slice(0,firstUser);
       if(carry.reduce((sum,row)=>sum+messageTextOf(row).length,0)>2000000)throw new Error('하나의 RP 턴이 안전 메모리 크기를 넘습니다. 원문을 자르지 않았습니다.');
@@ -25947,12 +25969,25 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
     for(const area of areas){const row=aiMemoryConfig(room).areas[area];if(!row)continue;const key=row.cursor||row.baseline;if(key)keys.push(key);const attempt=row.lastAttemptKey||row.failedEnd;if(attempt)keys.push(attempt);const checkpoint=manualCheckpointForTask(room,AI_MEMORY_AREAS[area].manual).endMessageId;if(checkpoint&&checkpoint!==aiMemoryIgnoredManualAnchor(room,area))keys.push(checkpoint);}
     return [...new Set(keys)];
   }
-  function aiMemoryAnchorFingerprint(turn){return semanticSourceHash(JSON.stringify([turn.key,turn.text,(turn.reviewSources||[]).map(row=>row.id)]));}
+  function aiMemoryAnchorFingerprint(turn){return 'hud1:'+semanticSourceHash(JSON.stringify([turn.key,turn.text,(turn.reviewSources||[]).map(row=>row.id)]));}
   function aiMemorySetAnchorEvidence(room,area,turn,ignoreCheckpoint=false){
     room.aiMemorySourceAnchors||={};if(turn)room.aiMemorySourceAnchors[area]={key:String(turn.key),hash:aiMemoryAnchorFingerprint(turn),chatId:String(apiChatIdOf(room)),...(ignoreCheckpoint?{supersededCheckpoint:String(manualCheckpointForTask(room,AI_MEMORY_AREAS[area].manual).endMessageId||'')}:{})};else delete room.aiMemorySourceAnchors[area];
   }
   function aiMemoryCheckAnchorEvidence(room,areas,turns){
-    for(const area of areas){const record=room.aiMemorySourceAnchors?.[area],row=aiMemoryConfig(room).areas[area];if(!record||record.key!==String(row.cursor||row.baseline))continue;const turn=turns[rpcmFindTurnIndex(turns,record.key)];if(!turn||record.chatId!==String(apiChatIdOf(room))||record.hash!==aiMemoryAnchorFingerprint(turn)&&record.hash!==semanticSourceHash(JSON.stringify([record.key,turn.text,(turn.reviewSources||[]).map(row=>row.id)])))throw new Error(`${AI_MEMORY_AREAS[area].label}: 기준 RP의 원문·리롤·분기가 바뀌었습니다. 시작점을 다시 설정해 주세요.`);}
+    for(const area of areas){
+      const record=room.aiMemorySourceAnchors?.[area],row=aiMemoryConfig(room).areas[area];
+      if(!record||record.key!==String(row.cursor||row.baseline))continue;
+      const turn=turns[rpcmFindTurnIndex(turns,record.key)];
+      let matches=!!turn&&record.chatId===String(apiChatIdOf(room))&&(record.hash===aiMemoryAnchorFingerprint(turn)||record.hash==='hud1:'+semanticSourceHash(JSON.stringify([record.key,turn.text,(turn.reviewSources||[]).map(row=>row.id)])));
+      if(!matches&&turn&&record.chatId===String(apiChatIdOf(room))&&!String(record.hash).startsWith('hud1:')){
+        // 0.17.31 이전 시작점은 HUD를 제외한 원문·메시지 ID로 한 번 대조한 뒤 새 형식으로 갱신합니다.
+        const userText=stripAutomationNoise(turn.userText,true);
+        const sources=(turn.reviewSources||[]).map(source=>({id:source.id,text:stripAutomationNoise(source.content,true)})).filter(source=>source.text);
+        const legacyText=`[USER]\n${userText}\n\n[AI]\n${sources.map(source=>source.text).join('\n\n').trim()}`;
+        if(userText&&sources.length&&record.hash===semanticSourceHash(JSON.stringify([record.key,legacyText,sources.map(source=>source.id)]))){record.hash=aiMemoryAnchorFingerprint(turn);matches=true;}
+      }
+      if(!matches)throw new Error(`${AI_MEMORY_AREAS[area].label}: 기준 RP의 원문·리롤·분기가 바뀌었습니다. 시작점을 다시 설정해 주세요.`);
+    }
   }
   async function aiMemoryScopedTurns(room,areas){
     const anchors=aiMemoryScopeAnchors(room,areas),needsBeginning=areas.some(area=>!aiMemoryConfig(room).areas[area].cursor&&!aiMemoryConfig(room).areas[area].baseline&&!manualCheckpointForTask(room,AI_MEMORY_AREAS[area].manual).endMessageId);
@@ -38157,7 +38192,7 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
       messageCount+=page.length;pageCount++;diag.mode=usedMode;diag.pages=pageCount;diag.messages=messageCount;
       if(messageCount>RPCM_CORE_PORT.maxMessages){RpcmHistoryDiagnostics.runaway();throw rpcmHistoryError(`전체 대화 메시지 수가 안전 한도 ${RPCM_CORE_PORT.maxMessages}개를 넘었습니다. 일부만 저장하지 않았습니다.`);}
       const next=String(data?.data?.nextCursor||data?.nextCursor||'');if(next&&(next===cursor||seenCursors.has(next)))throw rpcmHistoryError('RP 페이지 cursor가 반복되었습니다. 일부 기록을 전체로 처리하지 않았습니다.');if(next){seenCursors.add(next);cursor=next;}else done=true;if(next&&!raw.length)throw rpcmHistoryError('빈 RP 페이지에 다음 cursor가 있습니다. 전체 원문을 확인하지 못했습니다.');
-      const combined=page.reverse().concat(carry),firstUser=combined.findIndex(row=>messageRoleOf(row)==='user'&&stripAutomationNoise(messageTextOf(row),true).trim());const turns=firstUser<0?[]:buildCompletedAiDialogueTurns(combined.slice(firstUser));carry=firstUser<0?combined:combined.slice(0,firstUser);if(carry.reduce((sum,row)=>sum+messageTextOf(row).length,0)>2000000)throw rpcmHistoryError('하나의 RP 턴이 안전 메모리 크기를 넘습니다. 원문을 자르지 않았습니다.');if(done)carry=[];
+      const combined=page.reverse().concat(carry),firstUser=combined.findIndex(row=>messageRoleOf(row)==='user'&&stripAutomationNoise(messageTextOf(row),true,{preserveStatus:true}).trim());const turns=firstUser<0?[]:buildCompletedAiDialogueTurns(combined.slice(firstUser));carry=firstUser<0?combined:combined.slice(0,firstUser);if(carry.reduce((sum,row)=>sum+messageTextOf(row).length,0)>2000000)throw rpcmHistoryError('하나의 RP 턴이 안전 메모리 크기를 넘습니다. 원문을 자르지 않았습니다.');if(done)carry=[];
       const progress={messages:messageCount,pages:pageCount,mode,done,turns:turns.length};onProgress?.(progress);const status=state.modal?.querySelector('[data-rebuild-status]');if(status&&fullRebuildRuntime.busy)status.textContent=`원문 ${formatCount(messageCount)}개 · ${pageCount}페이지 조회 ${done?'완료':'중'} · ${mode==='fast-300'?'고속 300':'복구 50'}`;
       if(!done&&mode==='fast-300'&&RPCM_CORE_PORT.pageDelayMs>0)await rpcmHistorySleep(RPCM_CORE_PORT.pageDelayMs,control);
       return turns;
@@ -38342,6 +38377,7 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
 
   const MODEL_OPTIONS = Object.freeze([
     { id:'gemini-3.8-flash', label:'Gemini 3.8 Flash', short:'3.8 FLASH', defaultThinking:'medium' },
+    { id:'gemini-4-argon', label:'Gemini 4 Argon · 유료', short:'4 ARGON', defaultThinking:'medium' },
     { id:'gemini-3.7-flash', label:'Gemini 3.7 Flash', short:'3.7 FLASH', defaultThinking:'medium' },
     { id:'gemini-3.1-pro-preview', label:'Gemini 3.1 Pro', short:'3.1 PRO', defaultThinking:'high' },
   ]);
