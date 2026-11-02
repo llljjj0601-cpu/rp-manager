@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🪽위시 RP Manager
 // @namespace    local.rp.context.manager
-// @version      0.17.35
+// @version      0.17.36
 // @description  장기 RP용 현재상태·날짜로그·연속성 타임라인·캐릭터 설정을 관리하고, 검수형 AI 생성과 필요한 컨텍스트 자동 주입을 지원합니다.
 // @author       User
 // @license      All Rights Reserved
@@ -69,7 +69,7 @@
         const style=document.createElement('style');
         style.textContent=':host{all:initial}section{box-sizing:border-box;width:280px;border:1px solid #d898ba;border-radius:12px;background:#fff4f9;color:#442d3b;padding:12px;font:13px/1.5 system-ui;box-shadow:0 4px 20px #0003}strong,span{display:block}span{white-space:pre-wrap;overflow-wrap:anywhere;margin-top:5px}button{font:inherit;margin-top:8px;padding:5px 9px;border:1px solid #b982a2;border-radius:6px;background:white;color:#442d3b;cursor:pointer}';
         const card=document.createElement('section');
-        card.innerHTML='<strong>WISH 0.17.35 · 실행 상태</strong><span role="status" aria-live="polite"></span><button type="button">닫기</button>';
+        card.innerHTML='<strong>WISH 0.17.36 · 실행 상태</strong><span role="status" aria-live="polite"></span><button type="button">닫기</button>';
         card.querySelector('button').onclick=()=>{dismissed=true;host?.remove();host=null;};
         root.append(style,card);document.documentElement.appendChild(host);
         for(const [key,value] of Object.entries({position:'fixed',right:'16px',top:'112px','z-index':'2147483647',display:'block',visibility:'visible',opacity:'1',width:'280px',height:'auto'}))host.style.setProperty(key,value,'important');
@@ -93,13 +93,13 @@
     wishBoot.status('duplicate', '다른 RP Manager 실행이 감지됐습니다. 버전: '+String(window.__WISH_RP_MANAGER_LOADED__.version||'알 수 없음'));
     return;
   }
-  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.17.35', loadedAt: Date.now() };
+  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.17.36', loadedAt: Date.now() };
   // 같은 페이지에 남아 있는 v0.8.10 복사본이 뒤늦게 시작되는 경우도 차단합니다.
   window.__RP_MANAGER_0810_LOADED__ = true;
 
   const APP = {
     name: '🪽위시 RP Manager',
-    version: '0.17.35',
+    version: '0.17.36',
     dbName: 'RPContextManagerDB',
     dbVersion: 2,
     storeName: 'rooms',
@@ -15120,8 +15120,16 @@ ${dialogueText}`;
     if(!token){const error=new Error('Crack 로그인 정보를 읽지 못했습니다. 채팅 페이지를 새로고침하고, 계속 뜨면 Crack에 다시 로그인한 뒤 검수해 주세요. AI 요청은 보내지 않았습니다.');error.code='CRACK_AUTH_REQUIRED';throw error;}
 
     const utf16 = options.encoding === 'utf-16le' && body !== undefined;
+    const timeoutMs=Math.max(1000,Math.min(20000,Number(options.timeoutMs)||20000));
     return new Promise((resolve, reject) => {
-      GM_xmlhttpRequest({
+      let settled=false,handle,timer=null;
+      const finish=(fn,value)=>{if(settled)return;settled=true;if(timer!==null)clearTimeout(timer);fn(value);};
+      // Bound summary requests even if the transport never reports completion.
+      if(/\/summaries(?:\/|\?|$)/.test(String(url)))timer=setTimeout(()=>{
+        finish(reject,Object.assign(new Error('API 요청 시간 초과 · 저장 여부는 서버 목록에서 다시 확인해 주세요.'),{code:'CRACK_TIMEOUT'}));
+        try{handle?.abort?.();}catch(_){}
+      },timeoutMs+1000);
+      try{handle=GM_xmlhttpRequest({
         method,
         url,
         headers: {
@@ -15132,20 +15140,21 @@ ${dialogueText}`;
           'wrtn-locale': 'ko-KR',
         },
         data: body === undefined ? undefined : utf16 ? utf16leBlob(JSON.stringify(body)) : JSON.stringify(body),
-        timeout: Math.max(1000, Math.min(20000, Number(options.timeoutMs) || 20000)),
+        timeout: timeoutMs,
         onload: res => {
           let parsed = null;
           try { parsed = res.responseText ? JSON.parse(res.responseText) : null; } catch (_) {}
           if (res.status >= 200 && res.status < 300) {
-            resolve(parsed ?? { ok: true });
+            finish(resolve,parsed ?? { ok: true });
           } else {
             const detail = parsed?.message || parsed?.error || res.responseText?.slice(0, 250) || '';
-            reject(Object.assign(new Error(`API 오류 ${res.status}${detail ? `: ${detail}` : ''}`), { code:'CRACK_HTTP', diagnostic:{httpStatus:res.status} }));
+            finish(reject,Object.assign(new Error(`API 오류 ${res.status}${detail ? `: ${detail}` : ''}`), { code:'CRACK_HTTP', diagnostic:{httpStatus:res.status} }));
           }
         },
-        ontimeout: () => reject(Object.assign(new Error('API 요청 시간 초과'), {code:'CRACK_TIMEOUT'})),
-        onerror: () => reject(Object.assign(new Error('네트워크 오류'), {code:'CRACK_NETWORK'})),
-      });
+        ontimeout: () => finish(reject,Object.assign(new Error('API 요청 시간 초과'), {code:'CRACK_TIMEOUT'})),
+        onerror: () => finish(reject,Object.assign(new Error('네트워크 오류'), {code:'CRACK_NETWORK'})),
+        onabort: () => finish(reject,Object.assign(new Error('API 요청이 취소되었습니다. 저장 여부는 서버 목록에서 다시 확인해 주세요.'),{code:'CRACK_ABORT'})),
+      });}catch(error){finish(reject,error);}
     });
   }
 
@@ -31858,17 +31867,17 @@ RP 원문과 사용자 확정 메모를 사실 근거로 삼는다. Crack의 미
         catch(error){if(priorBackup===undefined)delete draft.replacementBackup;else draft.replacementBackup=priorBackup;if(priorBackups===undefined)delete meta.compressionBackups;else meta.compressionBackups=priorBackups;throw error;}
       }
       let done=0,updateCount=0,createCount=0,deleteCount=0;
-      const failures=[];
+      const failures=[];let transportUncertain=false;
       // Deletes run last, so a failed edit never removes an unrelated card.
       for(const op of plan.updates){
         onProgress(`수정 중 ${++updateCount}/${plan.updates.length}`);
         try{await longTermPatch(room,op.id,op.after);if(draft)draft.bulkApplied=true;done++;}
-        catch(error){failures.push(`수정 ${op.id}: ${error.message}`);}
+        catch(error){failures.push(`수정 ${op.id}: ${error.message}`);if(['CRACK_TIMEOUT','CRACK_ABORT','CRACK_NETWORK'].includes(error.code)){transportUncertain=true;break;}}
       }
-      for(const op of plan.creates){
+      for(const op of transportUncertain?[]:plan.creates){
         onProgress(`추가 중 ${++createCount}/${plan.creates.length}`);
         try{await longTermPost(room,op.after);if(draft)draft.bulkApplied=true;done++;}
-        catch(error){failures.push(`추가 [${op.after.title}]: ${error.message}`);}
+        catch(error){failures.push(`추가 [${op.after.title}]: ${error.message}`);if(['CRACK_TIMEOUT','CRACK_ABORT','CRACK_NETWORK'].includes(error.code)){transportUncertain=true;break;}}
       }
       if(!failures.length&&plan.deletes.length){
         const confirmed=await longTermFetch(room),confirmedById=new Map(confirmed.map(item=>[longTermId(item),item])),created=confirmed.filter(item=>!oldById.has(longTermId(item))),counts=new Map();
@@ -31881,8 +31890,9 @@ RP 원문과 사용자 확정 메모를 사실 근거로 삼는다. Crack의 미
       for(const op of failures.length?[]:plan.deletes){
         onProgress(`삭제 중 ${++deleteCount}/${plan.deletes.length}`);
         try{await longTermDelete(room,op.id);if(draft)draft.bulkApplied=true;done++;}
-        catch(error){failures.push(`삭제 ${op.id}: ${error.message}`);}
+        catch(error){failures.push(`삭제 ${op.id}: ${error.message}`);if(['CRACK_TIMEOUT','CRACK_ABORT','CRACK_NETWORK'].includes(error.code)){transportUncertain=true;break;}}
       }
+      if(transportUncertain&&draft){draft.bulkApplied=true;await saveRoom(room);}
       onProgress('서버 최종 확인');
       const final=await longTermFetch(room),finalById=new Map(final.map(item=>[longTermId(item),item]));
       const beforeIds=new Set(oldById.keys()),newByHash=new Map();
@@ -31936,7 +31946,7 @@ RP 원문과 사용자 확정 메모를 사실 근거로 삼는다. Crack의 미
     const backdrop=document.createElement('div');backdrop.className='rpcm-ltm-backdrop rpcm-ltm-bulk-backdrop rpcm-ltm-result-unified';backdrop.id='rpcm-ltm-editor-backdrop';
     backdrop.innerHTML=`<section class="rpcm-ltm-bulk rpcm-ltm-review" role="dialog" aria-modal="true" aria-label="장기기억 일괄 편집"><header class="rpcm-ltm-bulk-header"><div><div class="rpcm-ltm-editor-eyebrow">장기기억 관리</div><h3>장기기억 편집 · 결과 검토</h3><small>결과를 확인하고 미리보기 후 저장하세요.</small><div class="rpcm-ltm-editor-badges">${wishStatusBadge(`기존 ${inventory.length}개`)}${wishStatusBadge("제목 20자 · 내용 300자")}${wishStatusBadge("저장 전 원본 유지","success")}</div></div><button type="button" class="rpcm-btn secondary" data-ltm-bulk-close data-rpcm-close="icon" aria-label="닫기">${rpcmUiIcon('close')}</button></header><nav class="rpcm-ltm-bulk-tabs"><button type="button" class="rpcm-btn primary" data-ltm-bulk-tab="cards">카드별 편집</button><button type="button" class="rpcm-btn secondary" data-ltm-bulk-tab="text">전체 텍스트</button></nav><div class="rpcm-ltm-review-layout"><div class="rpcm-ltm-review-editor"><div class="rpcm-ltm-bulk-pane" data-ltm-bulk-pane="cards"><div class="rpcm-ltm-bulk-toolbar"><div class="rpcm-ltm-editor-filter"><input type="search" data-ltm-bulk-search placeholder="기억 제목이나 내용으로 검색" aria-label="기억 검색"><label><input type="checkbox" data-ltm-bulk-changed> 변경된 카드만</label></div><div class="rpcm-ltm-editor-selection"><label><input type="checkbox" data-ltm-bulk-all> 보이는 카드 선택</label><span class="rpcm-ltm-bulk-spacer"></span><button type="button" class="rpcm-btn secondary" data-ltm-bulk-selected-restore>선택 복원</button><button type="button" class="rpcm-btn secondary rpcm-ltm-danger" data-ltm-bulk-selected-delete>선택 카드 삭제</button><button type="button" class="rpcm-btn secondary" data-ltm-bulk-restore-all>전체 원복</button></div></div><details class="rpcm-ltm-review-group rpcm-ltm-existing-group"><summary><div class="rpcm-ltm-editor-group-heading"><h4>기존 장기기억 ${wishStatusBadge(`${inventory.length}개`)}</h4><small>펼쳐서 확인 · 삭제는 저장할 때 반영됩니다</small></div><button type="button" class="rpcm-btn secondary rpcm-ltm-danger" data-ltm-delete-existing-all ${inventory.length?"":"disabled"}>기존 카드 모두 삭제</button></summary><header><div class="rpcm-ltm-row"><button type="button" class="rpcm-btn secondary" data-ltm-existing-expand>기존 전체 펼치기</button><button type="button" class="rpcm-btn secondary" data-ltm-existing-collapse>기존 전체 접기</button><button type="button" class="rpcm-btn secondary" data-ltm-bulk-delete-native>Crack 생성 카드만 삭제</button></div></header><div class="rpcm-ltm-bulk-list" data-ltm-existing></div></details><section class="rpcm-ltm-review-group is-new"><header><div class="rpcm-ltm-editor-group-heading"><h4>새 결과 <span class="rpcm-status-pill is-accent" data-ltm-new-count></span></h4><small>가져온 결과를 카드별로 확인하고 수정하세요</small></div><button type="button" class="rpcm-btn secondary" data-ltm-add-card>빈 카드 추가</button></header><div class="rpcm-ltm-result-paste"><div class="rpcm-ltm-editor-input-head"><strong>결과 가져오기</strong>${wishStatusBadge("TXT · 붙여넣기","accent")}</div><label><span>외부 AI에서 받은 결과</span><textarea data-ltm-paste placeholder="[제목]\n기억 내용\n\n[다음 제목]\n기억 내용" spellcheck="false"></textarea></label><div class="rpcm-ltm-editor-import-actions"><input type="file" data-ltm-paste-file accept=".txt,text/plain" aria-label="장기기억 결과 TXT"><button type="button" class="rpcm-btn primary" data-ltm-paste-add>카드로 불러오기</button></div><p data-ltm-paste-status role="status"></p></div><div class="rpcm-ltm-bulk-list" data-ltm-new></div></section></div><div class="rpcm-ltm-bulk-pane rpcm-ltm-bulk-text" data-ltm-bulk-pane="text" hidden><label>전체 편집 · 기존 카드의 @ID를 유지하세요. 삭제한 블록은 삭제 예정입니다.<textarea data-ltm-bulk-text spellcheck="false"></textarea></label></div></div><aside class="rpcm-ltm-review-preview"><header><h4>저장 전 미리보기</h4><small>기존·수정·추가·삭제를 구분합니다.</small></header><div class="rpcm-ltm-bulk-diff" data-ltm-bulk-diff role="status">왼쪽에서 편집한 뒤 미리보기를 눌러 주세요.</div></aside></div><footer><span data-ltm-bulk-status role="status" aria-live="polite"></span><div><button type="button" class="rpcm-btn secondary" data-ltm-bulk-preview>미리보기</button><button type="button" class="rpcm-btn primary" data-ltm-bulk-save disabled>변경사항 저장</button></div></footer></section>`;
     document.body.appendChild(backdrop);
-    const by=q=>backdrop.querySelector(q);let tab='cards',previewSignature='',busy=false;
+    const by=q=>backdrop.querySelector(q);let tab='cards',previewSignature='',busy=false,importing=false;
     // One unified import/editor surface. Do not create or attach the obsolete simple panel.
     if(options.resultImport){
       backdrop.classList.add('rpcm-ltm-import-mode');
@@ -31958,7 +31968,7 @@ RP 원문과 사용자 확정 메모를 사실 근거로 삼는다. Crack의 미
     const signature=()=>(tab==='text'?by('[data-ltm-bulk-text]').value:JSON.stringify(rows.map(r=>[r.id,r.title,r.summary,r.deleted])))+'|'+compressionChoice.querySelector('input').checked;
     const initialSignature=signature(),invalidate=()=>{previewSignature='';by('[data-ltm-bulk-save]').disabled=true;};
     const cardHtml=(row,index)=>`<article class="rpcm-ltm-bulk-card${row.collapsed?' is-folded':''}" data-ltm-bulk-row="${index}"><header><label><input type="checkbox" data-ltm-bulk-select="${index}"> 선택</label><b>#${index+1}</b><small data-ltm-bulk-badge="${index}"></small><span class="rpcm-ltm-bulk-card-title" data-ltm-bulk-card-title="${index}">[${esc(row.title||'제목 없음')}]</span><span class="rpcm-ltm-bulk-spacer"></span><button type="button" class="rpcm-btn secondary" data-ltm-bulk-fold="${index}">${row.collapsed?'펼치기':'접기'}</button><button type="button" class="rpcm-btn secondary" data-ltm-bulk-restore="${index}">${row.isNew?'입력 초기화':'원본 복원'}</button><button type="button" class="rpcm-btn secondary" data-ltm-bulk-delete="${index}"></button></header><div class="rpcm-ltm-bulk-card-body" data-ltm-bulk-body-wrap="${index}" ${row.collapsed?'hidden':''}>${row.isNew?'':`<details class="rpcm-ltm-original"><summary>기존 내용 보기</summary><strong>[${esc(row.original.title)}]</strong><p>${esc(row.original.summary)}</p>${longTermCardCountHtml(row.original)}</details>`}<div class="rpcm-ltm-review-fields"><label>제목<input data-ltm-bulk-title="${index}" value="${esc(row.title)}" aria-label="${index+1}번 제목"></label><label>내용<textarea data-ltm-bulk-body="${index}" aria-label="${index+1}번 본문">${esc(row.summary)}</textarea></label><small data-ltm-bulk-count="${index}"></small></div></div></article>`;
-    const update=()=>{refreshNativeReview();const query=by('[data-ltm-bulk-search]').value.trim().toLowerCase(),only=by('[data-ltm-bulk-changed]').checked;rows.forEach((row,i)=>{const node=by(`[data-ltm-bulk-row="${i}"]`);node.hidden=!!((query&&!`${row.title} ${row.summary}`.toLowerCase().includes(query))||(only&&!changed(row)));node.classList.toggle('is-deleted',row.deleted);node.classList.toggle('is-changed',changed(row));node.classList.toggle('is-folded',!!row.collapsed);by(`[data-ltm-bulk-select="${i}"]`).checked=row.selected;by(`[data-ltm-bulk-badge="${i}"]`).textContent=row.deleted?'삭제 예정':row.isNew?'추가':changed(row)?'수정':'기존';by(`[data-ltm-bulk-card-title="${i}"]`).textContent=`[${row.title.trim()||'제목 없음'}]`;by(`[data-ltm-bulk-fold="${i}"]`).textContent=row.collapsed?'펼치기':'접기';by(`[data-ltm-bulk-body-wrap="${i}"]`).hidden=!!row.collapsed;by(`[data-ltm-bulk-delete="${i}"]`).textContent=row.deleted?'삭제 취소':'삭제';by(`[data-ltm-bulk-count="${i}"]`).innerHTML=longTermCardCountHtml(row);});const selected=rows.some(r=>r.selected);by('[data-ltm-bulk-selected-restore]').disabled=!selected;by('[data-ltm-bulk-selected-delete]').disabled=!selected;by('[data-ltm-bulk-preview]').disabled=!rows.some(changed);by('[data-ltm-bulk-restore-all]').disabled=!rows.some(changed);by('[data-ltm-new-count]').textContent=`${rows.filter(r=>r.isNew&&!r.deleted).length}개`;by('[data-ltm-bulk-status]').innerHTML=wishStatusBadge(`선택 ${rows.filter(r=>r.selected).length}개`)+wishStatusBadge(`수정 ${rows.filter(r=>!r.isNew&&!r.deleted&&changed(r)).length}개`,'accent')+wishStatusBadge(`추가 ${rows.filter(r=>r.isNew&&!r.deleted).length}개`,'success')+wishStatusBadge(`삭제 ${rows.filter(r=>!r.isNew&&r.deleted).length}개`,'warning');by('[data-ltm-delete-existing-all]').disabled=!rows.some(r=>!r.isNew&&!r.deleted);};
+    const update=()=>{if(busy)return;refreshNativeReview();const query=by('[data-ltm-bulk-search]').value.trim().toLowerCase(),only=by('[data-ltm-bulk-changed]').checked;rows.forEach((row,i)=>{const node=by(`[data-ltm-bulk-row="${i}"]`);node.hidden=!!((query&&!`${row.title} ${row.summary}`.toLowerCase().includes(query))||(only&&!changed(row)));node.classList.toggle('is-deleted',row.deleted);node.classList.toggle('is-changed',changed(row));node.classList.toggle('is-folded',!!row.collapsed);by(`[data-ltm-bulk-select="${i}"]`).checked=row.selected;by(`[data-ltm-bulk-badge="${i}"]`).textContent=row.deleted?'삭제 예정':row.isNew?'추가':changed(row)?'수정':'기존';by(`[data-ltm-bulk-card-title="${i}"]`).textContent=`[${row.title.trim()||'제목 없음'}]`;by(`[data-ltm-bulk-fold="${i}"]`).textContent=row.collapsed?'펼치기':'접기';by(`[data-ltm-bulk-body-wrap="${i}"]`).hidden=!!row.collapsed;by(`[data-ltm-bulk-delete="${i}"]`).textContent=row.deleted?'삭제 취소':'삭제';by(`[data-ltm-bulk-count="${i}"]`).innerHTML=longTermCardCountHtml(row);});const selected=rows.some(r=>r.selected);by('[data-ltm-bulk-selected-restore]').disabled=!selected;by('[data-ltm-bulk-selected-delete]').disabled=!selected;by('[data-ltm-bulk-preview]').disabled=!rows.some(changed);by('[data-ltm-bulk-restore-all]').disabled=!rows.some(changed);by('[data-ltm-new-count]').textContent=`${rows.filter(r=>r.isNew&&!r.deleted).length}개`;by('[data-ltm-bulk-status]').innerHTML=wishStatusBadge(`선택 ${rows.filter(r=>r.selected).length}개`)+wishStatusBadge(`수정 ${rows.filter(r=>!r.isNew&&!r.deleted&&changed(r)).length}개`,'accent')+wishStatusBadge(`추가 ${rows.filter(r=>r.isNew&&!r.deleted).length}개`,'success')+wishStatusBadge(`삭제 ${rows.filter(r=>!r.isNew&&r.deleted).length}개`,'warning');by('[data-ltm-delete-existing-all]').disabled=!rows.some(r=>!r.isNew&&!r.deleted);};
     const render=()=>{refreshNativeReview();by('[data-ltm-existing]').innerHTML=longTermDisplayOrder(rows.map((r,i)=>({r,i})).filter(({r})=>!r.isNew)).map(({r,i})=>cardHtml(r,i)).join('');by('[data-ltm-new]').innerHTML=longTermDisplayOrder(rows.map((r,i)=>({r,i})).filter(({r})=>r.isNew)).map(({r,i})=>cardHtml(r,i)).join('');update();};
     const restore=r=>{r.title=String(r.original.title||'');r.summary=String(r.original.summary||'');r.deleted=false;};
     const preview=()=>{invalidate();const rawCards=tab==='text'?longTermBulkParseText(by('[data-ltm-bulk-text]').value):editedCards(),cards=compressionChoice.querySelector('input').checked?longTermCompressionReplacementCards(inventory,rawCards,draft):rawCards,plan=longTermBulkPlan(inventory,cards);const titles=new Map();for(const c of cards){const title=c.title.trim();titles.set(title,(titles.get(title)||0)+1);}for(const [title,count] of titles){const originals=inventory.filter(item=>String(item.title||'').trim()===title);if(count>1&&(count>originals.length||cards.some(c=>c.title.trim()===title&&!originals.some(item=>longTermId(item)===c.id))))throw new Error(`새 결과에 같은 제목이 중복됩니다: ${title}. 제목을 구분해 주세요.`);}
@@ -31978,6 +31988,7 @@ RP 원문과 사용자 확정 메모를 사실 근거로 삼는다. Crack의 미
     by('[data-ltm-add-card]').onclick=()=>{appendIncoming([{title:'',summary:''}]);invalidate();render();by(`[data-ltm-bulk-title="${rows.length-1}"]`).focus();};
     by('[data-ltm-paste-file]').onchange=async e=>{const file=e.target.files?.[0];if(file){by('[data-ltm-paste]').value=await file.text();by('[data-ltm-paste-status]').textContent=`${file.name} · 새 결과에 추가를 눌러 주세요.`;}};
     by('[data-ltm-paste-add]').onclick=async()=>{
+      if(busy||importing)return;importing=true;invalidate();by('[data-ltm-bulk-preview]').disabled=true;
       const button=by('[data-ltm-paste-add]'),status=by('[data-ltm-paste-status]');
       button.disabled=true;
       try{
@@ -32004,14 +32015,14 @@ RP 원문과 사용자 확정 메모를 사실 근거로 삼는다. Crack의 미
         status.textContent=`새 결과 ${cards.length}개가 추가됐습니다. 아래 펼쳐진 카드를 확인한 뒤 미리보기 → 변경사항 저장을 누르세요.`;
         invalidate();render();
       }catch(error){status.textContent='결과 확인 필요: '+error.message;}
-      finally{button.disabled=false;}
+      finally{importing=false;button.disabled=false;update();}
     };
     backdrop.addEventListener('input',e=>{const i=e.target.dataset.ltmBulkTitle,j=e.target.dataset.ltmBulkBody;if(i!==undefined)rows[+i].title=e.target.value;if(j!==undefined)rows[+j].summary=e.target.value;if(i!==undefined||j!==undefined||e.target.matches('[data-ltm-bulk-text]')){invalidate();update();by('[data-ltm-bulk-diff]').textContent='편집됨 · 미리보기를 다시 눌러 주세요.';}});
     backdrop.addEventListener('change',e=>{const i=e.target.dataset.ltmBulkSelect;if(i!==undefined){rows[+i].selected=e.target.checked;update();}});
     backdrop.addEventListener('click',e=>{const f=e.target.closest('[data-ltm-bulk-fold]'),r=e.target.closest('[data-ltm-bulk-restore]'),d=e.target.closest('[data-ltm-bulk-delete]');if(f){const row=rows[+f.dataset.ltmBulkFold];row.collapsed=!row.collapsed;update();return;}if(r){restore(rows[+r.dataset.ltmBulkRestore]);invalidate();render();}if(d){const row=rows[+d.dataset.ltmBulkDelete];row.deleted=!row.deleted;invalidate();update();}});
     backdrop.querySelectorAll('[data-ltm-bulk-tab]').forEach(button=>button.onclick=()=>{const next=button.dataset.ltmBulkTab;if(next===tab)return;try{if(next==='text')by('[data-ltm-bulk-text]').value=longTermBulkText(editedCards());else{const cards=longTermBulkParseText(by('[data-ltm-bulk-text]').value);longTermBulkPlan(inventory,cards);rows.forEach(r=>r.deleted=true);rows.splice(inventory.length);for(const c of cards){const r=rows.find(r=>r.id&&r.id===c.id);if(r){r.title=c.title;r.summary=c.summary;r.deleted=false;}else appendIncoming([c]);}render();}tab=next;by('[data-ltm-bulk-pane="cards"]').hidden=tab!=='cards';by('[data-ltm-bulk-pane="text"]').hidden=tab!=='text';backdrop.querySelectorAll('[data-ltm-bulk-tab]').forEach(b=>{b.classList.toggle('primary',b===button);b.classList.toggle('secondary',b!==button);});invalidate();}catch(error){by('[data-ltm-bulk-status]').textContent=error.message;}});
-    by('[data-ltm-bulk-preview]').onclick=()=>{backdrop.classList.add('rpcm-ltm-preview-open');try{preview();}catch(error){invalidate();by('[data-ltm-bulk-status]').textContent=`수정 필요: ${error.message}`;by('[data-ltm-bulk-diff]').innerHTML=`<p role="alert">${esc(error.message)}</p>`;rows.forEach((r,i)=>{const over=[...`[${r.title}]`].length>20||[...r.summary].length>300;by(`[data-ltm-bulk-row="${i}"]`)?.classList.toggle('has-error',!r.deleted&&over);});}};
-    by('[data-ltm-bulk-save]').onclick=async()=>{try{if(previewSignature!==signature())throw new Error('변경 내용을 다시 미리보기해 주세요.');const plan=preview();if(!plan.updates.length&&!plan.creates.length&&!plan.deletes.length)return;if(!confirm(`장기기억 ${plan.updates.length}개 수정 · ${plan.creates.length}개 추가 · ${plan.deletes.length}개 삭제를 저장할까요?`))return;busy=true;if(draft?.mode==='manual-compress')draft.replaceSource=compressionChoice.querySelector('input').checked;by('[data-ltm-bulk-save]').disabled=true;const result=await longTermBulkApply(room,inventory,plan,text=>by('[data-ltm-bulk-status]').textContent=text,draft);backdrop.remove();options.onSaved?.();longTermRuntime.inventory=result.inventory;longTermRefreshUi(room);notify(`장기기억 ${result.done}개 변경을 서버에서 확인했습니다.`,'success');}catch(error){invalidate();by('[data-ltm-bulk-status]').textContent=`저장 중단: ${error.message} · 일부 변경이 적용됐을 수 있습니다. 서버 목록을 다시 확인해 주세요.`;}finally{busy=false;}};
+    by('[data-ltm-bulk-preview]').onclick=()=>{if(busy||importing)return;backdrop.classList.add('rpcm-ltm-preview-open');try{preview();}catch(error){invalidate();by('[data-ltm-bulk-status]').textContent=`수정 필요: ${error.message}`;by('[data-ltm-bulk-diff]').innerHTML=`<p role="alert">${esc(error.message)}</p>`;rows.forEach((r,i)=>{const over=[...`[${r.title}]`].length>20||[...r.summary].length>300;by(`[data-ltm-bulk-row="${i}"]`)?.classList.toggle('has-error',!r.deleted&&over);});}};
+    by('[data-ltm-bulk-save]').onclick=async()=>{if(busy||importing)return;let controls=[];try{if(previewSignature!==signature())throw new Error('변경 내용을 다시 미리보기해 주세요.');const plan=preview();if(!plan.updates.length&&!plan.creates.length&&!plan.deletes.length)return;if(!confirm(`장기기억 ${plan.updates.length}개 수정 · ${plan.creates.length}개 추가 · ${plan.deletes.length}개 삭제를 저장할까요?`))return;busy=true;controls=[...backdrop.querySelectorAll('button,input,textarea,select')].map(node=>({node,disabled:node.disabled}));controls.forEach(({node})=>node.disabled=true);if(draft?.mode==='manual-compress')draft.replaceSource=compressionChoice.querySelector('input').checked;by('[data-ltm-bulk-save]').disabled=true;const result=await longTermBulkApply(room,inventory,plan,text=>by('[data-ltm-bulk-status]').textContent=text,draft);backdrop.remove();options.onSaved?.();longTermRuntime.inventory=result.inventory;longTermRefreshUi(room);notify(`장기기억 ${result.done}개 변경을 서버에서 확인했습니다.`,'success');}catch(error){invalidate();by('[data-ltm-bulk-status]').textContent=`저장 중단: ${error.message} · 일부 변경이 적용됐을 수 있습니다. 서버 목록을 다시 확인해 주세요.`;}finally{busy=false;controls.forEach(({node,disabled})=>node.disabled=disabled);if(controls.length)invalidate();}};
     by('.rpcm-ltm-existing-group').before(by('.rpcm-ltm-review-group.is-new'));
     render();by('[data-ltm-bulk-text]').value=longTermBulkText(editedCards());
     if(draft?.cards?.length)by('[data-ltm-paste-status]').textContent=`생성 결과 ${draft.cards.length}개를 불러왔습니다. 미리보기 후 저장하세요.`;
