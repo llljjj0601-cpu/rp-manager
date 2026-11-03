@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🪽위시 RP Manager
 // @namespace    local.rp.context.manager
-// @version      0.17.36
+// @version      0.17.37
 // @description  장기 RP용 현재상태·날짜로그·연속성 타임라인·캐릭터 설정을 관리하고, 검수형 AI 생성과 필요한 컨텍스트 자동 주입을 지원합니다.
 // @author       User
 // @license      All Rights Reserved
@@ -69,7 +69,7 @@
         const style=document.createElement('style');
         style.textContent=':host{all:initial}section{box-sizing:border-box;width:280px;border:1px solid #d898ba;border-radius:12px;background:#fff4f9;color:#442d3b;padding:12px;font:13px/1.5 system-ui;box-shadow:0 4px 20px #0003}strong,span{display:block}span{white-space:pre-wrap;overflow-wrap:anywhere;margin-top:5px}button{font:inherit;margin-top:8px;padding:5px 9px;border:1px solid #b982a2;border-radius:6px;background:white;color:#442d3b;cursor:pointer}';
         const card=document.createElement('section');
-        card.innerHTML='<strong>WISH 0.17.36 · 실행 상태</strong><span role="status" aria-live="polite"></span><button type="button">닫기</button>';
+        card.innerHTML='<strong>WISH 0.17.37 · 실행 상태</strong><span role="status" aria-live="polite"></span><button type="button">닫기</button>';
         card.querySelector('button').onclick=()=>{dismissed=true;host?.remove();host=null;};
         root.append(style,card);document.documentElement.appendChild(host);
         for(const [key,value] of Object.entries({position:'fixed',right:'16px',top:'112px','z-index':'2147483647',display:'block',visibility:'visible',opacity:'1',width:'280px',height:'auto'}))host.style.setProperty(key,value,'important');
@@ -93,13 +93,13 @@
     wishBoot.status('duplicate', '다른 RP Manager 실행이 감지됐습니다. 버전: '+String(window.__WISH_RP_MANAGER_LOADED__.version||'알 수 없음'));
     return;
   }
-  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.17.36', loadedAt: Date.now() };
+  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.17.37', loadedAt: Date.now() };
   // 같은 페이지에 남아 있는 v0.8.10 복사본이 뒤늦게 시작되는 경우도 차단합니다.
   window.__RP_MANAGER_0810_LOADED__ = true;
 
   const APP = {
     name: '🪽위시 RP Manager',
-    version: '0.17.36',
+    version: '0.17.37',
     dbName: 'RPContextManagerDB',
     dbVersion: 2,
     storeName: 'rooms',
@@ -34367,6 +34367,10 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
     for(const [area,row] of Object.entries(config.areas)){
       const node=overlay.querySelector(`[data-ai-memory-area="${area}"]`);
       if(!node)continue;
+      aiMemoryClearManualPause(room,area);
+      const waits=aiMemoryManualWaits(room,area),resume=node.querySelector('[data-ai-memory-resume]'),waitNote=node.querySelector('[data-ai-memory-manual-wait]');
+      if(resume)resume.hidden=!waits.length;
+      if(waitNote){waitNote.hidden=!waits.length;waitNote.textContent=waits.length?`대기 중: ${waits.map(wait=>wait.label).join(' · ')} · 수동 결과 적용 또는 백업 후 대기 해제 필요`:'';}
       const count=counts[area];
       const label=`${aiMemoryProgressLabel(room,area)} · 마지막 AI 적용 ${aiMemoryTurnLabel(room,row.cursor)} · ${row.status} · ${row.autoApply?'자동 반영 ON':'검토 후 적용'}${row.autoApplyError?` · 보류 이유 ${row.autoApplyError.slice(0,90)}`:''}${row.draft?` · 검토 대기 ${row.draft.turnCount}턴`:''}${row.draft?.sharedCallId?' · 현재상태·물품 공유 호출 1회':''}${row.plannedStart?` · 예정 범위 ${aiMemoryTurnLabel(room,row.plannedStart)}~${aiMemoryTurnLabel(room,row.plannedEnd)}`:''}${row.error?` · 실패 ${row.error.slice(0,90)}`:''}`;
       const small=node.querySelector('small');if(small)small.textContent=label;
@@ -34389,7 +34393,7 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
     const config=aiMemoryConfig(room), counts=aiMemoryRuntime.lastCounts.get(String(room.chatId))||{};
     return `<article class="rpcm-pref-card rpcm-ai-memory-settings"><header><h3>AI 기억정리 ${rpcmHelpButton('ai')}</h3><span class="rpcm-pref-scope">현재 방 · 자동 호출 기본 OFF</span></header><p>완료된 USER+AI 턴을 항목별 주기에 따라 분석합니다. 기본은 초안 검토 후 적용입니다. 항목별 자동 반영을 켜면 원문·형식·저장본 검증을 통과한 새 결과를 바로 저장합니다. 충돌 시 초안으로 보류합니다.</p>
       <label class="rpcm-pref-row"><span>자동 생성 전체 사용<small>OFF면 자동 검사·오류 알림 중지 · 기존 자료·초안 유지</small></span><input type="checkbox" data-ai-memory-global ${config.enabled?'checked':''}></label>
-      ${Object.entries(AI_MEMORY_AREAS).map(([key,meta])=>{const row=config.areas[key],count=counts[key];const draft=row.draft;return `<div class="rpcm-ai-memory-row" data-ai-memory-area="${key}"><label><input type="checkbox" data-ai-memory-enable="${key}" ${row.enabled?'checked':''}><strong>${meta.label}</strong></label><label><input type="checkbox" data-ai-memory-auto-apply="${key}" ${row.autoApply?'checked':''}> 자동 반영</label><label>주기 <input type="number" min="1" max="100" step="1" data-ai-memory-interval="${key}" value="${row.interval}"> 턴</label><small>${esc(aiMemoryProgressLabel(room,key))} · 마지막 적용 ${esc(aiMemoryTurnLabel(room,row.cursor))}${row.baseline?` · 시작점 ${esc(aiMemoryTurnLabel(room,row.baseline))}`:''}${draft?` · 검토 대기 ${draft.turnCount}턴`:''}${draft?.sharedCallId?' · 현재상태·물품 공유 호출 1회':''} · ${esc(row.status)} · ${row.autoApply?'자동 반영 ON':'검토 후 적용'}${row.autoApplyError?` · 보류 이유 ${esc(row.autoApplyError.slice(0,150))}`:''}${row.plannedStart?` · 예정 ${esc(aiMemoryTurnLabel(room,row.plannedStart))}~${esc(aiMemoryTurnLabel(room,row.plannedEnd))}`:''}${row.lastUsage?` · 최근 입력 ${formatCount(row.lastUsage.inputTokens||0)} / 출력 ${formatCount(row.lastUsage.outputTokens||0)} tokens`:''}${row.error?` · 실패 ${esc(row.error.slice(0,90))}`:''}</small><div><button type="button" class="rpcm-btn secondary" data-ai-memory-run="${key}">바로 실행</button><button type="button" class="rpcm-btn secondary" data-ai-memory-review="${key}" ${draft?'':'disabled'}>초안 검토</button><button type="button" class="rpcm-btn secondary" data-ai-memory-baseline="${key}">시작점</button><button type="button" class="rpcm-btn secondary" data-ai-memory-now="${key}">지금부터</button>${config.undo.some(entry=>entry.area===key)?`<button type="button" class="rpcm-btn secondary" data-ai-memory-undo="${key}">직전 적용 되돌리기</button>`:''}</div></div>`;}).join('')}
+      ${Object.entries(AI_MEMORY_AREAS).map(([key,meta])=>{aiMemoryClearManualPause(room,key);const row=config.areas[key],count=counts[key],waits=aiMemoryManualWaits(room,key);const draft=row.draft;return `<div class="rpcm-ai-memory-row" data-ai-memory-area="${key}"><label><input type="checkbox" data-ai-memory-enable="${key}" ${row.enabled?'checked':''}><strong>${meta.label}</strong></label><label><input type="checkbox" data-ai-memory-auto-apply="${key}" ${row.autoApply?'checked':''}> 자동 반영</label><label>주기 <input type="number" min="1" max="100" step="1" data-ai-memory-interval="${key}" value="${row.interval}"> 턴</label><small>${esc(aiMemoryProgressLabel(room,key))} · 마지막 적용 ${esc(aiMemoryTurnLabel(room,row.cursor))}${row.baseline?` · 시작점 ${esc(aiMemoryTurnLabel(room,row.baseline))}`:''}${draft?` · 검토 대기 ${draft.turnCount}턴`:''}${draft?.sharedCallId?' · 현재상태·물품 공유 호출 1회':''} · ${esc(row.status)} · ${row.autoApply?'자동 반영 ON':'검토 후 적용'}${row.autoApplyError?` · 보류 이유 ${esc(row.autoApplyError.slice(0,150))}`:''}${row.plannedStart?` · 예정 ${esc(aiMemoryTurnLabel(room,row.plannedStart))}~${esc(aiMemoryTurnLabel(room,row.plannedEnd))}`:''}${row.lastUsage?` · 최근 입력 ${formatCount(row.lastUsage.inputTokens||0)} / 출력 ${formatCount(row.lastUsage.outputTokens||0)} tokens`:''}${row.error?` · 실패 ${esc(row.error.slice(0,90))}`:''}</small><small data-ai-memory-manual-wait ${waits.length?'':'hidden'}>대기 중: ${esc(waits.map(wait=>wait.label).join(' · '))} · 수동 결과 적용 또는 백업 후 대기 해제 필요</small><div><button type="button" class="rpcm-btn secondary" data-ai-memory-resume="${key}" ${waits.length?'':'hidden'}>백업 후 수동 대기 해제</button><button type="button" class="rpcm-btn secondary" data-ai-memory-run="${key}">바로 실행</button><button type="button" class="rpcm-btn secondary" data-ai-memory-review="${key}" ${draft?'':'disabled'}>초안 검토</button><button type="button" class="rpcm-btn secondary" data-ai-memory-baseline="${key}">시작점</button><button type="button" class="rpcm-btn secondary" data-ai-memory-now="${key}">지금부터</button>${config.undo.some(entry=>entry.area===key)?`<button type="button" class="rpcm-btn secondary" data-ai-memory-undo="${key}">직전 적용 되돌리기</button>`:''}</div></div>`;}).join('')}
       <p>자동·수동 전환은 기존 기억·초안·기준점을 유지합니다. 자동 작업은 수동으로 저장한 마지막 구간 다음부터 이어갑니다. 수동 범위 지정으로 이미 처리한 턴도 다시 검토할 수 있습니다. 자동 반영 OFF는 생성까지 끄지 않습니다.</p></article>`;
   }
   function aiMemoryOverview(room) {
@@ -34720,6 +34724,7 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
         if(areaResetPaused(room)||state.currentRoom!==room||!aiMemoryConfig(room).enabled)break;
         const row=aiMemoryConfig(room).areas[area];if(!row.enabled)continue;
         if(aiMemoryManualWaiting(room,area)){row.status='수동 결과 대기 · 자동 일시정지';continue;}
+        aiMemoryClearManualPause(room,area);
         if(row.draft){const applied=await aiMemoryTryAutoApply(room,area,row.draft);if(applied)break;continue;}
         if(row.failedEnd===counts.lastKey||counts[area]==null||aiMemoryReadyCount(room,area,turns)<row.interval)continue;
         if(row.error){row.error='';await saveRoom(room);}
@@ -34874,9 +34879,43 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
   function aiMemorySameDraft(a,b) {
     return !!a&&!!b&&a.createdAt===b.createdAt&&a.sourceHash===b.sourceHash&&a.area===b.area&&a.output===b.output;
   }
+  function aiMemoryManualWaits(room,area) {
+    const task=AI_MEMORY_AREAS[area]?.manual,job=room.manualPendingJobs?.[task],integrated=room.manualIntegratedJob,waits=[];
+    if(job&&!['applied','cancelled'].includes(job.status))waits.push({task,label:infoForManualTask(task),job});
+    if(integrated&&!['applied','cancelled'].includes(integrated.status))waits.push({task:'integrated',label:'통합 이어갱신',job:integrated});
+    return waits;
+  }
+  function aiMemoryClearManualPause(room,area) {
+    const row=aiMemoryConfig(room).areas[area];
+    if(row.status==='수동 결과 대기 · 자동 일시정지'&&!aiMemoryManualWaiting(room,area))row.status=row.draft?'검토 대기':row.error?'실패':'대기';
+  }
+  async function aiMemoryResumeAfterManual(room,area) {
+    if(!AI_MEMORY_AREAS[area])throw new Error('알 수 없는 기억 항목입니다.');
+    manualBatchGuard(room);
+    if(areaResetPaused(room)||aiMemoryRuntime.busy||integratedRuntime.busy||fullRebuildRuntime.busy)throw new Error('진행 중인 기억 생성·저장이 끝난 뒤 대기를 해제해 주세요.');
+    if(document.querySelector('#rpcm-update-dialog-backdrop,#rpcm-full-rebuild-dialog'))throw new Error('열려 있는 수동 결과 검토 창을 닫고 다시 해제해 주세요.');
+    const waits=aiMemoryManualWaits(room,area);
+    if(!waits.length){aiMemoryClearManualPause(room,area);aiMemoryRefreshStatusUi(room);return false;}
+    if(waits.some(wait=>wait.job.status==='verifying'))throw new Error('저장 완료 확인이 필요한 수동 결과가 있습니다. 수동 업데이트의 적용 누락 점검·결과 검토부터 완료해 주세요.');
+    const labels=waits.map(wait=>wait.label).join(' · ');
+    if(!confirm(`${labels} 수동 결과 대기를 백업한 뒤 취소할까요?\n결과를 적용할 계획이면 먼저 수동 업데이트에서 검토·적용하세요.\n저장된 기억·수동 체크포인트·AI 시작점·자동 반영 설정은 유지합니다.${waits.some(wait=>wait.task==='integrated')?'\n통합 대기 취소는 해당 통합 작업 전체에 적용됩니다.':''}`))return false;
+    const key=String(room.chatId),priorJobs=room.manualPendingJobs,priorIntegrated=room.manualIntegratedJob,backupRoom=structuredClone(room);
+    for(const wait of waits)if(wait.task!=='integrated'&&wait.job.draft){const cached=manualResultDraftCache(room,wait.task,wait.job.draft);if(cached)backupRoom.manualPendingJobs[wait.task].resultInputs=cached;}
+    downloadText(JSON.stringify({_rpContextManagerBackup:true,version:APP.version,exportedAt:nowIso(),rooms:[backupRoom],characterLibraries:[],integratedResult:priorIntegrated?integratedRuntime.importDrafts.get(priorIntegrated.jobId)||'':''},null,2),'RP_수동대기_해제전_백업_'+Date.now()+'.json','application/json');
+    manualUpdateRuntime.commits.add(key);
+    try{
+      for(const wait of waits){
+        if(wait.task==='integrated')delete room.manualIntegratedJob;
+        else room.manualPendingJobs={...room.manualPendingJobs,[wait.task]:{...wait.job,status:'cancelled',draft:null,cancelledAt:nowIso()}};
+      }
+      try{await saveRoom(room);}catch(error){if(priorJobs===undefined)delete room.manualPendingJobs;else room.manualPendingJobs=priorJobs;if(priorIntegrated===undefined)delete room.manualIntegratedJob;else room.manualIntegratedJob=priorIntegrated;throw error;}
+      for(const wait of waits){if(wait.task==='integrated')integratedRuntime.importDrafts.delete(wait.job.jobId);else manualUpdateRuntime.packets.delete(manualPacketKey(room,wait.task));}
+      for(const key of Object.keys(AI_MEMORY_AREAS))aiMemoryClearManualPause(room,key);
+      aiMemoryRefreshStatusUi(room);return true;
+    }finally{manualUpdateRuntime.commits.delete(key);}
+  }
   function aiMemoryManualWaiting(room,area) {
-    const task=AI_MEMORY_AREAS[area].manual,job=room.manualPendingJobs?.[task],integrated=room.manualIntegratedJob;
-    return !!(job&&!['applied','cancelled'].includes(job.status))||!!(integrated&&!['applied','cancelled'].includes(integrated.status));
+    return aiMemoryManualWaits(room,area).length>0;
   }
   function aiMemoryPolicyMatches(room,area,draft) {
     if(!room)return false;
@@ -35074,6 +35113,12 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
 
   function bindAiMemoryPreferences(overlay,room) {
     const config=aiMemoryConfig(room);
+    overlay.querySelectorAll('[data-ai-memory-resume]').forEach(button=>button.addEventListener('click',async()=>{
+      button.disabled=true;
+      try{const changed=await aiMemoryResumeAfterManual(room,button.dataset.aiMemoryResume);if(changed){renderModalIfOpen();notify('수동 대기를 백업 후 해제했습니다. 기존 자동 설정·주기에 따라 다시 확인합니다.','success');void aiMemoryPoll(room,true);}}
+      catch(error){notify(`수동 대기 해제 실패: ${error.message}`,'error',6500);}
+      finally{if(button.isConnected)button.disabled=false;}
+    }));
     overlay.querySelector('[data-ai-memory-global]')?.addEventListener('change',async event=>{const config=aiMemoryConfig(room);config.enabled=event.target.checked;config.applyRevision++;await saveRoom(room);renderModalIfOpen();if(config.enabled)void aiMemoryPoll(room,true);});
     overlay.querySelectorAll('[data-ai-memory-enable]').forEach(input=>input.addEventListener('change',()=>aiMemorySetEnabled(room,input.dataset.aiMemoryEnable,input.checked,input)));
     overlay.querySelectorAll('[data-ai-memory-auto-apply]').forEach(input=>input.addEventListener('change',async()=>{
