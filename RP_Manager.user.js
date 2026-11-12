@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         🪽위시 RP Manager
 // @namespace    local.rp.context.manager
-// @version      0.17.38
+// @version      0.17.40
 // @description  장기 RP용 현재상태·날짜로그·연속성 타임라인·캐릭터 설정을 관리하고, 검수형 AI 생성과 필요한 컨텍스트 자동 주입을 지원합니다.
-// @author       몽심
+// @author       User
 // @license      All Rights Reserved
 // @homepageURL  https://github.com/llljjj0601-cpu/rp-manager
 // @updateURL    https://raw.githubusercontent.com/llljjj0601-cpu/rp-manager/main/RP_Manager.user.js
@@ -975,7 +975,7 @@ const wrpmFullBackupV2 = (() => {
         const style=document.createElement('style');
         style.textContent=':host{all:initial}section{box-sizing:border-box;width:280px;border:1px solid #d898ba;border-radius:12px;background:#fff4f9;color:#442d3b;padding:12px;font:13px/1.5 system-ui;box-shadow:0 4px 20px #0003}strong,span{display:block}span{white-space:pre-wrap;overflow-wrap:anywhere;margin-top:5px}button{font:inherit;margin-top:8px;padding:5px 9px;border:1px solid #b982a2;border-radius:6px;background:white;color:#442d3b;cursor:pointer}';
         const card=document.createElement('section');
-        card.innerHTML='<strong>WISH 0.17.38 · 실행 상태</strong><span role="status" aria-live="polite"></span><button type="button">닫기</button>';
+        card.innerHTML='<strong>WISH 0.17.40 · 실행 상태</strong><span role="status" aria-live="polite"></span><button type="button">닫기</button>';
         card.querySelector('button').onclick=()=>{dismissed=true;host?.remove();host=null;};
         root.append(style,card);document.documentElement.appendChild(host);
         for(const [key,value] of Object.entries({position:'fixed',right:'16px',top:'112px','z-index':'2147483647',display:'block',visibility:'visible',opacity:'1',width:'280px',height:'auto'}))host.style.setProperty(key,value,'important');
@@ -999,13 +999,13 @@ const wrpmFullBackupV2 = (() => {
     wishBoot.status('duplicate', '다른 RP Manager 실행이 감지됐습니다. 버전: '+String(window.__WISH_RP_MANAGER_LOADED__.version||'알 수 없음'));
     return;
   }
-  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.17.38', loadedAt: Date.now() };
+  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.17.40', loadedAt: Date.now() };
   // 같은 페이지에 남아 있는 v0.8.10 복사본이 뒤늦게 시작되는 경우도 차단합니다.
   window.__RP_MANAGER_0810_LOADED__ = true;
 
   const APP = {
     name: '🪽위시 RP Manager',
-    version: '0.17.38',
+    version: '0.17.40',
     dbName: 'RPContextManagerDB',
     dbVersion: 2,
     storeName: 'rooms',
@@ -5031,7 +5031,7 @@ USER 캐릭터의 다음 항목은 직접 RP, USER의 명시적 서술 또는 �
   }
 
   function loadUiPrefs() {
-    const fallback = { density: 'comfortable', editorHeights: {}, desktopQuickTriggerVisible: true };
+    const fallback = { density: 'comfortable', editorHeights: {}, desktopQuickTriggerVisible: true, monitorTapAction: 'quick' };
     try {
       const parsed = JSON.parse(localStorage.getItem(APP.uiPrefsKey) || 'null');
       if (!parsed || typeof parsed !== 'object') return fallback;
@@ -5039,6 +5039,7 @@ USER 캐릭터의 다음 항목은 직접 RP, USER의 명시적 서술 또는 �
         density: parsed.density === 'compact' ? 'compact' : 'comfortable',
         editorHeights: parsed.editorHeights && typeof parsed.editorHeights === 'object' ? parsed.editorHeights : {},
         desktopQuickTriggerVisible: parsed.desktopQuickTriggerVisible !== false,
+        monitorTapAction: parsed.monitorTapAction === 'manager' ? 'manager' : 'quick',
       };
     } catch (_) { return fallback; }
   }
@@ -15259,6 +15260,11 @@ ${dialogueText}`;
     });
 
     if (room) {
+      if (room && (room.memorySeparation084 || room.simplification078 || Object.prototype.hasOwnProperty.call(room.manualUpdateCheckpoints || {}, 'importantItems'))) {
+        if (String(state.currentChatId) === String(chatId)) { state.currentRoom = null; closeModal(); closeQuickInjectionPanel(); }
+        const error = new Error('86/87 형식으로 저장된 방은 자료 보호를 위해 38 기반 버전에서 열거나 저장하지 않습니다. 기존 버전에서 전체 백업을 받아 보관해 주세요. 자동 변환은 하지 않았습니다.');
+        error.code = 'RPCM_38_INCOMPATIBLE_ROOM'; throw error;
+      }
       rpcmStampRoomEpoch(room);
       rpcmRememberRoomBaseline(room);
       const needsStoryLogMigration = !room.storyLogReviewRevisionV1 || !room.storyTimelineGuideRevisionV15;
@@ -16059,6 +16065,10 @@ ${dialogueText}`;
   }
 
   async function saveRoom(room,writer='saveRoom',validateBeforeWrite=null) {
+    if (room && (room.memorySeparation084 || room.simplification078 || Object.prototype.hasOwnProperty.call(room.manualUpdateCheckpoints || {}, 'importantItems'))) {
+      const error = new Error('86/87 형식으로 저장된 방은 자료 보호를 위해 38 기반 버전에서 열거나 저장하지 않습니다. 기존 버전에서 전체 백업을 받아 보관해 주세요. 자동 변환은 하지 않았습니다.');
+      error.code = 'RPCM_38_INCOMPATIBLE_ROOM'; throw error;
+    }
     rpcmAssertRoomEpoch(room);
     const resetEpoch=areaResetEpoch(room);
     if(areaResetRuntime.active&&areaResetPaused(room))throw new Error('영역 초기화 중에는 다른 저장을 보류합니다.');
@@ -16081,7 +16091,13 @@ ${dialogueText}`;
         let abortedForStale=false,validationError=null;
         get.onsuccess=()=>{
           let stored;
-          try { stored=wishLocalStorageRecord(get.result); }
+          try {
+            stored=wishLocalStorageRecord(get.result);
+            if (stored && (stored.memorySeparation084 || stored.simplification078 || Object.prototype.hasOwnProperty.call(stored.manualUpdateCheckpoints || {}, 'importantItems'))) {
+              const error = new Error('86/87 형식으로 저장된 방은 자료 보호를 위해 38 기반 버전에서 열거나 저장하지 않습니다. 기존 버전에서 전체 백업을 받아 보관해 주세요. 자동 변환은 하지 않았습니다.');
+              error.code = 'RPCM_38_INCOMPATIBLE_ROOM'; throw error;
+            }
+          }
           catch(error){validationError=error;tx.abort();return;}
           storedForTrace=stored||{};
           const revision=Number(stored?._rpcmRevision||0);
@@ -20534,42 +20550,52 @@ ${dialogueText}`;
     return fallback;
   }
 
+  function rpcmMonitorPressHint(tapAction=loadUiPrefs().monitorTapAction) {
+    return tapAction==='manager'?'짧게 누르면 전체 RP Manager, 길게 누르면 빠른 관리':'짧게 누르면 빠른 관리, 길게 누르면 전체 RP Manager';
+  }
+
   // PC uses the stable header row; mobile places the same monitor beside the composer send control.
   function rpcmBindMonitorPress(trigger) {
-    let holdTimer=0, openTimer=0, resetTimer=0, fired=false, pointerId=null, pressRoomId='', pressedAt=0, startX=0, startY=0;
+    let holdTimer=0, openTimer=0, resetTimer=0, fired=false, pointerId=null, pressRoomId='', pressedAt=0, startX=0, startY=0, pressTapAction='quick', suppressTouchClick=false;
     const tapMs=360, holdMs=540;
     const warmRoom=()=>{const chatId=getChatIdFromPath();if(chatId){const ready=prepareManagerOpenRoom(chatId);if(ready?.then)ready.catch(()=>{});}};
     const releasePointer=()=>{
       const id=pointerId;pointerId=null;
       try{if(id!=null&&trigger.hasPointerCapture(id))trigger.releasePointerCapture(id);}catch(_){}
     };
-    const clear=(completed=false)=>{
+    const clear=(completed=false,keepPointer=false)=>{
       clearTimeout(holdTimer);holdTimer=0;clearTimeout(openTimer);openTimer=0;
       clearTimeout(resetTimer);resetTimer=0;trigger.classList.remove('is-holding','is-hold-complete');
-      releasePointer();trigger.rpcmPressRoomId='';trigger.style.removeProperty('--rpcm-fill-start');
+      if(!keepPointer)releasePointer();trigger.rpcmPressRoomId='';trigger.style.removeProperty('--rpcm-fill-start');
       if(completed){trigger.classList.add('is-hold-complete');resetTimer=setTimeout(()=>trigger.classList.remove('is-hold-complete'),180);}
     };
     const valid=()=>trigger.isConnected&&!trigger.disabled&&pressRoomId===String(state.currentChatId||'');
     const cancel=()=>{fired=true;clear();};trigger.rpcmCancelHold=cancel;
-    const finishQuick=()=>{
-      if(!valid()){cancel();return;}clear(true);
+    const finishQuick=(keepPointer=false)=>{
+      if(!valid()){cancel();return;}clear(true,keepPointer);
       if(state.quickPanel)closeQuickInjectionPanel();else openQuickInjectionPanel().catch(error=>notify(error.message,'error'));
     };
+    const finishManager=()=>{
+      if(!valid()){cancel();return;}clear(true);
+      try{navigator.vibrate?.(12);}catch(_){}
+      closeQuickInjectionPanel();openModal().catch(error=>notify(error.message,'error'));
+    };
+    const finishTap=()=>pressTapAction==='manager'?finishManager():finishQuick();
     trigger.oncontextmenu=event=>event.preventDefault();
     document.addEventListener('visibilitychange',()=>{if(document.hidden)cancel();});
+    trigger.addEventListener('touchend',event=>{if(suppressTouchClick){event.preventDefault();suppressTouchClick=false;}},{passive:false});
     trigger.onpointerdown=event=>{
       if(trigger.disabled||event.isPrimary===false||(event.button!==undefined&&event.button!==0)||openTimer)return;
-      event.preventDefault();event.stopPropagation();clear();fired=false;pointerId=event.pointerId;pressRoomId=String(state.currentChatId||'');trigger.rpcmPressRoomId=pressRoomId;pressedAt=performance.now();startX=event.clientX;startY=event.clientY;
+      event.preventDefault();event.stopPropagation();clear();fired=false;suppressTouchClick=false;pointerId=event.pointerId;pressRoomId=String(state.currentChatId||'');trigger.rpcmPressRoomId=pressRoomId;pressTapAction=loadUiPrefs().monitorTapAction;pressedAt=performance.now();startX=event.clientX;startY=event.clientY;
       trigger.style.setProperty('--rpcm-hold-ms',`${holdMs}ms`);
       trigger.classList.add('is-holding');warmRoom();
       try{trigger.setPointerCapture(pointerId);}catch(_){}
       holdTimer=setTimeout(()=>{
-        if(!valid()){cancel();return;}fired=true;clear(true);
-        try{navigator.vibrate?.(12);}catch(_){}
-        closeQuickInjectionPanel();openModal().catch(error=>notify(error.message,'error'));
+        if(!valid()){cancel();return;}fired=true;
+        if(pressTapAction==='manager'){suppressTouchClick=true;finishQuick(true);}else finishManager();
       },holdMs);
     };
-    trigger.onpointermove=event=>{if(pointerId===event.pointerId&&Math.hypot(event.clientX-startX,event.clientY-startY)>14)cancel();};
+    trigger.onpointermove=event=>{if(!(fired&&pressTapAction==='manager')&&pointerId===event.pointerId&&Math.hypot(event.clientX-startX,event.clientY-startY)>14)cancel();};
     trigger.onpointercancel=cancel;
     trigger.onlostpointercapture=()=>{if(pointerId!==null&&holdTimer&&!fired)cancel();};
     trigger.onpointerup=event=>{
@@ -20585,15 +20611,15 @@ ${dialogueText}`;
         trigger.style.setProperty('--rpcm-hold-ms',`${remaining}ms`);
         void trigger.offsetWidth;
         trigger.classList.add('is-holding');
-        if(!remaining)finishQuick();
-        else openTimer=setTimeout(()=>{openTimer=0;finishQuick();},remaining);
+        if(!remaining)finishTap();
+        else openTimer=setTimeout(()=>{openTimer=0;finishTap();},remaining);
       }else clear();
     };
     trigger.onclick=event=>{
       if(event.detail!==0||trigger.disabled||openTimer||pointerId!==null)return;
-      clear();pressRoomId=String(state.currentChatId||'');trigger.rpcmPressRoomId=pressRoomId;
+      clear();pressRoomId=String(state.currentChatId||'');trigger.rpcmPressRoomId=pressRoomId;pressTapAction=loadUiPrefs().monitorTapAction;
       trigger.style.setProperty('--rpcm-hold-ms','360ms');trigger.classList.add('is-holding');warmRoom();
-      openTimer=setTimeout(()=>{openTimer=0;finishQuick();},360);
+      openTimer=setTimeout(()=>{openTimer=0;finishTap();},360);
     };
   }
   function updateQuickInjectionTrigger() {
@@ -20612,9 +20638,10 @@ ${dialogueText}`;
     trigger.classList.toggle('is-busy', monitor.busy);
     trigger.classList.toggle('is-active', !!state.quickPanel);
     trigger.classList.toggle('is-manager-open', !!state.modal);
-    trigger.setAttribute('aria-expanded',String(!!state.quickPanel));
-    trigger.setAttribute('aria-label',`WISH · ${monitor.armed?'주입 켜짐':'주입 꺼짐'}${monitor.busy?' · 반영 중':''} · 짧게 누르면 빠른 관리, 길게 누르면 전체 RP Manager`);
-    trigger.title=`WISH · ${monitor.armed?'주입 켜짐':'주입 꺼짐'}${monitor.warning?' · 확인할 일 있음':''} · 짧게 누르면 빠른 관리, 길게 누르면 전체 RP Manager`;
+    const tapAction=loadUiPrefs().monitorTapAction,pressHint=rpcmMonitorPressHint(tapAction);
+    trigger.setAttribute('aria-expanded',String(tapAction==='manager'?!!state.modal:!!state.quickPanel));
+    trigger.setAttribute('aria-label',`WISH · ${monitor.armed?'주입 켜짐':'주입 꺼짐'}${monitor.busy?' · 반영 중':''} · ${pressHint}`);
+    trigger.title=`WISH · ${monitor.armed?'주입 켜짐':'주입 꺼짐'}${monitor.warning?' · 확인할 일 있음':''} · ${pressHint}`;
     trigger.querySelector('.rpcm-header-monitor-label').textContent='WISH';
     if (state.modal) trigger.rpcmCancelHold?.();
     trigger.disabled = !!state.modal;
@@ -26148,12 +26175,12 @@ html.rpcm-mobile-layout #rpcm-modal #rpcm-section-overview .rpcm-maintenance-act
     return null;
   }
 
-  function findModelSelectorButtonInHeader(header) {
+  function findModelSelectorButtonInHeader(header, allowHidden = false) {
     if (!header) return null;
     const badText = /^(manager|lore|기억\s*삽입|설정|요약|파티챗|에피소드)$/i;
     const strongModelWord = /(하이퍼\s*챗|프로\s*챗|프리\s*챗|chat|gpt|claude|gemini|sonnet|opus|flash)/i;
     const candidates = [...header.querySelectorAll('button,[role="button"]')].map(el => {
-      if (!el || el === state.fab || el.id === 'summary-editor-btn' || el.id === 'wish-rpcore-refiner-button' || !isCrackHeaderVisible(el)) return null;
+      if (!el || el === state.fab || el.id === 'summary-editor-btn' || el.id === 'wish-rpcore-refiner-button' || (!allowHidden && !isCrackHeaderVisible(el))) return null;
       if (el.closest?.('[role="dialog"],[aria-modal="true"],[role="menu"],[role="listbox"],[data-radix-popper-content-wrapper]')) return null;
       const t = [modelSelectorText(el), el.getAttribute('aria-label'), el.getAttribute('title')].filter(Boolean).join(' ');
       if (!t || badText.test(t)) return null;
@@ -26196,11 +26223,28 @@ html.rpcm-mobile-layout #rpcm-modal #rpcm-section-overview .rpcm-maintenance-act
     return true;
   }
 
+  function findManagerComposerTarget() {
+    const root=document.querySelector('main')||document.body;if(!root)return null;
+    const composer=[...root.querySelectorAll('.__chat_input_textarea,textarea,[contenteditable="true"],[role="textbox"],.ProseMirror')]
+      .filter(el=>!el.closest('[id^="rpcm-"],[id^="wish-rpcore-"],[role="dialog"],[aria-modal="true"]')&&isCrackHeaderVisible(el))
+      .filter(el=>{const r=el.getBoundingClientRect();return r.width>120&&r.height>18&&r.bottom>innerHeight*.34;})
+      .sort((a,b)=>b.getBoundingClientRect().top-a.getBoundingClientRect().top)[0];
+    for(let host=composer?.parentElement,depth=0;host&&host!==root&&depth<4;host=host.parentElement,depth++){
+      for(const row of host.querySelectorAll('.flex.items-center.justify-between')){
+        const group=[...row.children].find(el=>el.matches('.flex.min-w-0.items-center'));
+        if(!group||!isCrackHeaderVisible(row))continue;
+        const style=getComputedStyle(group);if(style.display==='none'||style.visibility==='hidden')continue;
+        const modelButton=findModelSelectorButtonInHeader(group,true);if(modelButton)return {header:group,modelButton};
+      }
+    }
+    return null;
+  }
+
   function mountManagerNextToModelSelector(fab) {
-    const header = findStableCrackHeaderActionRow();
-    if (!header || !isCrackHeaderVisible(header)) return false;
-    const modelButton = findModelSelectorButtonInHeader(header);
-    if (!modelButton) return false;
+    const legacy=findStableCrackHeaderActionRow(),target=legacy?{header:legacy,modelButton:findModelSelectorButtonInHeader(legacy)}:findManagerComposerTarget();
+    if(!target)return false;
+    const {header,modelButton}=target;
+    if(!modelButton)return false;
     const before = directChildInsideHost(modelButton, header);
     if (!before) return false;
     // WISH를 추가하면 기존 확장 버튼이 밀려나는 좁은 행은 사용하지 않습니다.
@@ -26215,7 +26259,7 @@ html.rpcm-mobile-layout #rpcm-modal #rpcm-section-overview .rpcm-maintenance-act
     // 요약 메모리 편집기(📜)와 같은 고정 상단 행에만 삽입합니다.
     // 모델 선택 컴포넌트의 최상위 자식 바로 앞에 넣으므로 모델명/내부 래퍼가 바뀌어도 위치가 유지됩니다.
     if (fab.parentElement !== header || fab.nextSibling !== before) header.insertBefore(fab, before);
-    fab.dataset.rpcmPlacement = 'stable-header-before-model';
+    fab.dataset.rpcmPlacement = legacy?'stable-header-before-model':'composer-before-model';
     managerInlineMounted = true;
     managerFallbackLocked = false;
     return true;
@@ -26614,7 +26658,7 @@ html.rpcm-mobile-layout #rpcm-modal #rpcm-section-overview .rpcm-maintenance-act
       fab.classList.remove('rpcm-composer-launcher');
     }
     // React나 다른 확장이 헤더를 다시 그렸다면 같은 위치에 계속 재삽입하지 않습니다.
-    if (managerInlineMounted && !fab.isConnected) {
+    if (managerInlineMounted && !fab.isConnected && fab.dataset.rpcmPlacement!=='composer-before-model') {
       fab.rpcmCancelHold?.();
       managerFallbackLocked = true;
     }
@@ -28688,6 +28732,7 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
       if(result){const task=card.dataset.updateTask,blocked=task==='lore'&&!manualLoreGuideSlot(room).ready;resultImportButtonState(result,!blocked&&manualResultReady(room,task));if(blocked)result.title='자료집 지침 미연결';}
       refreshManualTaskActions(card,room,card.dataset.updateTask,card.dataset.updateTask==='lore'&&!manualLoreGuideSlot(room).ready);
     });
+    const guide=overlay.querySelector('.rpcm-ui-work-guide');if(guide)guide.outerHTML=rpcmUiManualGuideHtml(room);
     refreshLongTermUpdateCards(overlay,room);
     const overview = overlay.querySelector('.rpcm-update-overview-rows');
     if (overview) rpcmPatchHtml(overview, manualOverviewRowsHtml(room));
@@ -29814,7 +29859,7 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
     if(restored&&Array.isArray(restored.excludedPeople))excludedPeople=new Set(restored.excludedPeople.map(manualPersonName));
     if(restored&&Array.isArray(restored.restoredPeople))restoredPeople=new Set(restored.restoredPeople.map(manualPersonName));
     renderPersonSelection();
-    const invalidate = () => { renderPersonSelection();prepared = null; applyButton.disabled = true; diff.hidden = true; diff.innerHTML = ''; status.textContent = '입력 변경됨 · 다시 검증하고 Diff를 확인해 주세요.';clearTimeout(importTimer);importTimer=setTimeout(()=>void persist(false).catch(error=>{status.textContent='입력 임시 저장 실패: '+error.message;}),450); };
+    const invalidate = () => { status.classList.remove('is-saved');renderPersonSelection();prepared = null; applyButton.disabled = true; diff.hidden = true; diff.innerHTML = ''; status.textContent = '입력 변경됨 · 다시 검증하고 Diff를 확인해 주세요.';clearTimeout(importTimer);importTimer=setTimeout(()=>void persist(false).catch(error=>{status.textContent='입력 임시 저장 실패: '+error.message;}),450); };
     personSelection?.addEventListener('change',event=>{
       const restore=event.target.closest('[data-person-import-restore]');
       if(restore){const name=restore.dataset.personImportRestore;if(restore.checked)restoredPeople.add(name);else restoredPeople.delete(name);invalidate();return;}
@@ -29835,7 +29880,7 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
       input.value = '';
     }));
     previewButton.addEventListener('click', async () => {
-      previewButton.disabled = true; applyButton.disabled = true; status.textContent = '원문 확인 중…';
+      previewButton.disabled = true; applyButton.disabled = true; status.classList.remove('is-saved');status.textContent = '원문 확인 중…';
       backdrop.querySelectorAll('[data-manual-input],[data-manual-file],[data-manual-allow-appended],[data-person-import-exclude],[data-person-import-restore]').forEach(input=>input.disabled=true);
       try {
         assertManualJobCurrent(room,task,draft,values());
@@ -29869,8 +29914,7 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
         applied=true;manualResultDraftCache(room,task,draft,null);
         const fullBuildDone = !!draft.fullBuild && !manualFullBuildFor(room, task);
         const fullBuildNext = draft.fullBuild && manualFullBuildFor(room, task);
-        status.textContent = `로컬 저장 완료 · ${fullBuildDone ? '전체 구축 완료' : fullBuildNext ? `${fullBuildNext.completedParts}구간 완료 · 다음 구간은 업데이트 센터에서 생성` : manualRangeMovesForward(draft) ? '체크포인트 전진 완료' : '체크포인트 유지'} · ${result.carrier}`;
-        status.classList.add('is-saved');
+        rpcmUiSavedBanner(status,fullBuildDone ? '전체 구축 완료' : fullBuildNext ? `${fullBuildNext.completedParts}구간 완료 · 다음 구간은 업데이트 센터에서 생성` : manualRangeMovesForward(draft) ? '체크포인트 전진 완료' : '체크포인트 유지',result.carrier);
         const overlay = state.modal;
         if (overlay) { refreshManualUpdateCards(overlay, room); renderModalIfOpen(); }
         notify(`${fullBuildDone ? '전체 구축 완료' : fullBuildNext ? `전체 구축 ${fullBuildNext.completedParts}구간 저장 완료` : '수동 업데이트 저장 완료'} · ${result.carrier}`, result.carrier.includes('실패') || result.carrier.includes('대기') ? 'warn' : 'success', 6500);
@@ -33979,7 +34023,7 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
   }
 
   const RPCM_WORK_VIEWS = {
-    overview:['확인', '현재 주입 구성과 확인할 일을 한눈에 살펴봅니다.'],
+    overview:['홈', '현재 주입 구성과 확인할 일을 한눈에 살펴봅니다.'],
     compression:['압축', '저장 자료를 외부 AI로 정리하고 선택한 변경만 적용합니다.'],
     update:['수동 업데이트', '수동 작업자료를 만들고 결과를 검증·비교한 뒤 저장합니다.'],
     longterm:['장기기억', 'Crack 장기기억을 만들고 압축·검토합니다.'],
@@ -33992,14 +34036,14 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
     extra:['기타·OOC', 'OOC와 자주 사용하는 규칙을 관리합니다.'],
     preferences:['일반·UI', 'RP Manager 화면과 Quick Monitor 표시를 관리합니다.'],
     lore:['자료집', '세계관·장소·조직·규칙을 팩과 카드로 관리합니다.'],
-    tools:['자료 관리', '미리보기, 백업, 복사와 복원을 실행합니다.'],
+    tools:['보관·복구', '미리보기, 백업, 복사와 복원을 실행합니다.'],
     ai:['AI', 'AI 어시스턴트와 AI 작업을 관리합니다.'],
   };
 
   const RPCM_TOP_NAV = Object.freeze({
-    overview:{ label:'확인', icon:'home', first:'overview' },
+    overview:{ label:'홈', icon:'home', first:'overview' },
     memory:{ label:'기억', icon:'memory', first:'memory' },
-    manage:{ label:'자료 관리', icon:'database', first:'update' },
+    manage:{ label:'작업실', icon:'database', first:'update' },
     lore:{ label:'자료집', icon:'book', first:'lore' },
     people:{ label:'인물', icon:'people', first:'people' },
     ai:{ label:'AI', icon:'sparkle', first:'ai' },
@@ -34165,8 +34209,48 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
   }
 
   function compressionStyles(){if(document.getElementById('rpcm-compression-style'))return;const node=document.createElement('style');node.id='rpcm-compression-style';node.textContent="#rpcm-modal #rpcm-section-compression{display:none;min-width:0}\n#rpcm-modal .rpcm-workspace[data-view=\"compression\"] #rpcm-section-compression{display:grid;gap:16px}\nhtml.rpcm-mobile-layout #rpcm-modal #rpcm-section-compression.rpcm-mobile-section-active{display:grid}\n#rpcm-modal .rpcm-compression .rpcm-tool-card{width:100%;box-sizing:border-box}\n#rpcm-modal .rpcm-compression .rpcm-tool-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}\n#rpcm-modal .rpcm-compression .rpcm-tool-actions details{padding:8px}\n#rpcm-modal .rpcm-context-refresh-shortcut{margin:0 0 10px;min-width:0}\n#rpcm-modal .rpcm-recheck-report{margin-bottom:18px;padding:14px 16px;border-radius:16px;background:var(--wish-card);color:var(--wish-fg);border:1px solid var(--wish-line)}\n#rpcm-modal .rpcm-recheck-report summary{cursor:pointer;font-weight:500;display:flex;gap:12px;flex-wrap:wrap}\n#rpcm-modal .rpcm-recheck-report summary small{margin-left:auto}\n#rpcm-modal .rpcm-recheck-report article{padding:12px 0;border-top:1px solid var(--wish-line)}\n#rpcm-modal .rpcm-recheck-report article header{display:flex;gap:12px;justify-content:space-between}\n#rpcm-modal .rpcm-recheck-report p{line-height:1.7;white-space:pre-wrap;overflow-wrap:anywhere}\n#rpcm-modal .rpcm-recheck-empty{font-size:12px;color:var(--wish-muted);margin:0 0 16px}\n#rpcm-compression-backdrop{position:fixed;inset:0;z-index:2147483646;background:#0008;display:grid;place-items:center;padding:16px;box-sizing:border-box;color:var(--wish-fg)}\n#rpcm-compression-backdrop>section{width:min(1180px,100%);max-height:92dvh;display:flex;flex-direction:column;overflow:hidden;border-radius:20px;background:var(--wish-card);box-sizing:border-box}\n#rpcm-compression-backdrop header,#rpcm-compression-backdrop footer{display:flex;gap:12px;justify-content:space-between;align-items:center;padding:18px 22px;border-bottom:1px solid var(--wish-line)}\n#rpcm-compression-backdrop footer{border-bottom:0;border-top:1px solid var(--wish-line);justify-content:flex-end}\n#rpcm-compression-backdrop h2{font-size:20px;font-weight:500;margin:0}\n#rpcm-compression-backdrop h4{font-size:14px;font-weight:500}\n#rpcm-compression-backdrop .rpcm-update-result-body{padding:20px;overflow:auto;min-height:0}\n#rpcm-compression-backdrop textarea{width:100%;height:160px;box-sizing:border-box;padding:14px;margin-top:12px;background:var(--wish-card-2);color:var(--wish-fg);border:1px solid var(--wish-line);border-radius:12px}\n#rpcm-compression-backdrop .rpcm-compression-change{padding:18px 0;border-top:1px solid var(--wish-line)}\n#rpcm-compression-backdrop label{display:flex;gap:10px;align-items:center;flex-wrap:wrap}\n#rpcm-compression-backdrop .rpcm-compression-compare{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:18px}\n#rpcm-compression-backdrop pre{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.7;font-size:13px;max-height:360px;overflow:auto;background:var(--wish-card-2);padding:14px;border-radius:12px}\n#rpcm-compression-backdrop .rpcm-btn{padding:10px 16px;border:0;border-radius:12px;background:var(--wish-card-2);color:var(--wish-fg);cursor:pointer}\n#rpcm-compression-backdrop .rpcm-btn.primary{background:var(--wish-accent);color:white}\n#rpcm-compression-backdrop button:disabled{opacity:.45;cursor:default}\n@media(max-width:680px){#rpcm-compression-backdrop{padding:8px}#rpcm-compression-backdrop .rpcm-compression-compare{grid-template-columns:1fr}#rpcm-compression-backdrop footer{flex-wrap:wrap}#rpcm-modal .rpcm-context-refresh-shortcut{flex-wrap:wrap}}\n#rpcm-modal .rpcm-workspace[data-view=\"compression\"] .rpcm-work-content>:not(.rpcm-work-subnav):not(.rpcm-view-head):not(#rpcm-section-compression){display:none!important}\n#rpcm-modal .rpcm-workspace[data-view=\"compression\"] #rpcm-section-compression{display:grid!important;gap:16px}\n#rpcm-modal #rpcm-section-compression .rpcm-tool-card{padding:22px;border:1px solid var(--wish-line);background:var(--wish-card);border-radius:16px}\n#rpcm-modal #rpcm-section-compression h3{font-size:20px;font-weight:500;margin:0 0 10px}\n#rpcm-modal #rpcm-section-compression p{line-height:1.8}\n#rpcm-modal #rpcm-section-compression .rpcm-tool-actions{margin-top:20px}\n#rpcm-modal #rpcm-section-compression .rpcm-tool-card h3{color:var(--wish-fg)!important}\n#rpcm-modal #rpcm-section-compression .rpcm-tool-card p{color:var(--wish-fg-2)!important;font-size:14px}\n#rpcm-modal #rpcm-section-compression .rpcm-tool-card small{color:var(--wish-muted)!important;line-height:1.7}\n#rpcm-compression-backdrop .rpcm-btn.primary{color:var(--wish-accent-ink)}\n#rpcm-modal #rpcm-section-compression .rpcm-update-more,#rpcm-modal #rpcm-section-compression .rpcm-update-more[open]{position:relative;display:block;flex:0 0 auto!important;width:auto!important;min-width:85px;max-width:none;margin:0!important;padding:0!important;border:0!important;outline:0!important;box-shadow:none!important;background:transparent!important;overflow:visible!important}\n#rpcm-modal #rpcm-section-compression .rpcm-update-more>summary,#rpcm-modal #rpcm-section-compression .rpcm-update-more[open]>summary{display:flex!important;align-items:center;justify-content:center!important;box-sizing:border-box;width:auto!important;min-height:38px;padding:8px 12px!important;border:0!important;border-radius:11px;background:var(--wish-hi)!important;color:var(--wish-fg-2)!important;font-size:13px;font-weight:500;outline:0!important;box-shadow:none!important;white-space:nowrap;cursor:pointer}\n#rpcm-modal #rpcm-section-compression .rpcm-update-more>summary:focus-visible{box-shadow:0 0 0 2px var(--wish-accent-line)!important}\n#rpcm-modal #rpcm-section-compression .rpcm-update-more[open]>summary{color:var(--wish-accent-strong)!important;background:var(--wish-accent-soft)!important}\n#rpcm-modal #rpcm-section-compression .rpcm-update-more>.rpcm-update-more-actions{position:fixed!important;visibility:hidden;z-index:2147483646;display:grid!important;grid-template-columns:minmax(0,1fr);justify-content:stretch;gap:3px!important;width:max-content;min-width:174px;max-width:calc(100vw - 16px);max-height:min(420px,70vh);box-sizing:border-box;margin:0!important;padding:6px!important;border:1px solid var(--wish-line)!important;border-radius:13px;background:var(--wish-card)!important;box-shadow:var(--wish-lift,0 8px 26px rgba(0,0,0,.18))!important;overflow:auto}\nhtml body #rpcm-overlay #rpcm-modal #rpcm-section-compression .rpcm-update-more-actions>.rpcm-btn{display:flex!important;justify-content:flex-start;align-items:center;width:100%;min-height:36px;padding:9px 11px!important;margin:0!important;border:0!important;outline:0!important;border-radius:8px;background:transparent!important;color:var(--wish-fg)!important;box-shadow:none!important;font-size:13px;font-weight:400;white-space:normal;text-align:left}\nhtml body #rpcm-overlay #rpcm-modal #rpcm-section-compression .rpcm-update-more-actions>.rpcm-btn:hover,html body #rpcm-overlay #rpcm-modal #rpcm-section-compression .rpcm-update-more-actions>.rpcm-btn:focus-visible{background:var(--wish-accent-soft)!important;color:var(--wish-accent-strong)!important}\nhtml body #rpcm-overlay #rpcm-modal #rpcm-section-compression .rpcm-update-more-actions>[hidden]{display:none!important}\n\n#rpcm-modal #rpcm-section-compression .rpcm-tool-actions>.rpcm-compression-more{padding:0!important;align-self:center}\n#rpcm-modal #rpcm-section-compression .rpcm-compression-more>summary{gap:8px;list-style:none;user-select:none;-webkit-user-select:none}\n#rpcm-modal #rpcm-section-compression .rpcm-compression-more>summary::-webkit-details-marker{display:none}\n#rpcm-modal #rpcm-section-compression .rpcm-compression-more>summary::after{content:'';display:block;width:6px;height:6px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(45deg);margin-top:-3px}\n#rpcm-modal #rpcm-section-compression .rpcm-compression-more[open]>summary::after{transform:rotate(225deg);margin-top:3px}\n#rpcm-modal #rpcm-section-compression .rpcm-tool-actions>.rpcm-btn{min-height:38px;box-sizing:border-box}\n#rpcm-modal #rpcm-section-compression .rpcm-compression-help{margin:20px 0 0;padding:16px 18px;border-radius:12px;background:var(--wish-hi);border:0;color:var(--wish-fg);box-sizing:border-box}\n#rpcm-modal #rpcm-section-compression .rpcm-compression-help strong{font-size:13px;font-weight:500;color:var(--wish-fg)}\n#rpcm-modal #rpcm-section-compression .rpcm-compression-help p{font-size:13px!important;margin:6px 0 9px;color:var(--wish-fg-2)!important;line-height:1.7}\n#rpcm-modal #rpcm-section-compression .rpcm-compression-help small{display:block;font-size:12px}\n\n#rpcm-compression-backdrop{font-family:-apple-system,BlinkMacSystemFont,\"Apple SD Gothic Neo\",\"Noto Sans KR\",sans-serif;font-size:14px}\n#rpcm-compression-backdrop header p{font-size:13px;line-height:1.6;margin:6px 0 0;color:var(--wish-muted)}\n#rpcm-compression-backdrop footer{gap:16px}\n#rpcm-compression-backdrop footer>div{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}\n#rpcm-compression-backdrop [data-selection-summary]{margin:0 auto 0 0;font-size:13px;color:var(--wish-fg-2)}\n#rpcm-compression-backdrop [hidden]{display:none!important}\n#rpcm-compression-backdrop summary{cursor:pointer;user-select:none;-webkit-user-select:none;font-size:13px;line-height:1.6}\n#rpcm-compression-backdrop input[type=checkbox]{accent-color:var(--wish-accent);width:16px;height:16px;flex-shrink:0;margin:0;cursor:pointer}\n#rpcm-compression-backdrop .rpcm-compression-input{border:1px solid var(--wish-line);border-radius:12px;padding:12px 16px}\n#rpcm-compression-backdrop .rpcm-compression-input[open]>summary{margin-bottom:14px}\n#rpcm-compression-backdrop [data-status]{font-size:12px;color:var(--wish-fg-2);line-height:1.6;margin:12px 0}\n#rpcm-compression-backdrop .rpcm-compression-filters{display:flex;gap:8px;flex-wrap:wrap;position:sticky;top:-20px;z-index:2;background:var(--wish-card);padding:14px 0}\n#rpcm-compression-backdrop .rpcm-compression-filters button{display:flex;gap:8px;align-items:center;border:1px solid var(--wish-line);border-radius:12px;padding:9px 14px;background:var(--wish-card);color:var(--wish-fg-2);font:inherit;font-size:13px;cursor:pointer}\n#rpcm-compression-backdrop .rpcm-compression-filters button[aria-pressed=true]{background:var(--wish-accent-soft);color:var(--wish-accent-strong);border-color:var(--wish-accent-line)}\n#rpcm-compression-backdrop .rpcm-compression-filters span{font-size:11px;color:inherit}\n#rpcm-compression-backdrop .rpcm-compression-review-help{font-size:12px;color:var(--wish-muted);margin:0 0 16px;line-height:1.6}\n#rpcm-compression-backdrop .rpcm-compression-common-reason{background:var(--wish-hi);border-radius:12px;padding:12px 16px;margin-bottom:12px;font-size:12px;color:var(--wish-fg-2);line-height:1.7}\n#rpcm-compression-backdrop .rpcm-compression-common-reason p{white-space:pre-wrap;overflow-wrap:anywhere;margin:8px 0}\n#rpcm-compression-backdrop .rpcm-compression-group{margin-top:24px}\n#rpcm-compression-backdrop .rpcm-compression-group-heading{display:flex;gap:12px;align-items:center;justify-content:space-between;margin-bottom:12px}\n#rpcm-compression-backdrop .rpcm-compression-group-heading h3{margin:0;font-size:17px;font-weight:600;color:var(--wish-fg)}\n#rpcm-compression-backdrop .rpcm-compression-group-heading h3 span{font-size:12px;font-weight:400;color:var(--wish-muted);margin-left:8px}\n#rpcm-compression-backdrop .rpcm-compression-group-heading label{font-size:12px;color:var(--wish-muted)}\n#rpcm-compression-backdrop .rpcm-compression-change{border:1px solid var(--wish-line);border-radius:16px;padding:18px 20px;margin:0 0 12px;background:var(--wish-card)}\n#rpcm-compression-backdrop .rpcm-compression-card-heading{display:flex;gap:12px;align-items:center;justify-content:space-between}\n#rpcm-compression-backdrop .rpcm-compression-card-heading label{min-width:0;flex-wrap:nowrap;font-size:15px;line-height:1.5}\n#rpcm-compression-backdrop .rpcm-compression-card-heading strong{font-weight:600;overflow-wrap:anywhere}\n#rpcm-compression-backdrop .rpcm-compression-action{flex-shrink:0;font-size:11px;border-radius:20px;padding:5px 10px;background:var(--wish-accent-soft);color:var(--wish-accent-strong)}\n#rpcm-compression-backdrop .rpcm-compression-context{font-size:12px;color:var(--wish-muted);line-height:1.6;margin:7px 0 16px;overflow-wrap:anywhere}\n#rpcm-compression-backdrop .rpcm-compression-plan{display:flex;gap:8px 18px;justify-content:space-between;flex-wrap:wrap;font-size:13px;line-height:1.6}\n#rpcm-compression-backdrop .rpcm-compression-plan strong{font-weight:500}\n#rpcm-compression-backdrop .rpcm-compression-plan>span{font-size:12px;color:var(--wish-muted)}\n#rpcm-compression-backdrop .rpcm-compression-reason{display:grid;grid-template-columns:82px minmax(0,1fr);gap:3px 12px;font-size:12px;line-height:1.7;margin-top:10px;color:var(--wish-fg-2)}\n#rpcm-compression-backdrop .rpcm-compression-reason>span{color:var(--wish-muted)}\n#rpcm-compression-backdrop .rpcm-compression-reason p{margin:0;overflow-wrap:anywhere;white-space:pre-wrap}\n#rpcm-compression-backdrop .rpcm-compression-reason details{grid-column:2}\n#rpcm-compression-backdrop .rpcm-compression-reason details p{margin:8px 0}\n#rpcm-compression-backdrop .rpcm-compression-excerpt{background:var(--wish-hi);border-radius:10px;padding:12px 14px;font-size:13px;line-height:1.7;margin:14px 0 0;color:var(--wish-fg-2);overflow-wrap:anywhere}\n#rpcm-compression-backdrop .rpcm-compression-excerpt span{display:block;color:var(--wish-muted);font-size:11px;margin-bottom:4px}\n#rpcm-compression-backdrop .rpcm-compression-full-diff{border-top:1px solid var(--wish-line);margin-top:14px;padding-top:12px}\n#rpcm-compression-backdrop .rpcm-compression-full-diff>summary{color:var(--wish-accent-strong);font-size:12px}\n#rpcm-compression-backdrop .rpcm-compression-field{margin-top:18px}\n#rpcm-compression-backdrop .rpcm-compression-field h4{font-size:13px;font-weight:500;margin:0 0 10px;display:flex;gap:12px;align-items:center}\n#rpcm-compression-backdrop .rpcm-compression-field h4 span{font-size:11px;color:var(--wish-muted);font-weight:400}\n#rpcm-compression-backdrop .rpcm-compression-compare h5{font-size:12px;font-weight:500;margin:0 0 6px;color:var(--wish-muted)}\n#rpcm-compression-backdrop pre{margin:0;font-family:inherit;background:var(--wish-hi);color:var(--wish-fg-2);line-height:1.8}\n#rpcm-compression-backdrop mark{color:inherit;border-radius:3px;background:transparent}\n#rpcm-compression-backdrop mark.rpcm-compression-removed{background:var(--wish-accent-soft);text-decoration:line-through;text-decoration-color:var(--wish-muted)}\n#rpcm-compression-backdrop mark.rpcm-compression-added{background:var(--wish-accent-soft);box-shadow:inset 0 -2px var(--wish-accent-line)}\n#rpcm-compression-backdrop button:focus-visible,#rpcm-compression-backdrop summary:focus-visible{outline:2px solid var(--wish-accent-line);outline-offset:3px}\n@media(max-width:680px){#rpcm-compression-backdrop>section{max-height:95dvh}#rpcm-compression-backdrop header,#rpcm-compression-backdrop footer{padding:14px}#rpcm-compression-backdrop h2{font-size:18px}#rpcm-compression-backdrop .rpcm-update-result-body{padding:14px}#rpcm-compression-backdrop .rpcm-compression-filters{top:-14px;padding:10px 0;gap:6px}#rpcm-compression-backdrop .rpcm-compression-filters button{padding:8px 10px;font-size:12px}#rpcm-compression-backdrop .rpcm-compression-group-heading{align-items:flex-start;flex-wrap:wrap}#rpcm-compression-backdrop .rpcm-compression-change{padding:16px 14px}#rpcm-compression-backdrop .rpcm-compression-reason{grid-template-columns:1fr}#rpcm-compression-backdrop .rpcm-compression-reason details{grid-column:1}#rpcm-compression-backdrop footer{display:block}#rpcm-compression-backdrop [data-selection-summary]{margin-bottom:12px}#rpcm-compression-backdrop footer>div{justify-content:space-between}}\n";document.head.appendChild(node);}
+  const RPCM_UI40_CSS = "/* UI from the later layout, using only the existing 38/39 actions and data. */\n#rpcm-modal #rpcm-section-overview{gap:16px!important}\n#rpcm-modal .rpcm-home-group{padding:16px!important;border:1px solid var(--wish-line)!important;border-radius:14px;background:var(--wish-card)!important;display:flex;flex-direction:column;gap:14px;min-width:0}\n#rpcm-modal .rpcm-home-group>h3{margin:0;font-size:14px;color:var(--wish-fg)}\n#rpcm-modal .rpcm-home-group>*{margin:0!important}\n#rpcm-modal .rpcm-home-pair{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.1fr);gap:16px;align-items:start}\n#rpcm-modal .rpcm-home-pair .rpcm-overview{grid-template-columns:minmax(0,1fr)!important;gap:10px!important}\n#rpcm-modal .rpcm-home-pair .rpcm-overview-card{padding:12px!important;min-height:0!important}\n#rpcm-modal .rpcm-home-memory>header{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}\n#rpcm-modal .rpcm-home-memory h3{font-size:16px!important;margin:0!important}\n#rpcm-modal .rpcm-home-memory>p{padding:10px 12px!important;border-left:3px solid var(--wish-accent-line);border-radius:10px;background:var(--wish-card-2);font-size:12px;line-height:1.7}\n#rpcm-modal .rpcm-home-memory .rpcm-ai-overview-grid{display:grid!important;grid-template-columns:minmax(0,1fr)!important;gap:10px!important}\n#rpcm-modal .rpcm-home-memory .rpcm-ai-area-toggle{padding:14px!important;border-radius:12px!important;min-width:0;text-align:left!important;line-height:1.6}\n#rpcm-modal .rpcm-home-memory .rpcm-ai-area-toggle[aria-pressed=true]{border-color:var(--wish-accent-line)!important;background:var(--wish-accent-soft)!important}\n#rpcm-modal .rpcm-home-group .rpcm-update-overview{border:0!important;padding:0!important;background:transparent!important}\n#rpcm-modal .rpcm-home-group[data-home-group=review]{font-size:12px}\n#rpcm-modal .rpcm-ui-work-guide{padding:18px;border:1px solid var(--wish-line);border-radius:14px;background:var(--wish-card);margin-bottom:16px;min-width:0}\n#rpcm-modal .rpcm-ui-work-guide h3{font-size:16px!important;margin:0 0 8px!important}\n#rpcm-modal .rpcm-ui-work-guide p,#rpcm-modal .rpcm-ui-work-guide>small{font-size:12px;color:var(--wish-fg-2);line-height:1.7}\n#rpcm-modal .rpcm-ui-work-guide-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin:14px 0}\n#rpcm-modal .rpcm-ui-work-guide article{padding:14px;border:1px solid var(--wish-line);border-radius:12px;min-width:0}\n#rpcm-modal .rpcm-ui-work-guide article>strong{font-size:13px}\n#rpcm-modal .rpcm-ui-work-guide dl{margin:8px 0 0;display:grid;gap:10px}\n#rpcm-modal .rpcm-ui-work-guide dl>div{padding-top:8px;border-top:1px solid var(--wish-line-2)}\n#rpcm-modal .rpcm-ui-work-guide dt{display:inline-flex;padding:4px 7px;border-radius:6px;background:var(--wish-accent-soft);font-size:10px;color:var(--wish-fg-2)}\n#rpcm-modal .rpcm-ui-work-guide dd{margin:5px 0 0;font-size:12px;overflow-wrap:anywhere}\n#rpcm-update-dialog-backdrop .rpcm-save-completion{padding:16px 18px;margin:8px 0;border:1px solid var(--wish-success)!important;border-left:5px solid var(--wish-success)!important;border-radius:12px;background:color-mix(in srgb,var(--wish-success) 12%,var(--wish-card))!important}\n#rpcm-update-dialog-backdrop .rpcm-save-completion-title{display:flex;align-items:center;gap:10px;color:var(--wish-success)!important}\n#rpcm-update-dialog-backdrop .rpcm-save-completion-title strong{font-size:18px!important;font-weight:700!important;line-height:1.4;color:var(--wish-success)!important;-webkit-text-fill-color:var(--wish-success)!important}\n#rpcm-update-dialog-backdrop .rpcm-save-completion-title svg{width:26px;height:26px;fill:none;stroke:currentColor;stroke-width:1.8;flex:none}\n#rpcm-update-dialog-backdrop .rpcm-save-completion-details{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}\n#rpcm-update-dialog-backdrop .rpcm-save-completion-details>span{padding:5px 9px;border:1px solid var(--wish-line);border-radius:8px;background:var(--wish-card);color:var(--wish-fg-2);font-size:13px;line-height:1.5;overflow-wrap:anywhere}\n#rpcm-update-dialog-backdrop .rpcm-save-completion-details>.is-warning{color:var(--wish-warning)!important;border-color:var(--wish-warning)!important}\n#rpcm-update-dialog-backdrop .rpcm-save-completion-details>.is-verified{color:var(--wish-success)!important}\n#rpcm-modal .rpcm-save-status.saved{display:inline-flex;align-items:center;padding:5px 9px;border:1px solid var(--wish-success);border-radius:8px;background:color-mix(in srgb,var(--wish-success) 12%,var(--wish-card));color:var(--wish-success)!important;font-size:12px!important;font-weight:600;line-height:1.4}\nhtml.rpcm-mobile-layout #rpcm-modal .rpcm-workspace{display:flex!important;flex-direction:column!important;min-height:0!important}\nhtml.rpcm-mobile-layout #rpcm-modal .rpcm-side-surface{display:block!important;flex:none!important;height:auto!important;min-height:0!important;width:100%!important;border:0!important;padding:0!important;overflow:visible!important}\nhtml.rpcm-mobile-layout #rpcm-modal .rpcm-work-nav{display:grid!important;grid-template-columns:repeat(7,minmax(0,1fr));gap:2px!important;padding:8px 4px!important;width:100%!important;box-sizing:border-box;overflow:visible!important;border-bottom:1px solid var(--wish-line)}\nhtml.rpcm-mobile-layout #rpcm-modal .rpcm-work-nav button{display:flex!important;flex-direction:column;align-items:center;justify-content:center;gap:5px;min-width:0!important;min-height:50px!important;padding:4px 0!important;border-radius:9px;font-size:10px!important}\nhtml.rpcm-mobile-layout #rpcm-modal .rpcm-work-nav button svg{width:18px;height:18px}\nhtml.rpcm-mobile-layout #rpcm-modal .rpcm-work-nav button.is-active{color:var(--wish-accent)!important;background:var(--wish-accent-soft)!important}\nhtml.rpcm-mobile-layout #rpcm-modal .rpcm-work-nav .rpcm-nav-indicator{display:none!important}\nhtml.rpcm-mobile-layout #rpcm-modal .rpcm-work-content{display:block!important;flex:1;min-height:0!important;overflow-y:auto!important}\nhtml.rpcm-mobile-layout #rpcm-modal .rpcm-home-pair{grid-template-columns:minmax(0,1fr)}\nhtml.rpcm-mobile-layout #rpcm-modal .rpcm-home-pair .rpcm-home-memory{order:-1}\nhtml.rpcm-mobile-layout #rpcm-modal .rpcm-ui-work-guide-grid{grid-template-columns:minmax(0,1fr)}\n";
+
+  function rpcmUiSavedBanner(status,checkpoint,carrier) {
+    const waiting=/실패|대기/.test(carrier),empty=/주입 없음|다음 주입/.test(carrier);
+    status.classList.add('is-saved');status.innerHTML=`<div class="rpcm-save-completion" role="status"><div class="rpcm-save-completion-title"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m7 12 3 3 7-7"/></svg><strong>로컬 저장 완료</strong></div><div class="rpcm-save-completion-details"><span>${esc(checkpoint)}</span><span class="${waiting?'is-warning':empty?'is-next':'is-verified'}">${esc(carrier)}</span></div></div>`;
+    status.scrollIntoView?.({block:'nearest',behavior:'smooth'});
+  }
+
+  function rpcmUiManualGuideHtml(room) {
+    if(!room)return '';
+    const counts=manualUpdateRuntime.counts.get(String(room.chatId)),keys=counts?.turnKeys,known=Array.isArray(keys);
+    const turn=key=>{if(!key)return '없음';const i=keys?.indexOf(String(key))??-1;return i>=0?`${i+1}턴`:'기준점 확인 필요';};
+    const metric=(label,value)=>`<div><dt>${esc(label)}</dt><dd>${esc(value)}</dd></div>`;
+    return `<section class="rpcm-ui-work-guide" aria-label="정리 위치와 권장 작업 범위"><h3>정리 위치 · 권장 작업 범위</h3><p>기존 저장 기준점과 현재 확인한 RP 범위를 표시합니다.</p><div class="rpcm-ui-work-guide-grid">${Object.entries(MANUAL_UPDATE_TASKS).map(([task,meta])=>{
+      const checkpoint=manualCheckpointForTask(room,task),key=checkpoint.endMessageId,i=key&&known?keys.indexOf(String(key)):-1;
+      const range=counts?.[task]?.error||(!known?'범위 확인 전':key&&i<0?'기준점 확인 필요':i+1>=keys.length?'새 RP 대기':`${i+2}~${keys.length}턴`);
+      const areas=task==='currentItems'?['currentState','importantItems']:[task];
+      const applied=[...new Set(areas.map(a=>room.aiMemoryAutomation?.areas?.[a]?.lastAppliedEnd).filter(Boolean))];
+      return `<article data-ui40-task="${esc(task)}"><strong>${esc(meta.title)}</strong><dl>${metric('수동 확정',turn(key))}${metric('AI 적용',applied.length?applied.map(turn).join(' · '):'미정리')}${metric('권장 범위',range)}</dl></article>`;
+    }).join('')}</div><small>아래의 기존 작업 버튼에서 자료 생성·검토·저장을 진행하세요.</small></section>`;
+  }
+
+  function rpcmUiOrganizeHome(overlay) {
+    const home=overlay.querySelector('#rpcm-section-overview');if(!home||home.querySelector('.rpcm-home-group'))return;
+    const group=(title,key,nodes)=>{const live=nodes.filter(Boolean);if(!live.length)return null;const section=document.createElement('section');section.className='rpcm-home-group';section.dataset.homeGroup=key;const heading=document.createElement('h3');heading.textContent=title;section.append(heading,...live);home.append(section);return section;};
+    const overview=home.querySelector('.rpcm-overview'),shortcut=home.querySelector('.rpcm-log-count-shortcut');
+    const memory=home.querySelector('.rpcm-ai-memory-overview');
+    if(shortcut)home.append(shortcut);
+    const status=group('주입 현황','status',[overview,home.querySelector('.rpcm-summary'),home.querySelector('.rpcm-warnings')]);
+    if(status&&memory){const pair=document.createElement('div');pair.className='rpcm-home-pair';status.before(pair);pair.append(status,memory);memory.classList.add('rpcm-home-group','rpcm-home-memory');memory.dataset.homeGroup='memory';}
+    group('주입 설정','settings',[shortcut]);
+    group('재검사·선정 결과','review',[home.querySelector('.rpcm-context-refresh-shortcut'),home.querySelector('[data-injection-recheck-report]')||home.querySelector('.rpcm-recheck-empty'),home.querySelector('.rpcm-auto-active')]);
+    group('작업 바로가기','tasks',[home.querySelector('.rpcm-update-overview')]);
+  }
+
+  function rpcmUiStyles() {
+    if(document.getElementById('rpcm-ui40-style'))return;
+    const style=document.createElement('style');style.id='rpcm-ui40-style';style.textContent=RPCM_UI40_CSS;document.head.append(style);
+  }
+
   function assembleWorkSpace(overlay) {
-    compressionStyles();
+    compressionStyles();rpcmUiStyles();
     const body = overlay.querySelector('.rpcm-body');
     const legacyNav = body?.querySelector('.rpcm-work-nav');
     if (!body || !legacyNav) return;
@@ -34203,6 +34287,8 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
     const logShortcut=main.querySelector('.rpcm-log-count-shortcut');
     if (overview && logShortcut) overview.prepend(logShortcut);
     if(overview){const panel=document.createElement('section');panel.id='rpcm-section-overview';overview.before(panel);[main.querySelector('.rpcm-summary'),overview,main.querySelector('.rpcm-update-overview'),main.querySelector('.rpcm-warnings'),main.querySelector('.rpcm-auto-active')].filter(Boolean).forEach(node=>panel.appendChild(node));const aiStatus=document.createElement('div');aiStatus.className='rpcm-pref-card rpcm-ai-memory-overview';aiStatus.innerHTML=aiMemoryOverview(state.currentRoom);panel.appendChild(aiStatus);const refresh=main.querySelector('.rpcm-context-refresh-shortcut');if(refresh){panel.prepend(refresh);refresh.insertAdjacentHTML('afterend',renderInjectionRecheckReport(state.currentRoom));}aiStatus.querySelector('[data-ai-memory-open-settings]')?.addEventListener('click',()=>showWorkView(overlay,'tools',true));}
+    rpcmUiOrganizeHome(main);
+    const update=main.querySelector('#rpcm-section-update');if(update)update.insertAdjacentHTML('afterbegin',rpcmUiManualGuideHtml(state.currentRoom));
     bindRpcm74Controls(overlay,state.currentRoom);
     const tools = main.querySelector('#rpcm-section-tools');
     if (tools) {
@@ -36967,7 +37053,7 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
   function renderRpcmPreferences(room) {
     const ai=aiFeatureSettings(loadAiSummarySettings(),'summary'),provider=ai.provider,model=ai.models?.[provider]||'';
     const secret=!!readAiSecret(provider);
-    const refinerDisplay=rpcmResponseRefinerDisplayPrefs();
+    const refinerDisplay=rpcmResponseRefinerDisplayPrefs(),monitorTapAction=loadUiPrefs().monitorTapAction;
     const guideRows=['currentItems','logSummary','personInfo','timeline','lore'].map(task=>{const meta=manualGuideMetadata(room,task);return `<div class="rpcm-pref-row"><span>${esc(MANUAL_UPDATE_TASKS[task].title)}<small>${esc(meta.version)} · ${esc(meta.source)}</small></span><button type="button" class="rpcm-btn secondary" data-rpcm-pref-guide="${task}">지침</button></div>`;}).join('');
     return `<div class="rpcm-pref-grid rpcm-settings-grid">
       <article class="rpcm-pref-card"><header><h3>AI 연결 ${rpcmHelpButton('ai')}</h3><span class="rpcm-pref-scope">이 기기</span></header><p>${secret?'인증 저장됨':'인증 필요'} · ${esc(provider)} · ${esc(model)}</p><button type="button" class="rpcm-btn secondary" data-rpcm-pref-action="api">API · 모델 설정</button></article>
@@ -36976,7 +37062,8 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
         <label class="rpcm-pref-row"><span>관련도 기준<small>최근 연속성 로그에는 적용되지 않음</small></span><select data-rpcm-pref-field="autoLogRelevance"><option value="strict" ${room.autoLogRelevance==='strict'?'selected':''}>엄격</option><option value="balanced" ${room.autoLogRelevance==='balanced'?'selected':''}>균형</option><option value="broad" ${room.autoLogRelevance==='broad'?'selected':''}>넓게</option></select></label>
         <label class="rpcm-pref-row"><span>AI 맥락 검토 ${rpcmHelpButton('context')}<small>관련 날짜로그 후보만 API로 재검토</small></span><input type="checkbox" data-rpcm-pref-field="aiContextLogRerankEnabled" ${room.aiContextLogRerankEnabled?'checked':''}></label></article>
       ${semanticUiHtml(room)}
-      <article class="rpcm-pref-card"><header><h3>화면·모니터</h3><span class="rpcm-pref-scope">이 기기</span></header><p>${isMobileManagerLayout()?'모바일에서는 전송 버튼 옆 WISH를 짧게 누르면 빠른 관리, 길게 누르면 전체 Manager가 열립니다. 크랙 오른쪽 메뉴의 RP Manager에서도 열 수 있습니다.':'상단 WISH 버튼을 짧게 누르면 빠른 관리, 길게 누르면 전체 Manager가 열립니다. 작은 초록색 표시가 있으면 주입이 켜진 상태입니다.'}</p>
+      <article class="rpcm-pref-card"><header><h3>화면·모니터</h3><span class="rpcm-pref-scope">이 기기</span></header><p data-rpcm-monitor-hint>${esc(rpcmMonitorPressHint(monitorTapAction))}. 작은 초록색 표시가 있으면 주입이 켜진 상태입니다.</p>
+        <label class="rpcm-pref-row"><span>WISH 버튼 짧게 누르기<small>길게 누르면 나머지 창이 열립니다. PC·모바일 공통.</small></span><select data-rpcm-monitor-tap aria-label="WISH 버튼 짧게 누르기 동작"><option value="quick" ${monitorTapAction==='quick'?'selected':''}>빠른 관리 (기본)</option><option value="manager" ${monitorTapAction==='manager'?'selected':''}>전체 RP Manager</option></select></label>
         <label class="rpcm-pref-row"><span>응답교정 바로가기 표시<small>크랙 채팅 상단의 🪽 응답교정 버튼을 표시합니다. 꺼도 Manager의 AI 화면에서 응답교정 설정을 열 수 있습니다.</small></span><input type="checkbox" data-rpcm-refiner-ui-field="showButton" ${refinerDisplay.showButton?'checked':''}></label>
         <label class="rpcm-pref-row"><span>응답교정 검토 알림 표시<small>검토 중·검토 완료 상태를 채팅 화면 상단에 잠시 표시합니다.</small></span><input type="checkbox" data-rpcm-refiner-ui-field="showBadge" ${refinerDisplay.showBadge?'checked':''}></label>
         <button type="button" class="rpcm-btn secondary" data-rpcm-pref-action="quick">Quick Panel 열기</button></article>
@@ -36985,6 +37072,14 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
     </div>`;
   }
   function bindRpcmPreferences(overlay,room) {
+    const monitorTap=overlay.querySelector('[data-rpcm-monitor-tap]');
+    monitorTap?.addEventListener('change',()=>{
+      const prefs=loadUiPrefs(),value=monitorTap.value==='manager'?'manager':'quick';prefs.monitorTapAction=value;saveUiPrefs(prefs);
+      const saved=loadUiPrefs();if(saved.monitorTapAction!==value){monitorTap.value=saved.monitorTapAction;notify('WISH 버튼 동작을 저장하지 못했습니다.','error');return;}
+      state.fab?.rpcmCancelHold?.();updateQuickInjectionTrigger();
+      const hint=overlay.querySelector('[data-rpcm-monitor-hint]');if(hint)hint.textContent=rpcmMonitorPressHint(value)+'. 작은 초록색 표시가 있으면 주입이 켜진 상태입니다.';
+      notify('WISH 버튼 동작을 저장했습니다.','success',2200);
+    });
     overlay.querySelectorAll('[data-rpcm-pref-field]').forEach(input=>input.addEventListener('change',async()=>{
       const field=input.dataset.rpcmPrefField, old=room[field], value=input.type==='checkbox'?input.checked:input.value;
       const main=field==='autoLogRecallEnabled'?overlay.querySelector('#rpcm-auto-log'):field==='autoLogRelevance'?overlay.querySelector('#rpcm-auto-log-relevance'):overlay.querySelector('#rpcm-ai-context-toggle');
