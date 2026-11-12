@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🪽위시 RP Manager
 // @namespace    local.rp.context.manager
-// @version      0.17.86
+// @version      0.17.87
 // @description  현재상태 중심의 기억·인물·자료 정리. 단순 날짜요약, 결과 검토·복구, API 정리와 응답교정을 지원합니다.
 // @author       User
 // @license      All Rights Reserved
@@ -107,17 +107,17 @@ function wishBuiltinText077(parts){return parts.map(v=>typeof v==='number'?WISH_
 
 const APP = {
     name: '🪽위시 RP Manager',
-    version: '0.17.86',
+    version: '0.17.87',
     dbName: 'RPContextManagerDB',
     dbVersion: 2,
     storeName: 'rooms',
     libraryStoreName: 'characterLibraries',
-    defaultMaxChars: 45000,
-    safeChars: 42000,
-    absoluteUiMax: 45000,
-    // Crack의 메시지 PATCH는 글자 수와 별개로 UTF-8 요청 크기 제한에 걸릴 수 있습니다.
-    // 확인된 105KB 실패 사례보다 충분히 낮게 두고 JSON 래퍼 여유까지 확보합니다.
-    safeCarrierPayloadBytes: 95000,
+    defaultMaxChars: 50000,
+    safeChars: 50000,
+    absoluteUiMax: 50000,
+    // Core와 같은 실제 JSON 전송 예산. 글자 수와 UTF-8/UTF-16LE 바이트를 함께 확인합니다.
+    carrierFallbackChars: 45000,
+    safeCarrierPayloadBytes: 101400,
     activePollMs: 4000,
     idleAutoScanMs: 15000,
     idlePollMs: 30000,
@@ -3702,6 +3702,7 @@ const AI_SUMMARY_PROVIDERS = Object.freeze(Object.keys(AI_SUMMARY_PROVIDER_DEFAU
 const AI_SUMMARY_PROVIDER_MODELS = Object.freeze({
     gemini:[
       { value:'gemini-3.8-flash', label:'Gemini 3.8 Flash · 추천' },
+      { value:'gemini-4-argon', label:'Gemini 4 Argon · 아르곤 · 유료' },
       { value:'gemini-3.7-flash', label:'Gemini 3.7 Flash · 이전 안정 버전' },
       { value:'gemini-3.5-flash', label:'Gemini 3.5 Flash' },
       { value:'gemini-3.5-flash-lite', label:'Gemini 3.5 Flash-Lite · 저비용' },
@@ -3713,6 +3714,7 @@ const AI_SUMMARY_PROVIDER_MODELS = Object.freeze({
     ],
     firebase:[
       { value:'gemini-3.8-flash', label:'Gemini 3.8 Flash · 추천' },
+      { value:'gemini-4-argon', label:'Gemini 4 Argon · 아르곤 · 유료' },
       { value:'gemini-3.7-flash', label:'Gemini 3.7 Flash · 이전 안정 버전' },
       { value:'gemini-3.5-flash', label:'Gemini 3.5 Flash' },
       { value:'gemini-3.5-flash-lite', label:'Gemini 3.5 Flash-Lite · 저비용' },
@@ -3724,6 +3726,7 @@ const AI_SUMMARY_PROVIDER_MODELS = Object.freeze({
     ],
     vertex:[
       { value:'gemini-3.8-flash', label:'Gemini 3.8 Flash · 추천' },
+      { value:'gemini-4-argon', label:'Gemini 4 Argon · 아르곤 · 유료' },
       { value:'gemini-3.7-flash', label:'Gemini 3.7 Flash · 이전 안정 버전' },
       { value:'gemini-3.5-flash', label:'Gemini 3.5 Flash' },
       { value:'gemini-3.5-flash-lite', label:'Gemini 3.5 Flash-Lite · 저비용' },
@@ -4774,7 +4777,7 @@ function loadAiSummaryUsage() {
     return { calls:0, inputTokens:0, outputTokens:0, estimatedCostUsd:0, pricedCalls:0, last:null };
   }
 
-function defaultAiPricing(provider, model) {
+function defaultAiPricing(provider, model, at = Date.now()) {
     const providerId = String(provider || '').toLowerCase();
     const google = ['gemini','firebase','vertex'].includes(providerId);
     const name = String(model || '').trim().toLowerCase();
@@ -4791,6 +4794,12 @@ function defaultAiPricing(provider, model) {
       if (/^(?:gpt-5\.6|gpt-5\.6-sol)(?:$|-)/.test(name)) {
         return { inputPerMillion:4.00, outputPerMillion:20.00, source:'OpenAI 공식 기본 단가' };
       }
+    }
+    if (google && name === 'gemini-4-argon') {
+      // 공식 Standard 단가(USD/100만 토큰), 2026-10-30 확인. 출력에 사고 토큰 포함.
+      // https://ai.google.dev/gemini-api/docs/pricing
+      const introductory = at < Date.UTC(2026,11,1);
+      return { inputPerMillion:introductory ? 2.00 : 4.00, outputPerMillion:introductory ? 10.00 : 20.00, source:introductory ? 'Google 공식 Standard global 단가 · 2026-11-30까지' : 'Google 공식 Standard global 단가 · 2026-12-01부터' };
     }
     if (google && /^gemini-3\.8-flash(?:$|-)/.test(name)) {
       return { inputPerMillion:0.75, outputPerMillion:3.75, source:'Google 공식 Standard 단가 · 2026-12-31까지' };
@@ -4831,11 +4840,15 @@ function isOfficialOpenAiBaseUrl(value) {
     }
   }
 
-function getAiPricing(settings, provider, model) {
+function getAiPricing(settings, provider, model, at = Date.now()) {
     if (String(provider || '').toLowerCase() === 'openai' && !isOfficialOpenAiBaseUrl(settings?.openaiBaseUrl)) {
       return { inputPerMillion:null, outputPerMillion:null, source:'OpenAI 호환 API · 단가 직접 확인 필요' };
     }
-    return defaultAiPricing(provider, model);
+    const pricing = defaultAiPricing(provider, model, at);
+    if (String(provider || '').toLowerCase() === 'vertex' && String(model || '').trim().toLowerCase() === 'gemini-4-argon' && (String(settings?.vertexLocation || 'global').trim() || 'global') !== 'global') {
+      return { inputPerMillion:pricing.inputPerMillion * 1.1, outputPerMillion:pricing.outputPerMillion * 1.1, source:pricing.source.replace('global','지역 지정 · 10% 추가') };
+    }
+    return pricing;
   }
 
 function estimateAiCostUsd(usage = {}, pricing = {}) {
@@ -4916,6 +4929,18 @@ function normalizeRoomAiUsage(room) {
       }
       history.sort((a, b) => String(b.at || '').localeCompare(String(a.at || '')));
       history = history.slice(0, AI_ROOM_USAGE_HISTORY_LIMIT);
+    }
+    // 저장 날짜·토큰이 남은 아르곤 미산정 내역만 당시 단가로 보완합니다. 이미 계산된 비용은 유지합니다.
+    // 과거 Vertex 내역에는 리전이 없어 정확한 단가를 확인할 수 없으므로 복원하지 않습니다.
+    for (const entry of history) {
+      if (entry.costUsd != null || entry.model !== 'gemini-4-argon' || !['gemini','firebase'].includes(entry.provider) || !/^\d{4}-\d{2}-\d{2}T/.test(entry.at)) continue;
+      const at = Date.parse(entry.at), aggregate = features[entry.feature];
+      if (!Number.isFinite(at) || aggregate.unpricedCalls < entry.callCount || entry.inputTokens + entry.outputTokens <= 0) continue;
+      const costUsd = estimateAiCostUsd(entry, defaultAiPricing(entry.provider, entry.model, at));
+      if (costUsd == null) continue;
+      entry.costUsd = costUsd;
+      aggregate.costUsd += costUsd;
+      aggregate.unpricedCalls -= entry.callCount;
     }
     room.aiApiUsage = { version:1, features, history, legacyImported:true };
     return room.aiApiUsage;
@@ -5611,7 +5636,7 @@ async function getVertexAccessToken(serviceAccount) {
 function refinerThinkingLevels(provider,model){
     if(!['gemini','firebase','vertex'].includes(provider))return [];
     const name=String(model||'').toLowerCase();
-    if(/^gemini-(?:3\.(?:8|7|6)-flash|3\.5-flash(?:-lite)?|3\.1-(?:pro-preview|flash-lite)|3-flash-preview|2\.5-(?:pro|flash(?:-lite)?))$/.test(name))return ['low','medium','high'];
+    if(/^gemini-(?:4-argon|3\.(?:8|7|6)-flash|3\.5-flash(?:-lite)?|3\.1-(?:pro-preview|flash-lite)|3-flash-preview|2\.5-(?:pro|flash(?:-lite)?))$/.test(name))return ['low','medium','high'];
     if(name==='gemini-3-pro-preview')return ['low','high'];
     return [];
   }
@@ -5624,7 +5649,7 @@ function aiGeminiThinkingConfig(model, options = {}) {
       if(/^gemini-2\.5/.test(name))return {thinkingBudget:{low:/flash-lite$/.test(name)?512:256,medium:4096,high:8192}[level],includeThoughts:false};
       return {thinkingLevel:level.toUpperCase(),includeThoughts:false};
     }
-    if (/^gemini-3\.8-flash(?:$|-)/.test(name)) return { thinkingLevel:['low','medium','high'].includes(level) ? level.toUpperCase() : 'MEDIUM', includeThoughts:false };
+    if (/^(?:gemini-3\.8-flash(?:$|-)|gemini-4-argon$)/.test(name)) return { thinkingLevel:['low','medium','high'].includes(level) ? level.toUpperCase() : 'MEDIUM', includeThoughts:false };
     if (level !== 'low') return null;
     if (/^gemini-3(?:[.-]|$)/.test(name)) return { thinkingLevel:'LOW', includeThoughts:false };
     if (/^gemini-2\.5(?:[.-]|$)/.test(name)) return { thinkingBudget:128, includeThoughts:false };
@@ -5632,7 +5657,8 @@ function aiGeminiThinkingConfig(model, options = {}) {
   }
 
 function aiGeminiPayload(systemInstruction, prompt, maxOutputTokens = 8192, options = {}) {
-    const generationConfig = { ...(/^gemini-3\.8-flash(?:$|-)/i.test(String(options.model || '')) ? {} : { temperature:0.2 }), maxOutputTokens:Math.max(128, Number(maxOutputTokens) || 8192) };
+    const argon = /^gemini-4-argon$/i.test(String(options.model || '').trim());
+    const generationConfig = { ...((argon || /^gemini-3\.8-flash(?:$|-)/i.test(String(options.model || ''))) ? {} : { temperature:0.2 }), maxOutputTokens:argon && !options.test ? 32768 : Math.max(128, Number(maxOutputTokens) || 8192) };
     if (options.responseJsonSchema) {
       generationConfig.responseMimeType = 'application/json';
       generationConfig.responseSchema = options.responseJsonSchema;
@@ -5704,11 +5730,13 @@ function aiUsageFromGemini(data) {
   }
 
 async function callAiSummaryProviderOnce(provider, settings, secret, systemInstruction, prompt, maxOutputTokens = 8192, options = {}) {
+    const requestAt = Date.now();
     const model = String(settings.models?.[provider] || AI_SUMMARY_PROVIDER_DEFAULTS[provider]?.model || '').trim();
     if (!model) throw new Error('사용할 모델명을 입력해 주세요.');
     let text = '';
     let usage = {};
     let finishReason = '';
+    const requestTimeoutMs = options.test ? 60000 : options.responseRefiner ? Math.max(35000,Math.min(180000,Number(options.reviewTimeoutMs)||180000)) : ['gemini','firebase','vertex'].includes(provider) && model === 'gemini-4-argon' ? 1200000 : 0;
 
     if (provider === 'gemini') {
       if (!secret.trim()) throw new Error('Gemini API 키를 입력해 주세요.');
@@ -5716,7 +5744,7 @@ async function callAiSummaryProviderOnce(provider, settings, secret, systemInstr
       const response = await aiHttpRequest(url, {
         headers:{ 'Content-Type':'application/json' },
         body:JSON.stringify(aiGeminiPayload(systemInstruction, prompt, maxOutputTokens, { ...options, model })),
-        ...(options.responseRefiner?{timeout:Math.max(35000,Math.min(180000,Number(options.reviewTimeoutMs)||180000))+5000}:{}),
+        ...(requestTimeoutMs ? {timeout:requestTimeoutMs + (options.test ? 0 : 5000)} : {}),
       });
       const data = parseAiJsonResponse(response, 'Gemini');
       text = extractGeminiText(data);
@@ -5725,21 +5753,15 @@ async function callAiSummaryProviderOnce(provider, settings, secret, systemInstr
     } else if (provider === 'firebase') {
       const firebaseConfig = parseFirebaseConfig(secret);
       if (!firebaseConfig) throw new Error('Firebase 설정 코드 또는 firebaseConfig JSON을 확인해 주세요.');
-      const thinkingConfig = aiGeminiThinkingConfig(model, options);
       const result = await callFirebaseAi({
         firebaseConfig,
         appName:`rpcm-ai-${simpleHash(JSON.stringify(firebaseConfig))}`,
-        ...(options.responseRefiner ? {requestTimeoutMs:Math.max(35000,Math.min(180000,Number(options.reviewTimeoutMs)||180000))} : {}),
+        ...(requestTimeoutMs ? {requestTimeoutMs} : {}),
         model,
         systemInstruction:String(systemInstruction || ''),
         prompt:String(prompt || ''),
-        generationConfig:{
-          ...(/^gemini-3\.8-flash(?:$|-)/i.test(model) ? {} : { temperature:0.2 }),
-          maxOutputTokens:Math.max(128, Number(maxOutputTokens) || 8192),
-          ...(options.responseJsonSchema ? { responseMimeType:'application/json', responseSchema:options.responseJsonSchema } : options.jsonOnly ? { responseMimeType:'application/json' } : {}),
-          ...(thinkingConfig ? { thinkingConfig } : {}),
-        },
-      }, options.responseRefiner ? Math.max(35000,Math.min(180000,Number(options.reviewTimeoutMs)||180000))+5000 : 120000);
+        generationConfig:aiGeminiPayload(systemInstruction, prompt, maxOutputTokens, { ...options, model }).generationConfig,
+      }, requestTimeoutMs ? requestTimeoutMs + 5000 : 120000);
       text = result.text;
       finishReason = String(result.finishReason || '');
       usage = {
@@ -5758,7 +5780,7 @@ async function callAiSummaryProviderOnce(provider, settings, secret, systemInstr
       const response = await aiHttpRequest(url, {
         headers:{ Authorization:`Bearer ${token}`, 'Content-Type':'application/json' },
         body:JSON.stringify(aiGeminiPayload(systemInstruction, prompt, maxOutputTokens, { ...options, model })),
-        ...(options.responseRefiner?{timeout:Math.max(35000,Math.min(180000,Number(options.reviewTimeoutMs)||180000))+5000}:{}),
+        ...(requestTimeoutMs ? {timeout:requestTimeoutMs + (options.test ? 0 : 5000)} : {}),
       });
       const data = parseAiJsonResponse(response, 'Vertex AI');
       text = extractGeminiText(data);
@@ -5801,7 +5823,7 @@ async function callAiSummaryProviderOnce(provider, settings, secret, systemInstr
     }
 
     text = stripAiOutputWrapper(text);
-    const pricing = getAiPricing(settings, provider, model);
+    const pricing = getAiPricing(settings, provider, model, requestAt);
     const savedUsage = saveAiSummaryUsage(provider, model, usage, pricing);
     const roomUsage = recordRoomAiUsage(options.room || state.currentRoom, options.feature || 'summary', provider, model, usage, pricing, { systemInstruction, prompt, text });
     if (options.room || state.currentRoom) {
@@ -6720,7 +6742,8 @@ function pendingBackupKey(chatId) {
     return `RPCM_pending_backup_${chatId}`;
   }
 
-function savePendingBackup(chatId, pending) {
+function savePendingBackup(chatId, pending, restored = false) {
+    if (!restored && loadPendingBackup(chatId)?.carrierRestoreRequired && !pending?.carrierRestoreRequired) return;
     try { localStorage.setItem(pendingBackupKey(chatId), JSON.stringify(pending)); } catch (_) {}
   }
 
@@ -6732,6 +6755,7 @@ function loadPendingBackup(chatId) {
   }
 
 function clearPendingBackup(chatId) {
+    if (loadPendingBackup(chatId)?.carrierRestoreRequired) throw new Error('AI 원문 복원 확인 전이므로 복구 백업을 유지합니다.');
     try { localStorage.removeItem(pendingBackupKey(chatId)); } catch (_) {}
   }
 
@@ -12126,6 +12150,72 @@ function collectLogRecallCandidates(room, contextText = '') {
     return [...byKey.values()];
   }
 
+  const CARRIER_UTF16_REFUSED_KEY='WISH_RP_carrier_utf16_refused_v1';
+  const carrierUtf16Env=(()=>{let name='',version='';try{if(typeof GM_info==='object'&&GM_info){name=String(GM_info.scriptHandler||'');version=String(GM_info.version||'');}}catch(_){}return {name,version,wrmc:APP.version};})();
+  function carrierUtf16Refused() {
+    try{const r=JSON.parse(localStorage.getItem(CARRIER_UTF16_REFUSED_KEY)||'null'),e=carrierUtf16Env;return r&&r.name===e.name&&r.version===e.version&&Number.isFinite(r.at)?r:null;}catch(_){return null;}
+  }
+  const carrierUtf16={on:!['stay','userscripts','adguard'].includes(carrierUtf16Env.name.toLowerCase())&&!(age=>age>=0&&age<7*864e5)(Date.now()-(carrierUtf16Refused()?.at??NaN)),reason:'',answered:false,refused4xx:false};
+  function carrierBody(text,encoding='') {
+    const json=JSON.stringify({message:String(text??'')});
+    return carrierBodySize(json.length,new TextEncoder().encode(json).length,encoding);
+  }
+  // JSON escape를 포함한 실제 전송 크기로 인코딩을 고릅니다.
+  function carrierBodySize(jsonLength,utf8,encoding='') {
+    return (encoding?encoding==='utf-16le':carrierUtf16.on&&jsonLength*2<utf8)?{encoding:'utf-16le',bytes:jsonLength*2}:{encoding:'utf-8',bytes:utf8};
+  }
+  function carrierBodyBytes(text) {
+    return carrierBody(text).bytes;
+  }
+  // Every UTF-16 unit as two little-endian bytes, no BOM: surrogate pairs stay pairs, as JSON.stringify left them.
+  function utf16leBlob(text) {
+    const bytes=new Uint8Array(text.length*2);
+    for(let i=0;i<text.length;i++){const c=text.charCodeAt(i);bytes[i*2]=c&255;bytes[i*2+1]=c>>8;}
+    return new Blob([bytes],{type:'application/json; charset=utf-16le'});
+  }
+  // Every message PATCH goes through here, in the encoding carrierBody picks. read() returns the server text after the PATCH.
+  // A UTF-16LE body refused with a 4xx (not 401/404/410/413/429), failing before it goes out (an error with no code, as from a
+  // userscript manager that cannot send a Blob) or read back different turns UTF-16LE off and goes again as UTF-8.
+  // No HTTP answer (CRACK_NETWORK) is a network fault like a timeout or a login wait: it goes up and the caller tries its next
+  // endpoint, still in UTF-16LE. Only on the caller's last endpoint after every one before it went unanswered (`netFallback`: the
+  // caller's first endpoint), with no UTF-16LE PATCH answered on this page yet, is the server read first: our text there is a success
+  // whose answer was lost, and anything else (with the read itself answered) turns UTF-16LE off and goes as UTF-8 to `netFallback`.
+  // Over the budget in UTF-8, the server first gets back the first `restore` text that fits (when the UTF-16LE copy may have
+  // changed it) and the caller picks again under the budget (WISH_CARRIER_UTF8_REFIT), as after a 413; serverText is what it holds.
+  async function sendCarrierPatch(url,text,{timeoutMs=0,read=null,restore=[],netFallback=''}={}) {
+    const send=(to,message,encoding)=>apiRequest('PATCH',to,{message},null,{...(timeoutMs?{timeoutMs}:{}),encoding});
+    let to=url;
+    if(carrierBody(text).encoding==='utf-16le'){
+      let refused=null,lost=null,observed=null;
+      try{await send(url,text,'utf-16le');carrierUtf16.answered=true;}
+      catch(error){
+        const status=Number(error?.diagnostic?.httpStatus),code=String(error?.code||'');
+        // Any HTTP answer (a 401 included) shows that this manager does send a UTF-16LE body, as a 2xx does.
+        if(status||code==='CRACK_AUTH_REJECTED')carrierUtf16.answered=true;
+        if(status?status<400||status>=500||[401,404,410,413,429].includes(status):code&&(code!=='CRACK_NETWORK'||!netFallback||carrierUtf16.answered||!read))throw error;
+        if(status||!code)refused=error;else{lost=error;to=netFallback;}
+      }
+      if(!refused&&!read)return {encoding:'utf-16le',observed:null};
+      if(!refused){
+        observed=await read().catch(error=>{throw lost||error;});
+        if(normalizeLineBreaks(observed)===normalizeLineBreaks(text)){carrierUtf16.answered=true;return {encoding:'utf-16le',observed};}
+      }
+      carrierUtf16.on=false;carrierUtf16.reason=refused?String(refused.message||refused):lost?'UTF-16LE 요청이 모든 주소에서 응답 없음 · '+String(lost.message||lost):'UTF-16LE 저장 본문 불일치';
+      const refused4xx=Number(refused?.diagnostic?.httpStatus)>0;if(refused4xx)carrierUtf16.refused4xx=true;
+      if(!refused4xx||!carrierUtf16Refused())notify((lost?'UTF-16LE 요청이 모든 주소에서 응답 없이 끝나(서버 조회는 정상) 이 페이지에서는 UTF-8로 보냅니다 · '+String(lost.message||lost)
+        :(refused&&!Number(refused?.diagnostic?.httpStatus)?'UTF-16LE 요청을 보내지 못해':'서버가 UTF-16LE 전송을 받지 않아')+' 이 페이지에서는 UTF-8로 보냅니다 · '+carrierUtf16.reason),'warn',5000);
+      if(carrierBodyBytes(text)>APP.safeCarrierPayloadBytes){
+        const back=refused||restore.includes(observed)?null:restore.find(t=>typeof t==='string'&&carrierBodyBytes(t)<=APP.safeCarrierPayloadBytes);
+        if(back!=null)await send(to,back,'utf-8');
+        if(!refused && !restore.includes(observed) && back==null)throw Object.assign(Error('서버 저장 본문이 달라졌으며 긴 AI 원문을 UTF-8 안전 용량 안에서 복원할 수 없습니다. 원문 복구 백업을 유지합니다. 서버 본문을 원문으로 복원한 뒤 다시 확인해 주세요.'),{code:'WISH_CARRIER_RESTORE_REQUIRED',restoreText:restore.find(t=>typeof t==='string'),serverText:observed});
+        throw Object.assign(Error('메시지 PATCH 실패 · UTF-16LE 대신 UTF-8로 보내려면 서버 용량 한도에 맞게 다시 골라야 합니다 · '+carrierUtf16.reason),{code:'WISH_CARRIER_UTF8_REFIT',serverText:refused?undefined:back??observed});
+      }
+    }
+    try{await send(to,text,'utf-8');}catch(error){carrierUtf16.refused4xx=false;throw error;}
+    if(carrierUtf16.refused4xx){carrierUtf16.refused4xx=false;try{localStorage.setItem(CARRIER_UTF16_REFUSED_KEY,JSON.stringify({...carrierUtf16Env,at:Date.now()}));}catch(_){}}
+    return {encoding:'utf-8',observed:null};
+  }
+
 function contextBudgetForPreview(room) {
     return Math.min(Number(room.maxChars) || APP.defaultMaxChars, APP.safeChars);
   }
@@ -12150,27 +12240,30 @@ function utf8ByteLength(value) {
     return bytes;
   }
 
-function carrierRequestMetrics(nextText) {
+function carrierRequestMetrics(nextText, encoding = '') {
     const message = String(nextText || '');
+    const body = carrierBody(message, encoding);
     return {
       chars: message.length,
       messageBytes: utf8ByteLength(message),
-      payloadBytes: utf8ByteLength(JSON.stringify({ message })),
+      payloadBytes: body.bytes,
+      encoding: body.encoding,
     };
   }
 
-function carrierRequestWithinLimits(room, nextText) {
+function carrierRequestWithinLimits(room, nextText, limits = {}) {
     const metrics = carrierRequestMetrics(nextText);
-    return metrics.chars <= (Number(room?.maxChars) || APP.defaultMaxChars)
-      && metrics.payloadBytes <= APP.safeCarrierPayloadBytes;
+    return metrics.chars <= Math.min(Number(room?.maxChars) || APP.defaultMaxChars, APP.defaultMaxChars, limits.maxChars ?? Infinity)
+      && metrics.payloadBytes <= Math.min(APP.safeCarrierPayloadBytes, limits.byteBudget ?? Infinity);
   }
 
-function assertCarrierRequestWithinLimits(room, nextText, prefix = 'carrier 총 길이') {
+function assertCarrierRequestWithinLimits(room, nextText, prefix = 'carrier 총 길이', limits = {}) {
     const metrics = carrierRequestMetrics(nextText);
-    const maxChars = Number(room?.maxChars) || APP.defaultMaxChars;
+    const maxChars = Math.min(Number(room?.maxChars) || APP.defaultMaxChars, APP.defaultMaxChars, limits.maxChars ?? Infinity);
+    const byteBudget = Math.min(APP.safeCarrierPayloadBytes, limits.byteBudget ?? Infinity);
     if (metrics.chars > maxChars) throw new Error(`${prefix}가 ${formatCount(metrics.chars)}자입니다. 설정 한도 ${formatCount(maxChars)}자를 넘습니다.`);
-    if (metrics.payloadBytes > APP.safeCarrierPayloadBytes) {
-      throw new Error(`${prefix}의 UTF-8 요청 크기가 ${formatCount(metrics.payloadBytes)}바이트입니다. 서버 안전선 ${formatCount(APP.safeCarrierPayloadBytes)}바이트를 넘습니다. 날짜로그를 모두 제외해도 초과하므로 현재상태·타임라인·캐릭터·중요 물품·기타 중 일부를 줄이거나 주입 해제해 주세요.`);
+    if (metrics.payloadBytes > byteBudget) {
+      throw new Error(`${prefix}의 ${metrics.encoding} 요청 크기가 ${formatCount(metrics.payloadBytes)}바이트입니다. 서버 안전선 ${formatCount(byteBudget)}바이트를 넘습니다. 날짜로그를 모두 제외해도 초과하므로 현재상태·타임라인·캐릭터·중요 물품·기타 중 일부를 줄이거나 주입 해제해 주세요.`);
     }
     return metrics;
   }
@@ -12203,6 +12296,9 @@ function carrierCapacityForUi(room, contextChars = 0, contextBlock = '') {
     const payloadMetrics = originalText !== null && String(contextBlock || '')
       ? carrierRequestMetrics(buildInjectedMessage(originalText, String(contextBlock || '')))
       : null;
+    const stored=room?.pending,storedMetrics=stored?.verified&&['utf-8','utf-16le'].includes(stored?.carrierEncoding)&&contextBlock===stored.contextBlock&&originalText!==null?carrierRequestMetrics(buildInjectedMessage(originalText,String(contextBlock||'')),stored.carrierEncoding):null;
+    const storedBytes=Number(stored?.carrierPayloadBytes)||storedMetrics?.payloadBytes||0;
+    const verifiedStorage=!!stored?.verified&&['utf-8','utf-16le'].includes(stored?.carrierEncoding)&&storedBytes>0;
     return {
       max,
       context,
@@ -12210,10 +12306,14 @@ function carrierCapacityForUi(room, contextChars = 0, contextBlock = '') {
       separator:known ? separator : 0,
       total:known ? original + separator + context : context,
       availableContext:known ? Math.max(0, max - original - separator) : max,
-      payloadBytes:payloadMetrics?.payloadBytes ?? Number(room?.pending?.carrierPayloadBytes || 0),
-      messageBytes:payloadMetrics?.messageBytes ?? Number(room?.pending?.carrierMessageBytes || 0),
+      payloadBytes:storedBytes||payloadMetrics?.payloadBytes||0,
+      messageBytes:Number(stored?.carrierMessageBytes)||payloadMetrics?.messageBytes||0,
+      encoding:verifiedStorage?stored.carrierEncoding:payloadMetrics?.encoding||'',
+      byteSource:verifiedStorage?'verified':storedBytes?'legacy':payloadMetrics?'estimate':'unknown',
+      estimatedPayloadBytes:payloadMetrics?.payloadBytes??null,
+      estimatedEncoding:payloadMetrics?.encoding||'',
       byteLimit:APP.safeCarrierPayloadBytes,
-      byteKnown:!!payloadMetrics || Number(room?.pending?.carrierPayloadBytes || 0) > 0,
+      byteKnown:!!storedBytes||!!payloadMetrics,
       known,
       loading:!room?.pending && !!state.carrierCapacityPreview?.loading && String(state.carrierCapacityPreview?.roomId || '') === String(room?.chatId || ''),
       error:!room?.pending && String(state.carrierCapacityPreview?.roomId || '') === String(room?.chatId || '') ? String(state.carrierCapacityPreview?.error || '') : '',
@@ -12223,7 +12323,13 @@ function carrierCapacityForUi(room, contextChars = 0, contextBlock = '') {
 function carrierCapacityDetailText(room, capacity) {
     if (capacity.known) {
       const answerLabel = room?.pending ? '현재 AI 답변' : '최신 AI 답변';
-      const byteText = capacity.byteKnown ? ` · UTF-8 요청 ${formatCount(capacity.payloadBytes)} / ${formatCount(capacity.byteLimit)}바이트 안전선` : '';
+      const encoding=capacity.encoding==='utf-16le'?'UTF-16LE':'UTF-8';
+      const estimate=capacity.estimatedEncoding==='utf-16le'?'UTF-16LE':'UTF-8';
+      const byteText = !capacity.byteKnown?'':capacity.byteSource==='verified'
+        ? ` · 검증된 저장본 ${encoding} 요청 ${formatCount(capacity.payloadBytes)} / ${formatCount(capacity.byteLimit)}B 안전선${capacity.estimatedPayloadBytes!==null&&(capacity.estimatedPayloadBytes!==capacity.payloadBytes||capacity.estimatedEncoding!==capacity.encoding)?` · 현재 설정 예상 ${estimate} ${formatCount(capacity.estimatedPayloadBytes)}B`:''}`
+        : capacity.byteSource==='legacy'
+          ? ` · 기존 요청 기록 ${formatCount(capacity.payloadBytes)}B (인코딩 미확인)${capacity.estimatedPayloadBytes!==null?` · 현재 설정 예상 ${estimate} ${formatCount(capacity.estimatedPayloadBytes)} / ${formatCount(capacity.byteLimit)}B`:''}`
+          : ` · 다음 주입 예상 ${estimate} 요청 ${formatCount(capacity.payloadBytes)} / ${formatCount(capacity.byteLimit)}B 안전선`;
       return `주입 자료 ${formatCount(capacity.context)}자 + ${answerLabel} ${formatCount(capacity.original)}자 + 연결 ${capacity.separator}자 = 총 ${formatCount(capacity.total)}자${byteText}`;
     }
     if (capacity.loading) return `주입 자료 ${formatCount(capacity.context)}자 · 최신 AI 답변 길이 확인 중…`;
@@ -12261,7 +12367,8 @@ function fitLogItemsToBudget(room, baseItems, logItems, contextBudget = null, ap
     return chosen;
   }
 
-function fitItemsToCarrierLimits(room, originalText, items) {
+function fitItemsToCarrierLimits(room, originalText, items, limits = {}) {
+    const contextBudget = Math.min(contextBudgetForCarrier(room, String(originalText || '').length), Math.max(0, (limits.maxChars ?? APP.defaultMaxChars) - String(originalText || '').length - 2));
     const all = [...(items || [])];
     const isLog = item => item?.sourceSlotId === 'logSummary' || item?.group === 'log-auto' || item?.slotId === 'logSummary';
     const baseItems = all.filter(item => !isLog(item) && item?.group !== 'lore');
@@ -12278,17 +12385,17 @@ function fitItemsToCarrierLimits(room, originalText, items) {
     const fixedLogs = sortedLogs.filter(item => item.autoType === 'pinned-log' || item.autoType === 'manual-log');
     for (const item of fixedLogs) {
       const trialBlock = buildContextBlockFromItems([...baseItems, ...chosenLogs, item]);
-      if (carrierRequestWithinLimits(room, buildInjectedMessage(String(originalText || ''), trialBlock))) chosenLogs.push(item);
+      if (carrierRequestWithinLimits(room, buildInjectedMessage(String(originalText || ''), trialBlock), limits)) chosenLogs.push(item);
       else omitted.push(item);
     }
     const loreCandidates = all.filter(item => item?.group === 'lore');
     const chosenLore = fitLoreItemsToBudget(room, [...baseItems, ...chosenLogs], loreCandidates,
-      contextBudgetForCarrier(room, String(originalText || '').length), originalText);
+      contextBudget, originalText, limits);
     for (const item of sortedLogs.filter(item => !fixedLogs.includes(item))) {
       const trialItems = [...baseItems, ...chosenLore, ...chosenLogs, item];
       const trialBlock = buildContextBlockFromItems(trialItems);
       const trialText = buildInjectedMessage(String(originalText || ''), trialBlock);
-      if (carrierRequestWithinLimits(room, trialText)) chosenLogs.push(item);
+      if (carrierRequestWithinLimits(room, trialText, limits)) chosenLogs.push(item);
       else omitted.push(item);
     }
     chosenLogs.sort((a,b) => Number(a.logIndex || 0) - Number(b.logIndex || 0));
@@ -12297,8 +12404,8 @@ function fitItemsToCarrierLimits(room, originalText, items) {
     const metrics = carrierRequestMetrics(buildInjectedMessage(String(originalText || ''), fittedBlock));
     room._logBudgetInfo = {
       ...(room._logBudgetInfo || {}),
-      limit:contextBudgetForCarrier(room, String(originalText || '').length),
-      byteLimit:APP.safeCarrierPayloadBytes,
+      limit:contextBudget,
+      byteLimit:Math.min(APP.safeCarrierPayloadBytes, limits.byteBudget ?? Infinity),
       payloadBytes:metrics.payloadBytes,
       candidates:sortedLogs.length,
       included:chosenLogs.length,
@@ -12306,6 +12413,40 @@ function fitItemsToCarrierLimits(room, originalText, items) {
       omittedTitles:omitted.slice(0, 6).map(item => item.title),
     };
     return fitted;
+  }
+
+  async function patchCarrierItems(room, messageId, originalText, items, onPrepared = null) {
+    let limits = {};
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const fitted = fitItemsToCarrierLimits(room, originalText, items, limits);
+      const contextBlock = buildContextBlockFromItems(fitted);
+      if (!contextBlock) throw new Error('안전 한도 안에 주입할 항목이 없습니다. 저장 원문은 유지합니다.');
+      const text = buildInjectedMessage(originalText, contextBlock);
+      const metrics = assertCarrierRequestWithinLimits(room, text, 'carrier 총 길이', limits);
+      const snapshot = {contextBlock, injectedChars:contextBlock.length, originalChars:String(originalText || '').length, carrierChars:text.length,
+        carrierMessageBytes:metrics.messageBytes, carrierPayloadBytes:metrics.payloadBytes, carrierEncoding:metrics.encoding};
+      if (onPrepared) await onPrepared(snapshot, fitted);
+      try {
+        const result = await patchMessage(apiChatIdOf(room), messageId, text, room);
+        const sent = carrierRequestMetrics(text, result.encoding);
+        snapshot.carrierPayloadBytes = sent.payloadBytes; snapshot.carrierEncoding = sent.encoding;
+        return {text, items:fitted, snapshot};
+      } catch (error) {
+        if (attempt) throw error;
+        const status = Number(error?.diagnostic?.httpStatus || 0), refit = error?.code === 'WISH_CARRIER_UTF8_REFIT';
+        if (!refit && status !== 413 && !(status === 500 && text.length > APP.carrierFallbackChars)) throw error;
+        limits = {maxChars:status === 500 ? APP.carrierFallbackChars : APP.defaultMaxChars,
+          byteBudget:status === 413 ? Math.min(APP.safeCarrierPayloadBytes, Math.floor(metrics.payloadBytes * .9)) : APP.safeCarrierPayloadBytes};
+        notify(refit ? 'UTF-8 전송 용량에 맞춰 주입 내용을 다시 고르는 중' : status === 413 ? '서버 용량 한도 초과 · 주입 내용을 줄여 다시 보내는 중' : '서버 저장 한도 재조정 중 · 45,000자', 'warn', 3500);
+      }
+    }
+  }
+
+  function retainCarrierSelection(pending, active) {
+    const logs = new Set(active.filter(i => i.sourceSlotId === 'logSummary' || i.group === 'log-auto' || i.slotId === 'logSummary').map(i => i.slotId));
+    const lore = new Map(active.filter(i => i.group === 'lore').map(i => [i.slotId, i]));
+    pending.items = (pending.items || []).filter(i => i.group === 'lore' ? lore.has(i.slotId) : !(i.sourceSlotId === 'logSummary' || i.group === 'log-auto' || i.slotId === 'logSummary') || logs.has(i.slotId))
+      .map(i => i.group === 'lore' ? lore.get(i.slotId) : i);
   }
 
 function logRecallItems(room, contextText = '', baseItems = [], contextBudget = null) {
@@ -14034,7 +14175,7 @@ async function getRoom(chatId, apiChatId = null) {
         room.storyTimelineGuideSource = 'builtin-v1.7.2';
       }
       normalizeAiReviewInbox(room);
-      room.maxChars = Number(room.maxChars)>0?Number(room.maxChars):APP.defaultMaxChars;
+      room.maxChars = Number(room.maxChars)===45000||!(Number(room.maxChars)>0)?APP.defaultMaxChars:Number(room.maxChars);
       room.apiChatId = room.apiChatId || apiChatId || String(chatId).split('::')[0];
       if (room.pending) {
         room.pending.contextBlock = String(room.pending.contextBlock || '');
@@ -14950,26 +15091,27 @@ function applySelectedExtraLibraryToRoom(room, selectedItems, selectedFolders = 
 
 
 
-async function apiRequest(method, url, body = undefined) {
+async function apiRequest(method, url, body = undefined, areaResetToken = null, options = {}) {
     if(String(method).toUpperCase()!=='GET')invalidateAiMemoryHistory();
     let token=getCookie('access_token');
     // 로그인 초기화/갱신 중 잠깐 비어 있는 쿠키만 기다립니다. 인증 정보는 외부로 노출하지 않습니다.
     for(let attempt=0;!token&&attempt<4;attempt++){await sleep(250);token=getCookie('access_token');}
     if(!token){const error=new Error('Crack 로그인 정보를 읽지 못했습니다. 채팅 페이지를 새로고침하고, 계속 뜨면 Crack에 다시 로그인한 뒤 검수해 주세요. AI 요청은 보내지 않았습니다.');error.code='CRACK_AUTH_REQUIRED';throw error;}
 
+    const utf16 = options.encoding === 'utf-16le' && body !== undefined;
     return new Promise((resolve, reject) => {
       GM_xmlhttpRequest({
         method,
         url,
         headers: {
           Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
+          'Content-Type': utf16 ? 'application/json; charset=utf-16le' : 'application/json',
           Accept: 'application/json, text/plain, */*',
           platform: 'web',
           'wrtn-locale': 'ko-KR',
         },
-        data: body === undefined ? undefined : JSON.stringify(body),
-        timeout: 20000,
+        data: body === undefined ? undefined : utf16 ? utf16leBlob(JSON.stringify(body)) : JSON.stringify(body),
+        timeout: Math.max(1000, Math.min(20000, Number(options.timeoutMs) || 20000)),
         onload: res => {
           let parsed = null;
           try { parsed = res.responseText ? JSON.parse(res.responseText) : null; } catch (_) {}
@@ -14977,11 +15119,11 @@ async function apiRequest(method, url, body = undefined) {
             resolve(parsed ?? { ok: true });
           } else {
             const detail = parsed?.message || parsed?.error || res.responseText?.slice(0, 250) || '';
-            reject(new Error(`API 오류 ${res.status}${detail ? `: ${detail}` : ''}`));
+            reject(Object.assign(new Error(`API 오류 ${res.status}${detail ? `: ${detail}` : ''}`), {code:'CRACK_HTTP',diagnostic:{httpStatus:res.status}}));
           }
         },
-        ontimeout: () => reject(new Error('API 요청 시간 초과')),
-        onerror: () => reject(new Error('네트워크 오류')),
+        ontimeout: () => reject(Object.assign(new Error('API 요청 시간 초과'),{code:'CRACK_TIMEOUT'})),
+        onerror: () => reject(Object.assign(new Error('네트워크 오류'),{code:'CRACK_NETWORK'})),
       });
     });
   }
@@ -15004,31 +15146,63 @@ async function fetchMessage(chatId, messageId) {
     }
   }
 
-async function patchMessage(chatId, messageId, nextText) {
-    // Primary endpoint verified by existing Crack scripts.
+async function patchMessage(chatId, messageId, nextText, room = null) {
     const candidates = [
       `https://contents-api.wrtn.ai/character-chat/v3/chats/${chatId}/messages/${messageId}`,
       `https://contents-api.wrtn.ai/character-chat/character-chats/${chatId}/messages/${messageId}`,
       `https://crack-api.wrtn.ai/crack-gen/v3/chats/${chatId}/messages/${messageId}`,
     ];
-    let lastErr = null;
-    const requestMetrics = carrierRequestMetrics(nextText);
-    for (const url of candidates) {
+    const guarded = room && [loadPendingBackup(room.chatId), room.pending].find(p => p?.carrierRestoreRequired);
+    if (guarded?.carrierRestoreRequired) throw new Error('AI 원문 복원 확인이 필요하여 서버 변경을 보류합니다. 복구 백업은 유지합니다.');
+    let lastErr = null, capacityErr = null, unanswered = true;
+    const utf16 = carrierBody(nextText).encoding === 'utf-16le';
+    const before = utf16 ? messageTextOf(await fetchMessage(chatId, messageId)) : null;
+    if (utf16 && !before) throw new Error('AI 원문을 서버에서 확인하지 못하여 전송을 보류했습니다. 원문과 복구 정보는 유지합니다.');
+    const read = async () => {
+      let observed = '';
+      for (let attempt = 0; attempt < 2; attempt++) {
+        if (attempt) await sleep(300);
+        const data = await apiRequest('GET', `https://crack-api.wrtn.ai/crack-gen/v3/chats/${chatId}/messages/${messageId}`);
+        observed = messageTextOf(data?.data || data || {});
+        if (normalizeLineBreaks(observed) === normalizeLineBreaks(nextText)) break;
+      }
+      return observed;
+    };
+    for (const [index, url] of candidates.entries()) {
       for (let attempt = 0; attempt < 2; attempt++) {
         try {
-          await apiRequest('PATCH', url, { message: nextText });
-          return true;
+          const sent = await sendCarrierPatch(url, nextText, {read, restore:[before, stripOurContextBlock(nextText).text], netFallback:unanswered && index === candidates.length - 1 ? candidates[0] : ''});
+          const observed = sent.observed ?? await read();
+          if (normalizeLineBreaks(observed) === normalizeLineBreaks(nextText)) return {verified:true, encoding:sent.encoding};
+          lastErr = new Error('성공 응답 뒤 서버 본문 미반영');
+          unanswered = false;
+          break;
         } catch (e) {
+          if (e?.code === 'WISH_CARRIER_RESTORE_REQUIRED') {
+            if (room) {
+              const original = stripOurContextBlock(e.restoreText ?? before ?? '').text;
+              const recovery = {...(loadPendingBackup(room.chatId) || room.pending || {}), messageId, originalText:original,
+                carrierRestoreRequired:true, verified:false, verifiedAt:null, lastSyncError:String(e.message)};
+              savePendingBackup(room.chatId, recovery); room.pending = recovery;
+              await saveRoom(room);
+            }
+            throw e;
+          }
+          if (e?.code === 'WISH_CARRIER_UTF8_REFIT') throw e;
           lastErr = e;
-          if(isServerPatch413(e))throw e;
+          unanswered = unanswered && e?.code === 'CRACK_NETWORK';
+          const status = Number(e?.diagnostic?.httpStatus || 0);
+          // 용량 거절은 같은 본문으로 반복하지 않고 항목 단위 전송 경로에서 한 번만 다시 맞춥니다.
+          if (status === 413 || status === 500 && stripOurContextBlock(nextText).found) { if (!capacityErr || status === 413) capacityErr = e; break; }
           const retryable = /(?:API 오류\s+(?:500|502|503|504)|API 요청 시간 초과|네트워크 오류)/i.test(String(e?.message || e));
           if (!retryable || attempt > 0) break;
-          // 같은 본문을 다시 보내는 PATCH는 멱등이므로 일시적인 5xx에 한 번만 재시도합니다.
           await sleep(350);
         }
       }
     }
-    throw new Error(`${lastErr?.message || '메시지 PATCH 실패'} · 전송 ${formatCount(requestMetrics.chars)}자 / 메시지 UTF-8 ${formatCount(requestMetrics.messageBytes)}바이트 / 요청 본문 ${formatCount(requestMetrics.payloadBytes)}바이트`);
+    lastErr = capacityErr || lastErr;
+    const requestMetrics = carrierRequestMetrics(nextText);
+    throw Object.assign(new Error(`${lastErr?.message || '메시지 PATCH 실패'} · 전송 ${formatCount(requestMetrics.chars)}자 / 메시지 UTF-8 ${formatCount(requestMetrics.messageBytes)}바이트 / 요청 본문 ${requestMetrics.encoding} ${formatCount(requestMetrics.payloadBytes)}바이트`), {code:lastErr?.code, diagnostic:lastErr?.diagnostic});
   }
 
 async function fetchRoomMeta(chatId) {
@@ -16084,7 +16258,7 @@ function loreInjectionCandidates(room, contextText) {
     return result.sort((a,b) => rank[a.loreMode] - rank[b.loreMode] || Number(b.loreMatchScore || 0) - Number(a.loreMatchScore || 0) || a.title.localeCompare(b.title, 'ko'));
   }
 
-function fitLoreItemsToBudget(room, baseItems, candidates, contextBudget = null, originalText = null) {
+function fitLoreItemsToBudget(room, baseItems, candidates, contextBudget = null, originalText = null, carrierLimits = {}) {
     const limit = contextBudget == null ? contextBudgetForPreview(room) : Number(contextBudget);
     const baseChars = buildContextBlockFromItems(baseItems).length;
     const chosen = [];
@@ -16092,7 +16266,7 @@ function fitLoreItemsToBudget(room, baseItems, candidates, contextBudget = null,
     const fits = trial => {
       const block = buildContextBlockFromItems([...baseItems, ...trial]);
       return block.length <= limit && block.length - baseChars <= LORE_INJECTION_CHAR_LIMIT
-        && (originalText === null || carrierRequestWithinLimits(room, buildInjectedMessage(String(originalText || ''), block)));
+        && (originalText === null || carrierRequestWithinLimits(room, buildInjectedMessage(String(originalText || ''), block), carrierLimits));
     };
     for (const item of candidates) {
       if (chosen.length >= LORE_INJECTION_CARD_LIMIT) { omittedTitles.push(item.title); continue; }
@@ -16490,7 +16664,7 @@ function getDataWarnings(room) {
     }
     const dupChars = [...byName.entries()].filter(([,n]) => n > 1).map(([k,n]) => `${k} (${n}개)`);
     if (dupChars.length) warnings.push(`같은 이름의 캐릭터 설정이 중복됨: ${dupChars.join(', ')}`);
-    if (room._logBudgetInfo?.omitted) warnings.push(`주입 안전선(45,000자·UTF-8 ${formatCount(APP.safeCarrierPayloadBytes)}바이트) 때문에 로그 ${room._logBudgetInfo.omitted}개를 이번 주입 후보에서 자동 제외함.${room._logBudgetInfo.omittedTitles?.length ? ` (${room._logBudgetInfo.omittedTitles.join(', ')})` : ''}`);
+    if (room._logBudgetInfo?.omitted) warnings.push(`주입 안전선(${formatCount(APP.defaultMaxChars)}자·전송 ${formatCount(APP.safeCarrierPayloadBytes)}바이트) 때문에 로그 ${room._logBudgetInfo.omitted}개를 이번 주입 후보에서 자동 제외함.${room._logBudgetInfo.omittedTitles?.length ? ` (${room._logBudgetInfo.omittedTitles.join(', ')})` : ''}`);
     return warnings;
   }
 
@@ -17421,8 +17595,8 @@ function openContextPreviewDialog(room, items) {
     backdrop.id = 'rpcm-preview-backdrop';
     backdrop.innerHTML = `
       <div class="rpcm-preview-dialog" role="dialog" aria-modal="true" aria-labelledby="rpcm-preview-title">
-        <div class="rpcm-lib-dialog-head"><div><div class="rpcm-lib-dialog-title" id="rpcm-preview-title">${room.pending ? '현재 주입 · ' + (room.pending.verified ? '확인됨' : '서버 확인 필요') : '주입 후보 · 확인 대기'}</div><div class="rpcm-lib-dialog-desc">${formatCount(used)} / 45,000자 · 카드 ${active.length}개 · 위에서부터 순서대로</div></div><button type="button" class="rpcm-lib-close" aria-label="닫기" data-rpcm-close="icon">${rpcmUiIcon('close')}</button></div>
-        <div class="rpcm-preview-gauge" role="progressbar" aria-label="주입 용량" aria-valuemin="0" aria-valuemax="45000" aria-valuenow="${Math.min(45000, used)}"><i style="width:${Math.min(100, used / 45000 * 100)}%"></i></div>
+        <div class="rpcm-lib-dialog-head"><div><div class="rpcm-lib-dialog-title" id="rpcm-preview-title">${room.pending ? '현재 주입 · ' + (room.pending.verified ? '확인됨' : '서버 확인 필요') : '주입 후보 · 확인 대기'}</div><div class="rpcm-lib-dialog-desc">${formatCount(used)} / ${formatCount(APP.defaultMaxChars)}자 · 카드 ${active.length}개 · 위에서부터 순서대로</div></div><button type="button" class="rpcm-lib-close" aria-label="닫기" data-rpcm-close="icon">${rpcmUiIcon('close')}</button></div>
+        <div class="rpcm-preview-gauge" role="progressbar" aria-label="주입 용량" aria-valuemin="0" aria-valuemax="${APP.defaultMaxChars}" aria-valuenow="${Math.min(APP.defaultMaxChars, used)}"><i style="width:${Math.min(100, used / APP.defaultMaxChars * 100)}%"></i></div>
         ${omittedLogTitles.length || omittedLoreTitles.length ? `<div class="rpcm-preview-reason">용량 때문에 제외 · ${omittedLogTitles.length ? `날짜로그 ${esc(omittedLogTitles.join(', '))}` : ''}${omittedLogTitles.length && omittedLoreTitles.length ? ' / ' : ''}${omittedLoreTitles.length ? `자료집 ${esc(omittedLoreTitles.join(', '))}` : ''}</div>` : ''}
         <div class="rpcm-preview-list">
           ${active.length ? active.map((item, index) => {
@@ -17756,7 +17930,8 @@ async function prepareRerollBridgeNow(room) {
     let bridgeInjected = false;
     let sourceRestored = false;
     try {
-      await patchMessage(apiChatIdOf(room), bridgeId, injectedText);
+      const written = await patchCarrierItems(room, bridgeId, bridgeOriginal, bridgeItems);
+      bridgeItems = written.items; contextBlock = written.snapshot.contextBlock; injectedText = written.text;
       const bridgePending = { ...p, messageId: bridgeId, originalText: bridgeOriginal };
       const verification = await verifyInjectedCarrier(room, bridgePending, injectedText);
       if (!verification.verified) throw new Error('리롤용 이전 답변에 숨김 컨텍스트를 붙이지 못했습니다.');
@@ -17778,6 +17953,7 @@ async function prepareRerollBridgeNow(room) {
         carrierChars: injectedText.length,
         carrierMessageBytes: carrierRequestMetrics(injectedText).messageBytes,
         carrierPayloadBytes: carrierRequestMetrics(injectedText).payloadBytes,
+        carrierEncoding: carrierRequestMetrics(injectedText).encoding,
         serverChars: verification.serverChars,
         verified: true,
         verifiedAt: Date.now(),
@@ -17789,6 +17965,7 @@ async function prepareRerollBridgeNow(room) {
           startedAt: Date.now(),
         },
       };
+      Object.assign(nextPending, written.snapshot);
       // 예산에 맞춰 임시 carrier에 들어간 항목만 유지합니다. 유지 횟수 값은 그대로입니다.
       nextPending.items = clonePendingItems(bridgeItems);
       stampVerifiedPendingSnapshot(nextPending, bridgeItems, contextBlock);
@@ -17801,12 +17978,12 @@ async function prepareRerollBridgeNow(room) {
     } catch (error) {
       // 리롤 실행 전 준비가 실패하면 기존 carrier 상태로 최대한 되돌립니다.
       if (bridgeInjected) {
-        try { await patchMessage(apiChatIdOf(room), bridgeId, bridgeOriginal); } catch (_) {}
+        try { await patchMessage(apiChatIdOf(room), bridgeId, bridgeOriginal, room); } catch (_) {}
       }
       if (sourceRestored) {
         try {
           const previousBlock = previousPending.contextBlock || buildContextBlockFromItems(activePendingItems(previousPending));
-          await patchMessage(apiChatIdOf(room), previousPending.messageId, buildInjectedMessage(sourceOriginal, previousBlock));
+          await patchMessage(apiChatIdOf(room), previousPending.messageId, buildInjectedMessage(sourceOriginal, previousBlock), room);
         } catch (_) {}
       }
       room.pending = previousPending;
@@ -17933,6 +18110,13 @@ async function carrierOriginalFromServer(room, p) {
     const current = await fetchMessage(apiChatIdOf(room), p.messageId);
     if (!current) return { found: false, original: '', currentText: '' };
     const currentText = messageTextOf(current);
+    const guard = [loadPendingBackup(room.chatId), room.pending, p].find(item => item?.carrierRestoreRequired);
+    if (guard?.carrierRestoreRequired && String(guard.messageId) === String(p.messageId)) {
+      if (normalizeLineBreaks(currentText) !== normalizeLineBreaks(guard.originalText)) throw new Error('서버의 AI 원문 복원이 아직 확인되지 않았습니다. 긴 원문 복구 백업을 유지합니다.');
+      delete guard.carrierRestoreRequired;
+      savePendingBackup(room.chatId, guard, true);
+      if (room.pending && String(room.pending.messageId) === String(p.messageId)) delete room.pending.carrierRestoreRequired;
+    }
     const stripped = stripOurContextBlock(currentText);
     if (stripped.found) {
       // Refiner가 주입 중인 메시지의 가시 본문을 교정했을 수 있습니다.
@@ -17961,7 +18145,7 @@ async function restoreCarrierOnly(room, p) {
     if (!stripOurContextBlock(info.currentText).found) return { restored: false, reason: 'already_clean' };
     const restoreText = info.original;
     if (restoreText == null) throw new Error('복원할 최신 AI 원문을 찾지 못했습니다.');
-    await patchMessage(apiChatIdOf(room), p.messageId, restoreText);
+    await patchMessage(apiChatIdOf(room), p.messageId, restoreText, room);
     const verification = await verifyCarrierClean(room, p.messageId, restoreText);
     if (!verification.clean) throw new Error('AI 원문 복원 후 서버 재검증에 실패했습니다. 복구 정보는 유지됩니다.');
     return { restored: true, reason: 'ok' };
@@ -17989,9 +18173,10 @@ function stampVerifiedPendingSnapshot(pending, items, contextBlock) {
   }
 
 async function rollbackPendingCarrierUpdate(room, pending, previousInjectedText) {
-    let rollbackVerified = false;
+    let rollbackVerified = false, rollbackMetrics = null;
     try {
-      await patchMessage(apiChatIdOf(room), pending.messageId, previousInjectedText);
+      const sent = await patchMessage(apiChatIdOf(room), pending.messageId, previousInjectedText, room);
+      rollbackMetrics = carrierRequestMetrics(previousInjectedText, sent.encoding);
       const rollback = await verifyInjectedCarrier(room, pending, previousInjectedText, 3);
       rollbackVerified = !!rollback.verified;
     } catch (_) {}
@@ -18007,6 +18192,7 @@ async function rollbackPendingCarrierUpdate(room, pending, previousInjectedText)
       injectedChars: rollbackBlock.length,
       carrierChars: previousInjectedText.length,
       serverChars: previousInjectedText.length,
+      carrierMessageBytes:rollbackMetrics.messageBytes, carrierPayloadBytes:rollbackMetrics.payloadBytes, carrierEncoding:rollbackMetrics.encoding,
       verified: true,
       verifiedAt: Date.now(),
     }, restoredItems, rollbackBlock);
@@ -18102,21 +18288,24 @@ async function syncPendingCarrierNow(room, reason = 'update') {
       renderModalIfOpen();
       return { active: 0, cleared: true };
     }
-    const contextBlock = buildContextBlockFromItems(active);
-    const injectedText = buildInjectedMessage(p.originalText, contextBlock);
-    const requestMetrics = assertCarrierRequestWithinLimits(room, injectedText, '변경 후 carrier 총 길이');
+    let contextBlock = buildContextBlockFromItems(active);
+    let injectedText = buildInjectedMessage(p.originalText, contextBlock);
+    let requestMetrics = assertCarrierRequestWithinLimits(room, injectedText, '변경 후 carrier 총 길이');
     const previousInjectedText = buildInjectedMessage(p.originalText, p.contextBlock || buildContextBlockFromItems(activePendingItems(p)));
     try {
-      await patchMessage(apiChatIdOf(room), p.messageId, injectedText);
+      const written = await patchCarrierItems(room, p.messageId, p.originalText, active);
+      active = written.items; contextBlock = written.snapshot.contextBlock; injectedText = written.text;
+      requestMetrics = carrierRequestMetrics(injectedText, written.snapshot.carrierEncoding);
+      retainCarrierSelection(p, active);
     } catch (patchError) {
       const rollbackVerified = await rollbackPendingCarrierUpdate(room, p, previousInjectedText);
       throw new Error(`주입 내용 서버 갱신 실패: ${patchError.message}. ${rollbackVerified ? '직전 정상 주입본으로 복원했으며 저장된 로그 원문은 유지됩니다.' : '복원 확인 전이므로 주입 백업을 유지했습니다.'}`);
     }
-    const next = { ...p, contextBlock, injectedChars: contextBlock.length, carrierChars: injectedText.length, carrierMessageBytes:requestMetrics.messageBytes, carrierPayloadBytes:requestMetrics.payloadBytes, verified: false, verifiedAt: null };
+    const next = { ...p, carrierEncoding:requestMetrics.encoding, contextBlock, injectedChars: contextBlock.length, carrierChars: injectedText.length, carrierMessageBytes:requestMetrics.messageBytes, carrierPayloadBytes:requestMetrics.payloadBytes, verified: false, verifiedAt: null };
     const verification = await verifyInjectedCarrier(room, next, injectedText);
     if (!verification.verified) {
       const rollbackVerified = await rollbackPendingCarrierUpdate(room, p, previousInjectedText);
-      throw new Error(`변경된 주입문의 서버 확인에 실패했습니다. ${rollbackVerified ? '직전 정상 주입본으로 복원했으며 저장된 로그 원문은 유지됩니다.' : '복원 확인 전이므로 주입 백업을 유지했습니다.'} 전송 ${formatCount(requestMetrics.chars)}자 · 요청 본문 UTF-8 ${formatCount(requestMetrics.payloadBytes)}바이트`);
+      throw new Error(`변경된 주입문의 서버 확인에 실패했습니다. ${rollbackVerified ? '직전 정상 주입본으로 복원했으며 저장된 로그 원문은 유지됩니다.' : '복원 확인 전이므로 주입 백업을 유지했습니다.'} 전송 ${formatCount(requestMetrics.chars)}자 · 요청 본문 ${requestMetrics.encoding} ${formatCount(requestMetrics.payloadBytes)}바이트`);
     }
     next.verified = true; next.verifiedAt = Date.now(); next.serverChars = verification.serverChars;
     stampVerifiedPendingSnapshot(next, active, contextBlock);
@@ -18503,7 +18692,7 @@ function renderQuickInjectionPanel() {
     };
     const ordered = [...active, ...removed];
     rpcmPatchHtml(backdrop, `<div class="rpcm-quick-shade" data-key="shade"></div><aside class="rpcm-quick-panel" data-key="panel" role="dialog" aria-modal="true" aria-label="Quick Monitor">
-      <div class="rpcm-quick-head">${quickMonitorRing(monitor)}<div><strong>Quick Monitor</strong><span>${monitor.label} · ${active.length}개 · ${formatCount(monitor.used)} / 45,000자 · ${monitor.percent}%${capacity.byteKnown && pending ? ` · UTF-8 요청 ${formatCount(capacity.payloadBytes)} / ${formatCount(capacity.byteLimit)}바이트` : ''}</span></div><button type="button" class="rpcm-quick-close" aria-label="닫기" data-rpcm-close="icon">✕</button></div>
+      <div class="rpcm-quick-head">${quickMonitorRing(monitor)}<div><strong>Quick Monitor</strong><span>${monitor.label} · ${active.length}개 · ${formatCount(monitor.used)} / ${formatCount(APP.defaultMaxChars)}자 · ${monitor.percent}%${capacity.byteKnown && pending ? ` · UTF-8 요청 ${formatCount(capacity.payloadBytes)} / ${formatCount(capacity.byteLimit)}바이트` : ''}</span></div><button type="button" class="rpcm-quick-close" aria-label="닫기" data-rpcm-close="icon">✕</button></div>
       <div class="rpcm-monitor-summary"><span class="rpcm-monitor-state${monitor.warning ? ' is-warning' : ''}">${monitor.label}</span><span class="rpcm-monitor-issues">확인할 일 ${monitor.warningCount}</span>${monitor.capacityNear ? '<span class="rpcm-monitor-issues">정리 권장</span>' : ''}<div class="rpcm-monitor-categories">${quickMonitorCategories(monitor.items)}</div></div>
       <div class="rpcm-quick-note">${pending ? '체크를 끄면 현재 주입에서만 빠집니다. 저장된 원문과 다음 주입의 기본 선택은 바뀌지 않습니다.' : '현재 주입은 꺼져 있습니다. 전체 RP Manager에서 자료집을 포함한 다음 주입 구성을 확인할 수 있습니다.'}${room?._logBudgetInfo?.omitted ? ` · 로그 ${room._logBudgetInfo.omitted}개 용량 제외${room._logBudgetInfo.omittedTitles?.length ? `: ${esc(room._logBudgetInfo.omittedTitles.join(', '))}` : ''}` : ''}${loreBudgetInfoFor(room)?.candidates > loreBudgetInfoFor(room)?.included ? ` · 자료집 ${loreBudgetInfoFor(room).candidates - loreBudgetInfoFor(room).included}개 용량 제외${loreBudgetInfoFor(room)?.omittedTitles?.length ? `: ${esc(loreBudgetInfoFor(room).omittedTitles.join(', '))}` : ''}` : ''}</div>
       <div class="rpcm-quick-list" data-key="list">
@@ -19641,9 +19830,9 @@ async function armInjectionNow(room) {
     // API가 실패하면 이미 계산된 로컬 키워드 결과를 그대로 사용합니다.
     items = await rerankInitialRelatedLogItems(room, items, recallText, initialContextBudget);
     items = fitItemsToCarrierLimits(room, cleanOriginal, items);
-    const contextBlock = buildContextBlockFromItems(items);
+    let contextBlock = buildContextBlockFromItems(items);
     if (!contextBlock) throw new Error('주입할 항목이 없습니다. 현재상태/캐릭터/중요 물품/자료집/기타 또는 날짜 로그의 직접 주입·최근·관련 자동 선택 설정을 확인해 주세요.');
-    const injectedText = buildInjectedMessage(cleanOriginal, contextBlock);
+    let injectedText = buildInjectedMessage(cleanOriginal, contextBlock);
     const requestMetrics = assertCarrierRequestWithinLimits(room, injectedText);
 
     const pending = {
@@ -19661,7 +19850,13 @@ async function armInjectionNow(room) {
     stampVerifiedPendingSnapshot(pending, items, contextBlock);
 
     savePendingBackup(room.chatId, pending);
-    await patchMessage(apiChatIdOf(room), targetId, injectedText);
+    const written = await patchCarrierItems(room, targetId, cleanOriginal, items, (snapshot, fitted) => {
+      Object.assign(pending, snapshot, {items:fitted});
+      savePendingBackup(room.chatId, pending);
+    });
+    items = written.items; contextBlock = written.snapshot.contextBlock; injectedText = written.text;
+    Object.assign(pending, written.snapshot, {items});
+    stampVerifiedPendingSnapshot(pending, items, contextBlock);
     const verification = await verifyInjectedCarrier(room, pending, injectedText);
     if (!verification.verified) {
       try {
@@ -19790,13 +19985,13 @@ async function reanchorAfterResponseNow(room, latestAssistant, options = {}) {
     const activeLoreIds = new Set(active.filter(i => i.group === 'lore').map(i => i.slotId));
     const activeLoreById = new Map(active.filter(i => i.group === 'lore').map(i => [i.slotId, i]));
     p.items = (p.items || []).filter(i => i.group === 'lore' ? activeLoreIds.has(i.slotId) : !(i.sourceSlotId === 'logSummary' || i.group === 'log-auto' || i.slotId === 'logSummary') || activeLogIds.has(i.slotId)).map(i => i.group === 'lore' ? (activeLoreById.get(i.slotId) || i) : i);
-    const contextBlock = buildContextBlockFromItems(active);
+    let contextBlock = buildContextBlockFromItems(active);
     if (!contextBlock) throw new Error('유지할 활성 컨텍스트가 없어 자동 유지를 중단합니다.');
-    const nextInjected = buildInjectedMessage(newOriginal, contextBlock);
+    let nextInjected = buildInjectedMessage(newOriginal, contextBlock);
     const requestMetrics = carrierRequestMetrics(nextInjected);
     const maxChars = Number(room.maxChars) || APP.defaultMaxChars;
     if (nextInjected.length > maxChars || requestMetrics.payloadBytes > APP.safeCarrierPayloadBytes) {
-      throw new Error(`새 AI 응답 + 숨김 컨텍스트가 주입 안전선을 넘어 이번 carrier 이동을 보류했습니다. 설정과 계속 유지 항목은 보존하며 다음 답변에서 다시 시도합니다. ${formatCount(nextInjected.length)} / ${formatCount(maxChars)}자 · UTF-8 요청 ${formatCount(requestMetrics.payloadBytes)} / ${formatCount(APP.safeCarrierPayloadBytes)}바이트`);
+      throw new Error(`새 AI 응답 + 숨김 컨텍스트가 주입 안전선을 넘어 이번 carrier 이동을 보류했습니다. 설정과 계속 유지 항목은 보존하며 다음 답변에서 다시 시도합니다. ${formatCount(nextInjected.length)} / ${formatCount(maxChars)}자 · 전송 요청 ${formatCount(requestMetrics.payloadBytes)} / ${formatCount(APP.safeCarrierPayloadBytes)}바이트`);
     }
 
     const nextPending = { ...p, messageId: newId, originalText: newOriginal, baselineAssistantId: newId,
@@ -19807,7 +20002,11 @@ async function reanchorAfterResponseNow(room, latestAssistant, options = {}) {
     stampVerifiedPendingSnapshot(nextPending, active, contextBlock);
     if (rerollMove) delete nextPending.reroll;
 
-    await patchMessage(apiChatIdOf(room), newId, nextInjected);
+    const written = await patchCarrierItems(room, newId, newOriginal, active);
+    active = written.items; contextBlock = written.snapshot.contextBlock; nextInjected = written.text;
+    Object.assign(nextPending, written.snapshot);
+    retainCarrierSelection(nextPending, active);
+    stampVerifiedPendingSnapshot(nextPending, active, contextBlock);
     const verification = await verifyInjectedCarrier(room, nextPending, nextInjected);
     if (!verification.verified) {
       try {
@@ -19840,6 +20039,8 @@ function reanchorAfterResponse(room, latestAssistant, options = {}) {
   }
 
 async function checkPendingRoom(room) {
+    const guard = [loadPendingBackup(room.chatId), room.pending].find(item => item?.carrierRestoreRequired);
+    if (guard) await restoreCarrierOnly(room, guard);
     const p = room.pending;
     if (!p) return;
 
@@ -19932,19 +20133,24 @@ async function checkPendingRoom(room) {
             savePendingBackup(room.chatId, p);
             await saveRoom(room);
           } else if (carrierText && !carrierHasContext) {
-            const active = fitItemsToCarrierLimits(room, carrierText, activePendingItems(p));
+            let active = fitItemsToCarrierLimits(room, carrierText, activePendingItems(p));
             const activeLogIds = new Set(active.filter(i => i.sourceSlotId === 'logSummary' || i.group === 'log-auto' || i.slotId === 'logSummary').map(i => i.slotId));
             p.items = (p.items || []).filter(i => !(i.sourceSlotId === 'logSummary' || i.group === 'log-auto' || i.slotId === 'logSummary') || activeLogIds.has(i.slotId));
-            const contextBlock = buildContextBlockFromItems(active);
+            let contextBlock = buildContextBlockFromItems(active);
             if (contextBlock) {
               // Refiner가 마커 없이 최신 교정문을 저장했을 수 있으므로 현재 서버 본문을 새 원문으로 채택합니다.
               p.originalText = carrierText;
-              const injected = buildInjectedMessage(carrierText, contextBlock);
-              const requestMetrics = assertCarrierRequestWithinLimits(room, injected, 'carrier 재주입 총 길이');
-              await patchMessage(apiChatIdOf(room), p.messageId, injected);
+              let injected = buildInjectedMessage(carrierText, contextBlock);
+              assertCarrierRequestWithinLimits(room, injected, 'carrier 재주입 총 길이');
+              const written = await patchCarrierItems(room, p.messageId, carrierText, active);
+              active = written.items; contextBlock = written.snapshot.contextBlock; injected = written.text;
+              const requestMetrics = carrierRequestMetrics(injected);
               const reapplied = await verifyInjectedCarrier(room, p, injected, 3);
               if (!reapplied.verified) throw new Error('carrier 재주입 서버 검증 실패');
               p.contextBlock = contextBlock; p.carrierChars = injected.length; p.carrierMessageBytes = requestMetrics.messageBytes; p.carrierPayloadBytes = requestMetrics.payloadBytes; p.serverChars = reapplied.serverChars;
+              Object.assign(p, written.snapshot);
+              retainCarrierSelection(p, active);
+              stampVerifiedPendingSnapshot(p, active, contextBlock);
               p.verified = true; p.verifiedAt = Date.now();
               delete p.reanchorRetry;
               savePendingBackup(room.chatId, p); await saveRoom(room);
@@ -20277,6 +20483,7 @@ function updateViewportMetrics() {
     const typingFocus = !!activeInput?.matches?.('textarea,input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="hidden"])') && !!activeInput.closest?.('#rpcm-overlay,#rpcm-detached-backdrop,#rpcm-lib-dialog-backdrop,#rpcm-library-manager-backdrop,#rpcm-log-dialog-backdrop,#rpcm-story-dialog-backdrop,#rpcm-story-view-backdrop,#rpcm-dup-dialog-backdrop,#rpcm-import-backdrop,#rpcm-ai-backdrop');
     const keyboardOpen = mobile && typingFocus && state.mobileViewportMaxHeight > 0 && height < state.mobileViewportMaxHeight * .82;
     if (root.classList.contains('rpcm-mobile-keyboard-open') !== keyboardOpen) root.classList.toggle('rpcm-mobile-keyboard-open', keyboardOpen);
+    state.modal?._rpcmPositionHeaderMenu?.();
   }
 
 function bindViewportMetrics() {
@@ -24104,12 +24311,12 @@ function findStableCrackHeaderActionRow() {
     }
   }
 
-function findModelSelectorButtonInHeader(header) {
+function findModelSelectorButtonInHeader(header, allowHidden = false) {
     if (!header) return null;
     const badText = /^(manager|lore|기억\s*삽입|설정|요약|파티챗|에피소드)$/i;
     const strongModelWord = /(하이퍼\s*챗|프로\s*챗|프리\s*챗|chat|gpt|claude|gemini|sonnet|opus|flash)/i;
     const candidates = [...header.querySelectorAll('button,[role="button"]')].map(el => {
-      if (!el || el === state.fab || el.id === 'summary-editor-btn' || !isElementVisible(el)) return null;
+      if (!el || el === state.fab || el.id === 'summary-editor-btn' || (!allowHidden && !isElementVisible(el))) return null;
       if (el.closest?.('[role="dialog"],[aria-modal="true"],[role="menu"],[role="listbox"],[data-radix-popper-content-wrapper]')) return null;
       const t = modelSelectorText(el);
       if (!t || badText.test(t)) return null;
@@ -24134,11 +24341,36 @@ function directChildInsideHost(el, host) {
     return node?.parentElement === host ? node : null;
   }
 
-function mountManagerNextToModelSelector(fab) {
-    const header = findStableCrackHeaderActionRow();
-    if (!header || !isElementVisible(header)) return false;
-    const modelButton = findModelSelectorButtonInHeader(header);
-    if (!modelButton) return false;
+function findManagerComposerTarget() {
+    const root = document.querySelector('main') || document.body;
+    if (!root) return null;
+    const composer = [...root.querySelectorAll('.__chat_input_textarea,textarea,[contenteditable="true"],[role="textbox"],[data-lexical-editor="true"],.ProseMirror')]
+      .filter(el => !el.closest('#rpcm-overlay,#rpcm-quick-backdrop,[role="dialog"],[aria-modal="true"]') && isElementVisible(el))
+      .filter(el => { const r=el.getBoundingClientRect(); return r.width>120 && r.height>18 && r.bottom>window.innerHeight*.34; })
+      .sort((a,b) => b.getBoundingClientRect().top-a.getBoundingClientRect().top)[0];
+    for (let host=composer?.parentElement,depth=0;host && host!==root && depth<4;host=host.parentElement,depth++) {
+      for (const row of host.querySelectorAll('.flex.items-center.justify-between')) {
+        const group=[...row.children].find(el=>el.matches('.flex.min-w-0.items-center'));
+        if (!group || !isElementVisible(row)) continue;
+        const style=getComputedStyle(group);
+        if (style.display==='none' || style.visibility==='hidden') continue;
+        // Crack moved its native model selector into the composer. Other extensions may hide the selector itself.
+        const modelButton=findModelSelectorButtonInHeader(group,true);
+        if (modelButton) return {header:group,modelButton};
+      }
+    }
+    return null;
+  }
+
+function mountManagerNextToModelSelector(fab, composerTarget = null) {
+    let header = findStableCrackHeaderActionRow();
+    let modelButton = isElementVisible(header) ? findModelSelectorButtonInHeader(header) : null;
+    let placement = 'stable-header-before-model';
+    if (!modelButton) {
+      if (!composerTarget) return false;
+      ({header,modelButton}=composerTarget);
+      placement = 'composer-before-model';
+    }
     const before = directChildInsideHost(modelButton, header);
     if (!before) return false;
 
@@ -24147,10 +24379,10 @@ function mountManagerNextToModelSelector(fab) {
     for (const prop of ['left','right','top','bottom','position','margin']) fab.style.removeProperty(prop);
     fab.style.setProperty('margin-right', '8px', 'important');
 
-    // 요약 메모리 편집기(📜)와 같은 고정 상단 행에만 삽입합니다.
+    // 기존 상단 또는 새 입력창의 모델 그룹 안에서만 삽입합니다.
     // 모델 선택 컴포넌트의 최상위 자식 바로 앞에 넣으므로 모델명/내부 래퍼가 바뀌어도 위치가 유지됩니다.
     if (fab.parentElement !== header || fab.nextSibling !== before) header.insertBefore(fab, before);
-    fab.dataset.rpcmPlacement = 'stable-header-before-model';
+    fab.dataset.rpcmPlacement = placement;
     managerInlineMounted = true;
     managerFallbackLocked = false;
     return true;
@@ -24204,6 +24436,7 @@ function positionManagerSafeFallback(fab) {
     fab.classList.remove('rpcm-compact-fallback');
     fab.style.removeProperty('left');
     fab.style.removeProperty('top');
+    fab.style.setProperty('position', 'fixed', 'important');
     fab.style.setProperty('right', '18px', 'important');
     fab.style.setProperty('top', '112px', 'important');
     fab.style.removeProperty('bottom');
@@ -24368,8 +24601,9 @@ function ensureManagerButton() {
     const fab = state.fab || createManagerButton();
     const mobileLayout = isMobileManagerLayout();
     fab.classList.toggle('rpcm-mobile-fab', mobileLayout);
+    const composerTarget=findManagerComposerTarget();
 
-    if (mobileLayout && !findModelSelectorButtonInHeader(findStableCrackHeaderActionRow())) {
+    if (mobileLayout && !composerTarget && !findModelSelectorButtonInHeader(findStableCrackHeaderActionRow())) {
       hideManagerMobileHost();
       if (fab.isConnected) { fab.rpcmCancelHold?.(); fab.remove(); }
       state.fab = fab;
@@ -24380,9 +24614,9 @@ function ensureManagerButton() {
 
     removeMobileSettingsMenuEntry();
 
-    // 데스크톱은 모델 선택 버튼(예: "프로챗 1.0") 바로 왼쪽 한 자리만 사용합니다.
+    // 모델 선택 버튼의 그룹을 사용하며 새 UI의 입력창 조작부도 지원합니다.
     // 검색창/메뉴를 위치 기준으로 따라다니지 않으므로 Manager가 화면 여기저기로 이동하지 않습니다.
-    if (mountManagerNextToModelSelector(fab)) {
+    if (mountManagerNextToModelSelector(fab,composerTarget)) {
       state.fab = fab;
       updateFab();
       return true;
@@ -26335,7 +26569,7 @@ function manualPacketViewTools(backdrop,value,ranges) {
     let prev,next,position;if(ranges.length>1){prev=document.createElement('button');prev.type='button';prev.dataset.packetPrev='';prev.textContent='이전 화면';next=document.createElement('button');next.type='button';next.dataset.packetNext='';next.textContent='다음 화면';position=document.createElement('span');position.dataset.packetPage='';position.setAttribute('role','status');prev.onclick=()=>{if(page>0){page--;render();}};next.onclick=()=>{if(page<ranges.length-1){page++;render();}};actions.append(prev,position,next);}
     const fullFile=()=>normal?manualBatchFile(context.task,{...context.draft,packet:value}):{name:'Wish_'+(context?.task||'작업자료')+'_'+(context?.jobId||'원문')+'.txt',text:'\uFEFF'+value};
     const download=document.createElement('button');download.type='button';download.dataset.packetDownload='';download.textContent='전체 TXT 다운로드';download.onclick=()=>{try{const file=fullFile();downloadText(file.text,file.name,'text/plain;charset=utf-8');ui.status(status,'전체 작업자료 TXT를 다운로드했습니다.','success');}catch(error){ui.status(status,error.message,'error');}};actions.append(download);
-    if(normal&&value.length+1>WISH_PACKET_PART_LIMIT){const zip=document.createElement('button');zip.type='button';zip.dataset.packetZip='';zip.textContent='분할 TXT 다운로드 (ZIP)';zip.onclick=async()=>{zip.disabled=true;try{await wishBatchDownload(wishBatchFile(context.task,{...context.draft,packet:value}),message=>ui.status(status,message));ui.status(status,'같은 작업자료의 모든 TXT 조각을 함께 첨부해 주세요. 전체 원문 검수 후 결과 한 개를 받습니다.','success');}catch(error){ui.status(status,error.message,'error');}finally{zip.disabled=false;}};actions.prepend(zip);}
+    if(normal&&value.length+1>WISH_PACKET_PART_LIMIT){const zip=document.createElement('button');zip.type='button';zip.dataset.packetZip='';zip.textContent='분할 TXT 다운로드 (ZIP)';zip.onclick=async()=>{zip.disabled=true;try{await wishBatchDownload(wishBatchFile(context.task,{...context.draft,packet:value},await longTermHash(value)),message=>ui.status(status,message));ui.status(status,'같은 작업자료의 모든 TXT 조각을 함께 첨부해 주세요. 전체 원문 검수 후 결과 한 개를 받습니다.','success');}catch(error){ui.status(status,error.message,'error');}finally{zip.disabled=false;}};actions.prepend(zip);}
     host.append(copy,actions,status);backdrop.querySelector('textarea').before(host);render();
   }
 
@@ -26694,11 +26928,30 @@ function wishLongTermFinishPacket(room,draft,appliedAt,ids){
  delete meta.drafts.externalPackets[packet.kind];if(meta.drafts.externalActiveKind===packet.kind)longTermRuntime.externalText='';
 }
 
+
+function wishBatchZipRows(files){
+ return files.flatMap(file=>file.kind==='zip'?file.rows:[{name:file.name,text:file.text}]);
+}
+
+function wishAreaBackupPayload(room,areas){
+ if(!Array.isArray(areas)||!areas.length||areas.some(area=>!Object.hasOwn(MANUAL_UPDATE_TASKS,area)))throw Error('백업에 표시할 영역을 선택해 주세요.');
+ return {_rpContextManagerBackup:true,version:APP.version,exportedAt:nowIso(),backupMode:'area-backup',areas:[...new Set(areas)],rooms:[structuredClone(room)],characterLibraries:[],note:'선택 영역을 표시한 현재 방 전체 백업입니다. 기존 백업 불러오기는 방 전체를 복원합니다.'};
+}
+
+function openWishAreaBackupDialog(room){
+ document.getElementById('rpcm-update-dialog-backdrop')?.remove();
+ const box=document.createElement('div');box.id='rpcm-update-dialog-backdrop';box.dataset.areaBackupDialog='';
+ box.innerHTML=`<section class="rpcm-update-dialog" role="dialog" aria-modal="true" aria-label="영역별 백업"><header><div><h2>영역별 백업</h2><p>선택 영역을 표시한 현재 방 전체 백업을 받습니다. 백업 불러오기는 방 전체를 복원합니다.</p></div><button type="button" class="rpcm-update-dialog-close" data-close aria-label="닫기">×</button></header><div class="rpcm-update-result-body">${Object.entries(MANUAL_UPDATE_TASKS).map(([task,info])=>`<label style="display:block"><input type="checkbox" value="${task}" data-area-backup-choice> ${esc(info.title)}</label>`).join('')}<p data-status role="status">저장된 기억과 설정을 유지합니다.</p></div><footer><button type="button" class="rpcm-btn secondary" data-close>닫기</button><button type="button" class="rpcm-btn primary" data-download>선택 영역 표시 백업 받기</button></footer></section>`;
+ const close=()=>box.remove();box.querySelectorAll('[data-close]').forEach(button=>button.onclick=close);box.onkeydown=event=>{if(event.key==='Escape'){event.preventDefault();close();}};box.onclick=event=>{if(event.target===box)close();};
+ box.querySelector('[data-download]').onclick=()=>{try{if(state.currentRoom!==room)throw Error('현재 방이 바뀌었습니다. 다시 열어 주세요.');const areas=[...box.querySelectorAll('[data-area-backup-choice]:checked')].map(input=>input.value),payload=wishAreaBackupPayload(room,areas);downloadText(JSON.stringify(payload,null,2),'Wish_영역별_백업_'+new Date().toISOString().replace(/[:.]/g,'-')+'.json','application/json');box.querySelector('[data-status]').textContent='백업 다운로드를 요청했습니다. 현재 방의 데이터는 유지됩니다.';}catch(error){box.querySelector('[data-status]').textContent=error.message;}};
+ document.body.append(box);box.querySelector('[data-area-backup-choice]')?.focus();
+}
+
 const MANUAL_BATCH_CSS="#rpcm-manual-batch-backdrop{position:fixed;inset:0;z-index:2147483646;display:grid;place-items:center;padding:16px;box-sizing:border-box;background:#0008;color:var(--wish-fg);font:14px/1.6 -apple-system,BlinkMacSystemFont,\"Apple SD Gothic Neo\",sans-serif}\n#rpcm-manual-batch-backdrop *{box-sizing:border-box}\n#rpcm-manual-batch-backdrop>section{width:min(920px,100%);max-height:92dvh;display:flex;flex-direction:column;border-radius:20px;overflow:hidden;background:var(--wish-card);box-shadow:var(--wish-lift)}\n#rpcm-manual-batch-backdrop header,#rpcm-manual-batch-backdrop footer{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:20px 24px;border-bottom:1px solid var(--wish-line)}\n#rpcm-manual-batch-backdrop footer{border-bottom:0;border-top:1px solid var(--wish-line)}\n#rpcm-manual-batch-backdrop h2{font-size:20px;font-weight:600;margin:0}\n#rpcm-manual-batch-backdrop h3{font-size:16px;font-weight:600;margin:0 0 8px}\n#rpcm-manual-batch-backdrop p{margin:6px 0;font-size:13px;line-height:1.7;overflow-wrap:anywhere}\n#rpcm-manual-batch-backdrop header p{color:var(--wish-muted)}\n#rpcm-manual-batch-backdrop .rpcm-batch-body{overflow:auto;min-height:0;padding:20px 24px}\n#rpcm-manual-batch-backdrop button{border:1px solid var(--wish-line);border-radius:11px;background:var(--wish-hi);color:var(--wish-fg);padding:9px 14px;cursor:pointer;font:inherit;font-size:13px;white-space:normal}\n#rpcm-manual-batch-backdrop button.primary{border-color:var(--wish-accent);background:var(--wish-accent);color:var(--wish-accent-ink);font-weight:500}\n#rpcm-manual-batch-backdrop button:disabled{opacity:.45;cursor:default}\n#rpcm-manual-batch-backdrop input,#rpcm-manual-batch-backdrop select{font:inherit;font-size:13px;border:1px solid var(--wish-line);border-radius:10px;background:var(--wish-card);color:var(--wish-fg);padding:9px 12px;max-width:100%;min-width:0}\n#rpcm-manual-batch-backdrop input[type=checkbox]{accent-color:var(--wish-accent);width:17px;height:17px;padding:0;flex-shrink:0;margin:0;cursor:pointer}\n#rpcm-manual-batch-backdrop label{display:flex;align-items:center;gap:10px;font-size:13px;min-width:0}\n#rpcm-manual-batch-backdrop .rpcm-batch-settings{display:flex;gap:16px;justify-content:space-between;align-items:center;flex-wrap:wrap;margin-bottom:14px}\n#rpcm-manual-batch-backdrop .rpcm-batch-settings>label{flex:1;flex-wrap:wrap}\n#rpcm-manual-batch-backdrop .rpcm-batch-settings select{min-width:170px}\n#rpcm-manual-batch-backdrop [data-batch-status]{padding:10px 0;color:var(--wish-fg-2)}\n#rpcm-manual-batch-backdrop [data-batch-rows]{display:grid;gap:12px}\n#rpcm-manual-batch-backdrop [data-batch-task]{padding:16px 18px;border:1px solid var(--wish-line);border-radius:14px;background:var(--wish-card)}\n#rpcm-manual-batch-backdrop .rpcm-batch-row-top{display:flex;justify-content:space-between;align-items:center;gap:12px}\n#rpcm-manual-batch-backdrop .rpcm-batch-row-top strong{font-weight:600;font-size:14px}\n#rpcm-manual-batch-backdrop [data-batch-range]{color:var(--wish-accent-strong);font-size:12px;margin:8px 0 0}\n#rpcm-manual-batch-backdrop .rpcm-batch-existing{color:var(--wish-muted);font-size:12px;margin-top:8px}\n#rpcm-manual-batch-backdrop .rpcm-batch-custom{display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding-top:14px;margin-top:12px;border-top:1px solid var(--wish-line)}\n#rpcm-manual-batch-backdrop .rpcm-batch-custom input{width:110px}\n#rpcm-manual-batch-backdrop [data-batch-groups]:not(:empty){margin-top:18px;padding:16px 18px;border-radius:12px;background:var(--wish-hi)}\n#rpcm-manual-batch-backdrop [data-batch-groups]>strong{font-size:13px;font-weight:500}\n#rpcm-manual-batch-backdrop [data-batch-groups] p{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:10px 0}\n#rpcm-manual-batch-backdrop [data-batch-groups] span{font-size:12px;font-weight:500;color:var(--wish-accent-strong);min-width:80px}\n#rpcm-manual-batch-backdrop [data-batch-groups] small{font-size:11px;color:var(--wish-muted);margin-left:auto}\n#rpcm-manual-batch-backdrop footer>p{font-size:12px;margin:0;color:var(--wish-fg-2)}\n#rpcm-manual-batch-backdrop footer>div{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}\n#rpcm-manual-batch-backdrop [data-batch-files]{margin-top:20px;padding:18px;border-radius:14px;border:1px solid var(--wish-accent-line)}\n#rpcm-manual-batch-backdrop [data-batch-files] p{color:var(--wish-muted);font-size:12px}\n#rpcm-manual-batch-backdrop [data-batch-files]>div{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 0;border-bottom:1px solid var(--wish-line)}\n#rpcm-manual-batch-backdrop [data-batch-files] small{display:block;font-size:11px;color:var(--wish-muted);margin-top:4px}\n#rpcm-manual-batch-backdrop [data-batch-zip]{margin-top:14px}\n#rpcm-manual-batch-backdrop [hidden]{display:none!important}\n#rpcm-manual-batch-backdrop :is(button,select,input):focus-visible{outline:2px solid var(--wish-accent-line);outline-offset:2px}\n@media(max-width:600px){#rpcm-manual-batch-backdrop{padding:8px}#rpcm-manual-batch-backdrop>section{max-height:95dvh}#rpcm-manual-batch-backdrop header,#rpcm-manual-batch-backdrop footer{padding:14px}#rpcm-manual-batch-backdrop h2{font-size:18px}#rpcm-manual-batch-backdrop .rpcm-batch-body{padding:14px}#rpcm-manual-batch-backdrop footer{display:block}#rpcm-manual-batch-backdrop footer>p{margin-bottom:12px}#rpcm-manual-batch-backdrop footer>div{justify-content:space-between}#rpcm-manual-batch-backdrop .rpcm-batch-row-top{align-items:flex-start;flex-wrap:wrap}#rpcm-manual-batch-backdrop .rpcm-batch-custom{gap:8px}#rpcm-manual-batch-backdrop .rpcm-batch-custom input{width:85px}#rpcm-manual-batch-backdrop .rpcm-batch-settings select{width:100%}}\n";
 
 const WISH_EXTERNAL_FILE_LIMIT=Number.MAX_SAFE_INTEGER,WISH_PACKET_PART_LIMIT=130000;
 
-function wishBatchFile(task,draft){
+function wishBatchFile(task,draft,packetHash){
  const single=manualBatchFile(task,draft);
  if(single.text.length<=WISH_PACKET_PART_LIMIT)return {...single,kind:'txt',parts:1};
  const raw=draft.packet,fragments=[];let start=0;
@@ -26708,7 +26961,8 @@ function wishBatchFile(task,draft){
   if(end<raw.length){const newline=raw.lastIndexOf('\n',end-1);if(newline>start&&end-newline<1024)end=newline+1;const c=raw.charCodeAt(end-1),next=raw.charCodeAt(end);if(c>=0xD800&&c<=0xDBFF&&next>=0xDC00&&next<=0xDFFF)end--;}
   fragments.push({start,end,text:raw.slice(start,end)});start=end;
  }
- const count=fragments.length,width=String(count).length,stem=single.name.slice(0,-4),hash=draft.stage3.wire.packet_sha256;
+ const count=fragments.length,width=String(count).length,stem=single.name.slice(0,-4),hash=packetHash;
+ if(!/^[a-f0-9]{64}$/.test(String(hash||'')))throw Error('작업자료 해시를 확인할 수 없습니다.');
  const rows=fragments.map((part,i)=>{
   const notice=`[WISH_FILE_PART]\nTASK=${task}\nCHAT_TITLE=${draft.bundleTitle||wishExternalChatTitle(task)}\nJOB_ID=${draft.jobId}\nPART=${i+1}/${count}\nPACKET_SHA256=${hash}\nPACKET_UTF16_LENGTH=${raw.length}\nFRAGMENT_UTF16_START=${part.start}\nFRAGMENT_UTF16_END=${part.end}\n[/WISH_FILE_PART]\n이 파일은 한 작업자료의 ${i+1}/${count}번째 운반 조각입니다. ZIP을 풀어 모든 TXT를 번호 순서대로 함께 첨부하세요. 각 파일의 [PACKET_FRAGMENT] 다음부터 파일 끝까지를 추가·삭제 없이 이어 붙이면 원래 작업자료 전체입니다. 구간별 독립 갱신이나 중간 결과 저장을 하지 마세요. 모든 조각의 지침·기존값·참고자료·RP·출력 계약을 읽은 뒤 원래 계약에 맞는 최종 JSON 파일 한 개를 만드세요. 일부 파일을 읽지 못하거나 전체가 모델 한도를 넘으면 정상 완료/변경 없음으로 위장하지 말고 알려주세요. 이 분할은 외부 AI의 컨텍스트 한도를 늘리는 기능이 아닙니다. 채팅 제목은 CHAT_TITLE을 사용하세요.\n[PACKET_FRAGMENT]\n`;
   const text=notice+part.text;if(text.length+1>WISH_PACKET_PART_LIMIT)throw Error('외부 파일 조각 크기 검증 실패');
@@ -26787,7 +27041,7 @@ async function createManualBatchPackets(room,turns,choices,packetMode='standalon
       for(const {task}of prepared){const job=room.manualPendingJobs?.[task];if(job?.id===next[task].id)manualUpdateRuntime.packets.set(manualPacketKey(room,task),job.draft);}
       const stored=await readManualStoredRoom(room);
       for(const {task,draft}of prepared)if(stored?.manualPendingJobs?.[task]?.id!==draft.jobId||stored.manualPendingJobs[task].draft?.packet!==draft.packet)throw new Error('작업자료 저장 확인에 실패했습니다. 개별 카드의 대기 작업을 확인한 뒤 다시 생성해 주세요.');
-      return {files:prepared.map(({task,draft})=>manualBatchFile(task,draft)),groups:plan.groups};
+      return {files:await Promise.all(prepared.map(async({task,draft})=>wishBatchFile(task,draft,await longTermHash(draft.packet)))),groups:plan.groups};
     }finally{manualBatchRuntime.busy=false;manualUpdateRuntime.commits.delete(key);}
   }
 
@@ -26823,10 +27077,11 @@ function openManualBatchDialog(room){
     generate.onclick=async()=>{
       if(busy)return;const choices=selected(),format=box.querySelector('[data-batch-format]').value;generating=true;lock(true);
       try{const result=await createManualBatchPackets(room,turns,choices,format,message=>status.textContent=message);files=result.files;if(!box.isConnected)return;
-        const output=box.querySelector('[data-batch-files]');output.hidden=false;output.innerHTML=`<h3>카테고리별 작업자료 준비 완료</h3><p>큰 자료는 ZIP을 풀고 번호 순서대로 모든 TXT를 함께 외부 AI에 전달하세요. 결과 JSON은 각 카테고리에서 가져옵니다.</p>${files.map((file,i)=>`<div><span>${esc(MANUAL_UPDATE_TASKS[file.task].title)}<small>${file.draft.startIndex+1}~${file.draft.endIndex+1}턴 · ${file.draft.turnCount}턴 · ${file.kind==='zip'?file.parts+'개 TXT · 약 13만 자 분할 ZIP':'TXT 1개'} · ${format==='standalone'?'지침 포함':'지침 제외'}</small></span><button type="button" data-batch-download="${i}">${file.kind==='zip'?'ZIP':'TXT'} 받기</button></div>`).join('')}`;
+        const output=box.querySelector('[data-batch-files]');output.hidden=false;output.innerHTML=`<h3>카테고리별 작업자료 준비 완료</h3><p>큰 자료는 ZIP을 풀고 번호 순서대로 모든 TXT를 함께 외부 AI에 전달하세요. 결과 JSON은 각 카테고리에서 가져옵니다.</p>${files.map((file,i)=>`<div><span>${esc(MANUAL_UPDATE_TASKS[file.task].title)}<small>${file.draft.startIndex+1}~${file.draft.endIndex+1}턴 · ${file.draft.turnCount}턴 · ${file.kind==='zip'?file.parts+'개 TXT · 약 13만 자 분할 ZIP':'TXT 1개'} · ${format==='standalone'?'지침 포함':'지침 제외'}</small></span><button type="button" data-batch-download="${i}">${file.kind==='zip'?'ZIP':'TXT'} 받기</button></div>`).join('')}<button type="button" data-batch-zip>선택 작업자료 전체 ZIP 받기</button>`;
         output.querySelectorAll('[data-batch-download]').forEach(b=>b.onclick=async()=>{b.disabled=true;try{await wishBatchDownload(files[Number(b.dataset.batchDownload)],message=>status.textContent=message);status.textContent='다운로드 요청 완료 · 브라우저 다운로드 목록을 확인하세요.';}catch(e){status.textContent='다운로드 실패: '+e.message;}finally{b.disabled=false;}});
+        output.querySelector('[data-batch-zip]').onclick=()=>{try{manualSplitDownloadZip(wishBatchZipRows(files),'Wish_작업자료_'+Date.now()+'.zip');status.textContent='전체 ZIP 다운로드를 요청했습니다.';}catch(error){status.textContent='다운로드 실패: '+error.message;}};
         status.textContent=`${files.length}개 작업자료 저장 완료 · 각 카테고리에서 결과 가져오기가 활성화됩니다.`;
-        for(const file of files){await wishBatchDownload(file,message=>status.textContent=message);await new Promise(resolve=>setTimeout(resolve,0));}refreshManualUpdateCards(state.modal,room);output.scrollIntoView({block:'nearest'});
+        manualSplitDownloadZip(wishBatchZipRows(files),'Wish_작업자료_'+Date.now()+'.zip');refreshManualUpdateCards(state.modal,room);output.scrollIntoView({block:'nearest'});
       }catch(error){status.textContent=`일괄 생성 중단: ${error.message}${error.code==='RPCM_FULL_SPLIT_REQUIRED'?' 해당 카테고리의 범위를 줄이거나 개별 카드에서 자동 분할을 진행하세요.':''}`;}
       finally{generating=false;lock(false);if(files.length){host.querySelectorAll('input,select').forEach(n=>n.disabled=true);box.querySelector('[data-batch-format]').disabled=true;box.querySelector('[data-reload]').disabled=true;generate.hidden=true;}}
     };
@@ -32269,7 +32524,7 @@ function assembleWorkSpace(overlay) {
     if (tools) {
       const sections = [
         ['주입 확인', '현재 주입 후보와 원문을 확인합니다.', ['rpcm-preview-btn', 'rpcm-save']],
-        ['자료 이동', '현재 방 복사본을 만들거나 전체 데이터를 백업하고 복원합니다.', ['rpcm-room-transfer-backup', 'rpcm-backup', 'rpcm-import', 'rpcm-storage-recovery']],
+        ['자료 이동', '현재 방 복사본을 만들거나 전체 데이터를 백업하고 복원합니다.', ['rpcm-room-transfer-backup', 'rpcm-backup', 'rpcm-area-backup', 'rpcm-import', 'rpcm-storage-recovery']],
         ['초기화', '현재 방의 RP 매니저 데이터만 초기화합니다.', ['rpcm-reset']],
       ];
       for (const [title, description, buttonIds] of sections) {
@@ -34427,7 +34682,7 @@ async function phaseOneWriteSetup(room,frame,block='',hash='',localSignature=JSO
       const freshAgain=await phaseOneFresh(room);phaseOneLease(room,path);if(freshAgain.raw!==latest.raw||freshAgain.messageId!==latest.messageId)throw new Error('새 방 상태가 바뀌었습니다.');
       room.sessionSetup={messageId:latest.messageId,appliedHash:hash,appliedAt:Date.now(),verified:false,expectedTextHash:simpleHash(next),expectedText:next,status:'서버 확인 대기'};await saveRoom(room,'session-setup-staging');phaseOneLease(room,path);
       const beforePatch=await phaseOneFresh(room);if(setupBasis()!==basis||beforePatch.raw!==latest.raw||beforePatch.messageId!==latest.messageId)throw new Error('저장 준비 중 새 방 상태가 바뀌어 적용하지 않았습니다.');
-      if(latest.raw!==next)await patchMessage(apiChatIdOf(room),latest.messageId,next);
+      if(latest.raw!==next)await patchMessage(apiChatIdOf(room),latest.messageId,next,room);
       const saved=await fetchMessage(apiChatIdOf(room),latest.messageId);phaseOneLease(room,path);if(!saved||String(messageIdOf(saved))!==latest.messageId||String(messageTextOf(saved))!==next)throw new Error('서버 저장 확인 실패 · 다시 조회하여 시작 메시지를 확인해 주세요.');
       if(block){room.sessionSetup.verified=true;delete room.sessionSetup.expectedText;room.sessionSetup.status='서버 저장 확인됨';room.messageInjectionLedger ||= [];room.messageInjectionLedger=[{messageId:latest.messageId,kind:'session',hash,block,chars:block.length,verifiedAt:Date.now()},...room.messageInjectionLedger.filter(e=>!(e.messageId===latest.messageId&&e.kind==='session'))].slice(0,100);}
       else room.sessionSetup=null;
@@ -37137,7 +37392,7 @@ function renderModal() {
             </nav>
             <div class="rpcm-overview" id="rpcm-overview" aria-label="현재 방 요약">
               <div class="rpcm-overview-card" data-overview-metric="state"><small>주입 상태</small><strong>${pending ? '주입 중' : '대기 중'}</strong><span>${pending ? '현재 ' + stats.count + '개 항목 유지 중' : '항목 ' + stats.count + '개 준비됨'}</span></div>
-              <div class="rpcm-overview-card" data-overview-metric="capacity"><small>용량 · 45,000자 / UTF-8 ${formatCount(APP.safeCarrierPayloadBytes)}B</small><strong>${formatCount(capacity.total)}자</strong><span title="${esc(carrierCapacityDetailText(room, capacity))}">${rpcmHomeCapacityHtml(room,capacity,st)}</span><div class="rpcm-overview-progress" role="progressbar" aria-label="carrier 글자 용량" aria-valuenow="${Math.max(0, Math.min(45000, capacity.total))}" aria-valuemin="0" aria-valuemax="45000"><i style="width:${Math.max(0, Math.min(100, capacity.total / 45000 * 100))}%"></i></div></div>
+              <div class="rpcm-overview-card" data-overview-metric="capacity"><small>용량 · ${formatCount(APP.defaultMaxChars)}자 / 전송 ${formatCount(APP.safeCarrierPayloadBytes)}B</small><strong>${formatCount(capacity.total)}자</strong><span title="${esc(carrierCapacityDetailText(room, capacity))}">${rpcmHomeCapacityHtml(room,capacity,st)}</span><div class="rpcm-overview-progress" role="progressbar" aria-label="carrier 글자 용량" aria-valuenow="${Math.max(0, Math.min(APP.defaultMaxChars, capacity.total))}" aria-valuemin="0" aria-valuemax="${APP.defaultMaxChars}"><i style="width:${Math.max(0, Math.min(100, capacity.total / APP.defaultMaxChars * 100))}%"></i></div></div>
               <div class="rpcm-overview-card" data-lore-omitted="${loreOmitted}"><small>확인할 일</small><strong>${duplicateItemGroups.length + duplicateGroups.length + (storyReviewDue ? 1 : 0) + knowledgeConflictCount + (loreOmitted ? 1 : 0) + maintenanceExtraImmediate.length}건</strong><span>${[duplicateItemGroups.length ? '중복 물품 ' + duplicateItemGroups.length : '', duplicateGroups.length ? '중복 로그 ' + duplicateGroups.length : '', storyReviewDue ? '타임라인 검토' : '', knowledgeConflictCount ? '인지 카드 충돌' : '', loreOmitted ? '자료집 용량 제외' : '', ...maintenanceExtraImmediate.map(entry => entry.title)].filter(Boolean).join(' · ') || '현재 표시할 검토 알림 없음'}</span>${duplicateItemGroups.length || duplicateGroups.length || storyReviewDue || knowledgeConflictCount || loreOmitted || maintenanceExtraImmediate.length ? `<div class="rpcm-overview-issues">${duplicateGroups.length ? `<button type="button" data-overview-issue="logs">중복 로그 ${duplicateGroups.length}건</button>` : ''}${duplicateItemGroups.length ? `<button type="button" data-overview-issue="items">중복 물품 ${duplicateItemGroups.length}건</button>` : ''}${storyReviewDue ? '<button type="button" data-overview-issue="timeline">타임라인 검토</button>' : ''}${knowledgeConflictCount ? `<button type="button" data-overview-issue="knowledge">인지 충돌 ${knowledgeConflictCount}건</button>` : ''}${loreOmitted ? `<button type="button" data-overview-issue="lore">자료집 용량 제외 ${loreOmitted}개</button>` : ''}${maintenanceExtraImmediate.map((entry, index) => `<button type="button" data-overview-maintenance="${index}">${esc(entry.title)}</button>`).join('')}</div>` : ''}<div class="rpcm-maintenance-actions"><em data-maintenance-count>정리 추천 ${maintenanceReport.updates.length + maintenanceReport.capacityItems.length}건</em><button type="button" class="rpcm-btn secondary" id="rpcm-maintenance-open">정리 점검</button></div></div>
             </div>
             <div class="rpcm-context-refresh-shortcut" role="group" aria-label="최신 RP 기준 주입 재검사"><span><b>↻ 최신 RP 기준 주입 재검사</b><small>최근 3회 USER↔AI 흐름을 다시 읽고 인물·물품·자료집·인물정보·날짜로그 선택을 최신화합니다.</small></span><button type="button" class="rpcm-btn secondary" id="rpcm-context-refresh">주입 내용 새로고침</button></div>
@@ -37146,7 +37401,7 @@ function renderModal() {
             ${renderManualUpdateCenterHtml(room)}
             <details class="rpcm-summary">
               <summary class="rpcm-summary-head"><span><strong class="rpcm-summary-label">구성별 사용량</strong><span class="rpcm-summary-count">${stats.count}개 항목</span></span><span class="rpcm-summary-side"><span class="rpcm-summary-status ${st.cls || 'ok'}" style="color:${st.color}">${st.label}</span><span class="rpcm-summary-chevron" aria-hidden="true">▾</span></span></summary>
-              <div class="rpcm-summary-detail"><input id="rpcm-maxchars" type="hidden" value="45000"><div class="rpcm-summary-capacity-detail">${capacity.known ? (pending ? '현재 carrier 총길이' : '예상 carrier 총길이') : (pending ? '현재 주입 중인 컨텍스트' : '다음 주입 컨텍스트')} · ${formatCount(capacity.total)} / 45,000자 · ${esc(carrierCapacityDetailText(room, capacity))}</div><div class="rpcm-usage-bar" aria-label="섹션별 주입 용량">${usage.bar}</div><div class="rpcm-breakdown">${usage.chips}</div></div>
+              <div class="rpcm-summary-detail"><input id="rpcm-maxchars" type="hidden" value="${APP.defaultMaxChars}"><div class="rpcm-summary-capacity-detail">${capacity.known ? (pending ? '현재 carrier 총길이' : '예상 carrier 총길이') : (pending ? '현재 주입 중인 컨텍스트' : '다음 주입 컨텍스트')} · ${formatCount(capacity.total)} / ${formatCount(APP.defaultMaxChars)}자 · ${esc(carrierCapacityDetailText(room, capacity))}</div><div class="rpcm-usage-bar" aria-label="섹션별 주입 용량">${usage.bar}</div><div class="rpcm-breakdown">${usage.chips}</div></div>
             </details>
             ${warnings.length ? `<div class="rpcm-warnings"><div>⚠ ${warnings.map(esc).join('<br>')}</div>${duplicateGroups.length ? `<button type="button" class="rpcm-warning-action" id="rpcm-resolve-duplicate-logs">${duplicateBranchHint ? '↩ 시간선 분기 확인' : '중복 날짜 바로 정리'}</button>` : ''}${duplicateItemGroups.length ? '<button type="button" class="rpcm-warning-action" id="rpcm-resolve-duplicate-items">중복 물품 선택 정리</button>' : ''}${hasLogDateIssues ? `<button type="button" class="rpcm-warning-action" id="rpcm-normalize-log-dates">날짜 / 연도 바로 수정</button>` : ''}</div>` : ''}
             ${(autoDisplayItems.length || logBlocksForIssues.length) ? `<div class="rpcm-auto-active"><div class="rpcm-auto-active-title"><span>현재 주입 항목 · 선정 이유</span>${logBlocksForIssues.length ? '<button type="button" class="rpcm-related-add" id="rpcm-related-add">+ 관련로그 추가</button>' : ''}</div>${autoDisplayItems.map(i => { const isLogItem = i.group === 'log-auto' || i.sourceSlotId === 'logSummary' || /-log$/.test(String(i.autoType || '')); const category = itemCategory(i); const evidence = relatedLogEvidence(i); const itemKey = pendingItemIdentity(i); return `<div class="rpcm-auto-active-row" data-pending-key="${esc(itemKey)}" data-source-key="${esc(String(i.sourceKey || '').replace(/^auto-log:/, ''))}" data-auto-type="${esc(i.autoType || '')}"><span class="rpcm-auto-badge tone-${categoryTone(category)}">${esc(category)}</span><div class="rpcm-auto-active-copy"><strong>${esc(i.title)}</strong><span class="rpcm-auto-reason">${esc(itemReason(i) || '자동 선택')}</span>${evidence ? `<span class="rpcm-auto-evidence">선정 근거 · ${esc(evidence)}</span>` : ''}</div><div class="rpcm-auto-active-meta"><span>${formatCount(String(i.content || '').length)}자 · ${esc(remainingLabelForItem(i))}</span>${isLogItem ? `<button type="button" class="rpcm-auto-inline-toggle" title="로그 내용 펼치기" aria-label="로그 내용 펼치기">▾</button>${i.autoType === 'related-log' ? '<button type="button" class="rpcm-auto-reroll" title="내용을 확인하고 다른 로그로 교체">다른 로그</button>' : ''}` : ''}${isLogItem || !!room.pending ? '<button type="button" class="rpcm-auto-remove" title="현재 주입에서 제외">제외</button>' : ''}</div>${isLogItem ? `<pre class="rpcm-auto-inline-content" hidden>${esc(String(i.content || '').trim())}</pre>` : ''}</div>`; }).join('')}</div>` : ''}
@@ -37203,7 +37458,7 @@ function renderModal() {
               </section>
             </section>
             <div class="rpcm-section" id="rpcm-section-basic">
-              <div class="rpcm-section-head"><div><div class="rpcm-section-title">🧠 기억 관리</div><details class="rpcm-section-details"><summary>현재상태 · 인지 카드 · 날짜로그를 관리합니다. <b>자세히</b></summary><div class="rpcm-section-desc">현재상태는 다음 업데이트 전까지 유효한 지속 상태로 통째 유지합니다. ${hasMultipleLogTimelines ? '로그요약 원문은 시간선별 날짜 블록 저장소로 보관하고, 현재 회차와 이전 모든 회차에서' : '로그요약 원문은 날짜 블록 저장소로 보관하고,'} 직접 주입·최근·관련·항상 주입 날짜 블록을 45,000자·UTF-8 ${formatCount(APP.safeCarrierPayloadBytes)}바이트 안전선 안에서 골라 주입합니다.</div></details></div></div>
+              <div class="rpcm-section-head"><div><div class="rpcm-section-title">🧠 기억 관리</div><details class="rpcm-section-details"><summary>현재상태 · 인지 카드 · 날짜로그를 관리합니다. <b>자세히</b></summary><div class="rpcm-section-desc">현재상태는 다음 업데이트 전까지 유효한 지속 상태로 통째 유지합니다. ${hasMultipleLogTimelines ? '로그요약 원문은 시간선별 날짜 블록 저장소로 보관하고, 현재 회차와 이전 모든 회차에서' : '로그요약 원문은 날짜 블록 저장소로 보관하고,'} 직접 주입·최근·관련·항상 주입 날짜 블록을 ${formatCount(APP.defaultMaxChars)}자·전송 ${formatCount(APP.safeCarrierPayloadBytes)}바이트 안전선 안에서 골라 주입합니다.</div></details></div></div>
               <div class="rpcm-memory-tabs" role="tablist" aria-label="기억 관리 항목">
                 <button type="button" role="tab" data-memory-pane="state" aria-controls="rpcm-memory-state">현재상태 <small>${formatCount(String(room.slots.find(s => s.id === 'currentState')?.content || '').length)}자</small></button>
                 <button type="button" role="tab" data-memory-pane="logs" aria-controls="rpcm-memory-logs">날짜로그 <small>${logBlocksForIssues.length}개</small></button>
@@ -37258,6 +37513,7 @@ function renderModal() {
               <button class="rpcm-mini" id="rpcm-save">현재 편집 저장</button>
               <button class="rpcm-mini" id="rpcm-room-transfer-backup">현재 방 복사용 JSON</button>
               <button class="rpcm-mini" id="rpcm-backup">전체 백업 JSON</button>
+              <button class="rpcm-mini" id="rpcm-area-backup">영역별 백업</button>
               <button class="rpcm-mini" id="rpcm-storage-recovery">저장소 점검·복구</button>
               <button class="rpcm-mini" id="rpcm-import">백업 불러오기</button>
               <button class="rpcm-mini" id="rpcm-reset">현재 RP 데이터 초기화</button>
@@ -37731,6 +37987,7 @@ function renderModal() {
       if (readView) {
         paintReadView();
         readView.addEventListener('click', async event => {
+          if(event.target.closest('[data-read-all-dates]')){event.preventDefault();event.stopPropagation();overlay.querySelector('#rpcm-log-manage')?.click();return;}
           const copyButton = event.target.closest('[data-read-copy]');
           if (!copyButton) return;
           event.preventDefault(); event.stopPropagation();
@@ -38383,6 +38640,17 @@ function renderModal() {
 
     const quickbar = overlay.querySelector('.rpcm-quickbar');
     const headerMenu = overlay.querySelector('.rpcm-header-menu');
+    overlay._rpcmPositionHeaderMenu=()=>{
+      const list=headerMenu?.querySelector('.rpcm-header-menu-list');
+      if(!list)return;
+      for(const key of ['left','right','max-height'])list.style.removeProperty(key);
+      if(!headerMenu.open || !isMobileManagerLayout())return;
+      const anchor=headerMenu.getBoundingClientRect(),bounds=overlay.querySelector('#rpcm-modal').getBoundingClientRect(),width=list.getBoundingClientRect().width,maxHeight=parseFloat(getComputedStyle(list).maxHeight)||Infinity;
+      const left=Math.max(bounds.left+10,Math.min(anchor.right-width,Math.min(innerWidth,bounds.right)-width-10));
+      list.style.left=`${left-anchor.left}px`;list.style.right='auto';
+      list.style.maxHeight=`${Math.min(maxHeight,Math.max(0,Math.min(window.visualViewport?.height||innerHeight,bounds.bottom)-anchor.bottom-18))}px`;
+    };
+    headerMenu?.addEventListener('toggle',overlay._rpcmPositionHeaderMenu);
     const headerSearchToggle = overlay.querySelector('#rpcm-header-search-toggle');
     const headerSearchPop = overlay.querySelector('#rpcm-header-search-pop');
     const setHeaderSearchOpen = open => {
@@ -39510,6 +39778,9 @@ function renderModal() {
     };
 
     overlay.querySelector('#rpcm-storage-recovery')?.addEventListener('click',openStorageRecovery);
+    overlay.querySelector('#rpcm-area-backup').onclick = async () => {
+      try{readModalIntoRoom();await saveRoom(room);openWishAreaBackupDialog(room);}catch(error){notify('영역별 백업 실패: '+error.message,'error',6000);}
+    };
     overlay.querySelector('#rpcm-backup').onclick = async () => {
       readModalIntoRoom();
       await saveRoom(room);
@@ -39609,7 +39880,7 @@ function renderModal() {
       const overviewCapacity = overlay.querySelector('.rpcm-overview-card[data-overview-metric=capacity]>span');
       if (overviewCapacity) {overviewCapacity.innerHTML=rpcmHomeCapacityHtml(room,capacity,status);overviewCapacity.title=carrierCapacityDetailText(room,capacity);}
       const capacityDetail = overlay.querySelector('.rpcm-summary-capacity-detail');
-      if (capacityDetail) capacityDetail.textContent = `${capacity.known ? (room.pending ? '현재 carrier 총길이' : '예상 carrier 총길이') : (room.pending ? '현재 주입 중인 컨텍스트' : '다음 주입 컨텍스트')} · ${formatCount(capacity.total)} / 45,000자 · ${carrierCapacityDetailText(room, capacity)}`;
+      if (capacityDetail) capacityDetail.textContent = `${capacity.known ? (room.pending ? '현재 carrier 총길이' : '예상 carrier 총길이') : (room.pending ? '현재 주입 중인 컨텍스트' : '다음 주입 컨텍스트')} · ${formatCount(capacity.total)} / ${formatCount(APP.defaultMaxChars)}자 · ${carrierCapacityDetailText(room, capacity)}`;
       const summaryCount = overlay.querySelector('.rpcm-summary-count');
       if (summaryCount) summaryCount.textContent = `${s.count}개 항목`;
       const usage = renderUsageSummary(items, s.block, max, capacity.known ? capacity.original : 0, capacity.known ? capacity.separator : 0);
@@ -39670,7 +39941,7 @@ async function ensureCurrentRoom(apiChatId, force = false) {
     ensureManagerButton(); updateFab();
     const room = await getRoom(roomKey, apiChatId);
     room.apiChatId = apiChatId;
-    room.maxChars = Number(room.maxChars)>0?Number(room.maxChars):APP.defaultMaxChars;
+    room.maxChars = Number(room.maxChars)===45000||!(Number(room.maxChars)>0)?APP.defaultMaxChars:Number(room.maxChars);
     const characterId = getCharacterIdFromPath();
     if (characterId && room.characterScopeId !== characterId) room.characterScopeId = characterId;
     const meta = await fetchRoomMeta(apiChatId);
@@ -39697,7 +39968,7 @@ async function routeTick() {
     }
     // 정상적으로 연결된 버튼은 다시 찾지 않습니다. React가 실제로 버튼을 제거했거나
     // 첫 렌더에서 아직 헤더가 없었던 경우에만 위치 탐색을 다시 수행합니다.
-    if (state.currentChatId && isMobileManagerLayout() && !findModelSelectorButtonInHeader(findStableCrackHeaderActionRow())) {
+    if (state.currentChatId && !state.fab?.isConnected && isMobileManagerLayout() && !findModelSelectorButtonInHeader(findStableCrackHeaderActionRow()) && !findManagerComposerTarget()) {
       updateMobileSettingsMenuEntry();
     } else if (state.currentChatId && !state.fab?.isConnected) {
       ensureManagerButton();
@@ -39743,7 +40014,7 @@ async function cleanOrphanMarkerInCurrentRoom() {
       const current = await fetchMessage(apiChatIdOf(room), backup.messageId);
       if (!current) return;
       const currentText = messageTextOf(current);
-      if (!currentText.includes(APP.markerStart) && !currentText.includes(APP.legacyMarkerStart)) {
+      if (!backup.carrierRestoreRequired && !currentText.includes(APP.markerStart) && !currentText.includes(APP.legacyMarkerStart)) {
         clearPendingBackup(room.chatId);
         return;
       }
@@ -40012,7 +40283,7 @@ function wishKnowledgeHistoryHtml077(room, ids) {
 
 if (window.__WISH_RP_MANAGER_LOADED__) return;
 
-window.__WISH_RP_MANAGER_LOADED__ = { version: '0.17.86', loadedAt: Date.now() };
+window.__WISH_RP_MANAGER_LOADED__ = { version: '0.17.87', loadedAt: Date.now() };
 
 window.__RP_MANAGER_0810_LOADED__ = true;
 
@@ -40213,7 +40484,7 @@ const wishOriginalGuide078=manualGuideForTask;
 manualGuideForTask=function(room,task){const g=wishOriginalGuide078(room,task);return task==='currentItems'?{...g,text:g.text+'\n\n'+WISH_CURRENT_STRENGTH078}:g;};
 function wishMountSimple078(overlay){
  const room=state.currentRoom;if(!room||!overlay)return;
- const button=overlay.querySelector('[data-simple-backup]');if(button)button.onclick=async()=>{button.disabled=true;try{const archive=room.simplification078?.archive;if(!archive){notify('정리 전 원본이 없는 새 방입니다.','info');return;}const raw=await wishUnpackOriginal078(archive);downloadText(JSON.stringify({_rpContextManagerBackup:true,version:'0.17.86',exportedAt:nowIso(),rooms:[JSON.parse(raw)],characterLibraries:[]},null,2),'Wish_정리전_전체백업_'+String(room.chatId).replace(/[^\w-]/g,'_')+'.json','application/json');}catch(e){notify(e.message,'error');}finally{button.disabled=false;}};
+ const button=overlay.querySelector('[data-simple-backup]');if(button)button.onclick=async()=>{button.disabled=true;try{const archive=room.simplification078?.archive;if(!archive){notify('정리 전 원본이 없는 새 방입니다.','info');return;}const raw=await wishUnpackOriginal078(archive);downloadText(JSON.stringify({_rpContextManagerBackup:true,version:'0.17.87',exportedAt:nowIso(),rooms:[JSON.parse(raw)],characterLibraries:[]},null,2),'Wish_정리전_전체백업_'+String(room.chatId).replace(/[^\w-]/g,'_')+'.json','application/json');}catch(e){notify(e.message,'error');}finally{button.disabled=false;}};
  
 }
 
@@ -40240,6 +40511,7 @@ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',
 
   const MODEL_OPTIONS = Object.freeze([
     { id:'gemini-3.8-flash', label:'Gemini 3.8 Flash', short:'3.8 FLASH', defaultThinking:'medium' },
+    { id:'gemini-4-argon', label:'Gemini 4 Argon · 유료', short:'4 ARGON', defaultThinking:'medium' },
     { id:'gemini-3.7-flash', label:'Gemini 3.7 Flash', short:'3.7 FLASH', defaultThinking:'medium' },
     { id:'gemini-3.1-pro-preview', label:'Gemini 3.1 Pro', short:'3.1 PRO', defaultThinking:'high' },
   ]);
