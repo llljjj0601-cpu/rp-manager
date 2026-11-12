@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🪽위시 RP Manager
 // @namespace    local.rp.context.manager
-// @version      0.17.40
+// @version      0.17.42
 // @description  장기 RP용 현재상태·날짜로그·연속성 타임라인·캐릭터 설정을 관리하고, 검수형 AI 생성과 필요한 컨텍스트 자동 주입을 지원합니다.
 // @author       User
 // @license      All Rights Reserved
@@ -975,7 +975,7 @@ const wrpmFullBackupV2 = (() => {
         const style=document.createElement('style');
         style.textContent=':host{all:initial}section{box-sizing:border-box;width:280px;border:1px solid #d898ba;border-radius:12px;background:#fff4f9;color:#442d3b;padding:12px;font:13px/1.5 system-ui;box-shadow:0 4px 20px #0003}strong,span{display:block}span{white-space:pre-wrap;overflow-wrap:anywhere;margin-top:5px}button{font:inherit;margin-top:8px;padding:5px 9px;border:1px solid #b982a2;border-radius:6px;background:white;color:#442d3b;cursor:pointer}';
         const card=document.createElement('section');
-        card.innerHTML='<strong>WISH 0.17.40 · 실행 상태</strong><span role="status" aria-live="polite"></span><button type="button">닫기</button>';
+        card.innerHTML='<strong>WISH 0.17.42 · 실행 상태</strong><span role="status" aria-live="polite"></span><button type="button">닫기</button>';
         card.querySelector('button').onclick=()=>{dismissed=true;host?.remove();host=null;};
         root.append(style,card);document.documentElement.appendChild(host);
         for(const [key,value] of Object.entries({position:'fixed',right:'16px',top:'112px','z-index':'2147483647',display:'block',visibility:'visible',opacity:'1',width:'280px',height:'auto'}))host.style.setProperty(key,value,'important');
@@ -999,13 +999,13 @@ const wrpmFullBackupV2 = (() => {
     wishBoot.status('duplicate', '다른 RP Manager 실행이 감지됐습니다. 버전: '+String(window.__WISH_RP_MANAGER_LOADED__.version||'알 수 없음'));
     return;
   }
-  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.17.40', loadedAt: Date.now() };
+  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.17.42', loadedAt: Date.now() };
   // 같은 페이지에 남아 있는 v0.8.10 복사본이 뒤늦게 시작되는 경우도 차단합니다.
   window.__RP_MANAGER_0810_LOADED__ = true;
 
   const APP = {
     name: '🪽위시 RP Manager',
-    version: '0.17.40',
+    version: '0.17.42',
     dbName: 'RPContextManagerDB',
     dbVersion: 2,
     storeName: 'rooms',
@@ -10869,6 +10869,25 @@ ${dialogueText}`;
     });
   }
 
+  async function deletePersonSpeechRecord(room,id) {
+    if(state.currentRoom!==room)throw new Error('방이 바뀌었습니다. 현재 방에서 다시 확인해 주세요.');
+    const rows=(room.personStateRecords||[]).filter(row=>String(row.id)===String(id));
+    if(rows.length!==1||rows[0].type!=='speech')throw new Error('삭제할 호칭 카드를 확인할 수 없습니다.');
+    const signature=row=>{const copy={personStateRecords:[structuredClone(row)]};normalizePersonStateRecords(copy);return JSON.stringify(Object.entries(copy.personStateRecords[0]).sort(([a],[b])=>a.localeCompare(b)));};
+    const source=signature(rows[0]),before=JSON.stringify(room),candidate=structuredClone(room);
+    candidate.personStateRecords=candidate.personStateRecords.filter(row=>String(row.id)!==String(id));
+    await saveRoom(candidate,'speech-record-delete',(next,stored)=>{
+      if(state.currentRoom!==room||JSON.stringify(room)!==before)throw new Error('삭제 중 화면의 자료가 바뀌었습니다. 다시 확인해 주세요.');
+      const latest=(stored?.personStateRecords||[]).filter(row=>String(row.id)===String(id));
+      if(latest.length!==1||latest[0].type!=='speech'||signature(latest[0])!==source)throw new Error('다른 작업에서 호칭 카드를 변경했습니다. 최신 내용을 다시 확인해 주세요.');
+      if((next.personStateRecords||[]).some(row=>String(row.id)===String(id)))throw new Error('호칭 삭제 내용을 병합하지 못했습니다. 다시 확인해 주세요.');
+    });
+    const stored=await readManualStoredRoom(room);
+    if(!stored||(stored.personStateRecords||[]).some(row=>String(row.id)===String(id)))throw new Error('삭제 후 저장본 확인에 실패했습니다. 새로고침 후 확인해 주세요.');
+    if(state.currentRoom!==room||JSON.stringify(room)!==before)throw new Error('호칭 삭제 저장 후 화면의 자료가 바뀌었습니다. 새로고침 후 확인해 주세요.');
+    rpcmReplaceRoomObject(room,stored);
+  }
+
   function openPersonCoreCardEditor(room,overlay,kind,id = '') {
     state.personAdvancedOpen = true;
     state.personPane = kind;
@@ -11092,7 +11111,7 @@ ${dialogueText}`;
         + ([...grouped].map(([name, entries]) => `<div class="rpcm-person-group" data-person="${esc(name)}"><h3>👤 ${esc(name)} <small>${entries.length}개</small></h3>${entries.map(record => {
           const detail = record.type === 'speech' ? [record.address && '호칭 ' + record.address, record.tone && '말투 ' + record.tone, record.context && '조건 ' + record.context].filter(Boolean).join(' · ') : [record.official && '공식 ' + record.official, record.stance && '태도 ' + record.stance, record.conflict && '갈등 ' + record.conflict, record.trajectory && `핵심 전환 ${record.trajectory.length}자`].filter(Boolean).join(' · ');
           const fields = record.type === 'speech' ? `<label>호칭<input data-person-field="address" value="${esc(record.address)}"></label><label>말투<input data-person-field="tone" value="${esc(record.tone)}"></label><label>적용 조건<input data-person-field="context" value="${esc(record.context)}"></label>` : `<label>공식 관계<input data-person-field="official" value="${esc(record.official)}"></label><label>이 인물의 태도<textarea data-person-field="stance" rows="2">${esc(record.stance)}</textarea></label><label>남은 갈등·경계<textarea data-person-field="conflict" rows="2">${esc(record.conflict)}</textarea></label><label>핵심 전환<textarea data-person-field="trajectory" rows="3">${esc(record.trajectory || '')}</textarea></label>`;
-          return `<details class="rpcm-person-record" data-person-record="${esc(record.id)}"><summary><strong>${esc(record.person || '인물')} → ${esc(record.target || '상대')}</strong><span>${esc(detail || '내용 입력')}</span><em>${record.inject ? '주입 포함' : '보관만'}</em></summary><div class="rpcm-person-read"><p>${esc(detail || '내용 입력')}</p><small>${esc(record.evidence || '근거 미기록')}</small><button type="button" data-person-action="edit">편집</button></div><div class="rpcm-person-fields" hidden><label>인물<input data-person-field="person" value="${esc(record.person)}"></label><label>상대<input data-person-field="target" value="${esc(record.target)}"></label>${fields}${record.type==='relationship'?relationshipGraphFieldsHtml(record):''}<label>확인 근거<textarea data-person-field="evidence" rows="2">${esc(record.evidence)}</textarea></label><div class="rpcm-person-record-actions"><label><input data-person-field="inject" type="checkbox" ${record.inject ? 'checked' : ''}> 주입에 포함</label><button type="button" data-person-action="archive">종료 · 보관</button><button type="button" data-person-action="close">접기</button></div></div></details>`;
+          return `<details class="rpcm-person-record" data-person-record="${esc(record.id)}"><summary><strong>${esc(record.person || '인물')} → ${esc(record.target || '상대')}</strong><span>${esc(detail || '내용 입력')}</span><em>${record.inject ? '주입 포함' : '보관만'}</em></summary><div class="rpcm-person-read"><p>${esc(detail || '내용 입력')}</p><small>${esc(record.evidence || '근거 미기록')}</small><button type="button" data-person-action="edit">편집</button></div><div class="rpcm-person-fields" hidden><label>인물<input data-person-field="person" value="${esc(record.person)}"></label><label>상대<input data-person-field="target" value="${esc(record.target)}"></label>${fields}${record.type==='relationship'?relationshipGraphFieldsHtml(record):''}<label>확인 근거<textarea data-person-field="evidence" rows="2">${esc(record.evidence)}</textarea></label><div class="rpcm-person-record-actions"><label><input data-person-field="inject" type="checkbox" ${record.inject ? 'checked' : ''}> 주입에 포함</label><button type="button" data-person-action="archive">종료 · 보관</button>${record.type==='speech'?'<button type="button" data-person-action="delete-speech">삭제</button>':''}<button type="button" data-person-action="close">접기</button></div></div></details>`;
         }).join('')}</div>`).join('') || '<div class="rpcm-person-empty">등록된 카드가 없습니다. 전용 방 결과물을 가져오거나 직접 추가하세요.</div>');
       for (const node of parent.querySelectorAll('.rpcm-person-record')) {
         if (editing.has(node.dataset.personRecord)) { node.open = true; node.querySelector('.rpcm-person-fields').hidden = false; node.querySelector('.rpcm-person-read').hidden = true; }
@@ -11124,6 +11143,14 @@ ${dialogueText}`;
           node.querySelector('.rpcm-person-read').hidden = show;
           node.querySelector('.rpcm-person-fields').hidden = !show;
           if (show) node.querySelector('[data-person-field="person"]')?.focus();
+        } else if (action.dataset.personAction === 'delete-speech' && record.type==='speech') {
+          if(action.disabled||!confirm(`${record.person || '인물'} → ${record.target || '상대'} 호칭 카드를 삭제할까요?\n이 카드 하나만 삭제하며 인물·인지·관계와 다른 호칭은 유지합니다.`))return;
+          action.disabled=true;
+          void deletePersonSpeechRecord(room,record.id).then(async()=>{
+            renderPersonPanel(room,overlay);state.capacityUiRefresh?.();
+            try{await rebuildPendingKnowledgeItem(room);notify('호칭 카드를 삭제했습니다.','success');}
+            catch(error){notify(`호칭은 로컬에서 삭제됐지만 현재 주입 갱신에 실패했습니다: ${error.message}`,'error',6500);}
+          }).catch(error=>notify(`호칭 삭제 확인 실패: ${error.message}`,'error',6500)).finally(()=>{if(action.isConnected)action.disabled=false;});
         } else if (action.dataset.personAction === 'archive' && confirm('이 카드를 주입에서 제외하고 이전 검토로 보낼까요?')) {
           record.active = false; record.inject = false;
           void saveRoom(room).then(() => rebuildPendingKnowledgeItem(room)).then(() => renderModalIfOpen()).catch(error => notify(error.message,'error'));
@@ -15694,10 +15721,39 @@ ${dialogueText}`;
     }
     return [...scopes];
   }
-  function rpcmStoragePickJson(){
-    return new Promise(resolve=>{const input=document.createElement('input');input.type='file';input.accept='.json,application/json';input.hidden=true;document.body.append(input);
-      input.oncancel=()=>{input.remove();resolve(null);};input.onchange=async()=>{const file=input.files?.[0];input.remove();if(!file){resolve(null);return;}try{if(file.size>wrpmFullBackupV2.PROCESS_LIMIT)throw new Error('백업 파일이 128MiB 처리 한도를 넘었습니다. 원문은 유지합니다.');resolve(JSON.parse(await file.text()));}catch(error){resolve({readError:String(error.message||error)});}};input.click();});
+  function rpcmOpenCompatibilityRecovery() {
+    const box=rpcmBackupDialogShell('rpcm-compatibility-recovery','RP Manager · 자료 보호·복구','86/87 자료를 발견했습니다. 최신 본문·기준점·대기 결과는 그대로 보관 중입니다. 현재 방의 일반 편집·자동 정리·주입은 아직 재개하지 않았습니다.');
+    box.querySelector('[data-dialog-content]').innerHTML='<p>초기화를 중단하지 않고 이 복구 화면을 엽니다. 백업 확인은 검사만 하며 자료를 덮어쓰지 않습니다. 자료 전환이 확인되기 전에는 오래된 백업을 현재 자료 위에 복원하지 마세요.</p><p data-compat-status role="status"></p><details hidden data-compat-raw><summary>현재 방 원문 JSON · 읽기 전용</summary><pre style="white-space:pre-wrap;overflow-wrap:anywhere"></pre></details>';
+    box.querySelector('[data-dialog-actions]').innerHTML='<button type="button" class="rpcm-btn secondary" data-compat-read>현재 방 원문 보기</button> <button type="button" class="rpcm-btn secondary" data-compat-check>백업 파일 확인</button> <button type="button" class="rpcm-btn primary" data-compat-backup>현재 전체 백업 받기</button>';
+    const status=box.querySelector('[data-compat-status]');
+    box.querySelector('[data-compat-check]').onclick=()=>void rpcmVerifyFullBackupFile().catch(error=>{status.textContent=error.message;});
+    box.querySelector('[data-compat-read]').onclick=async()=>{try{const key=state.compatibilityBlockedRoomKey,rows=await getAllRooms();const raw=rows.find(row=>String(row.chatId)===String(key));if(!raw)throw Error('현재 방 저장본을 찾지 못했습니다.');box.querySelector('[data-compat-raw] pre').textContent=JSON.stringify(raw,null,2);box.querySelector('[data-compat-raw]').hidden=false;box.querySelector('[data-compat-raw]').open=true;}catch(error){status.textContent=error.message;}};
+    box.querySelector('[data-compat-backup]').onclick=async event=>{event.currentTarget.disabled=true;try{const backup=await wrpmFullBackupV2.exportFull();downloadText(wrpmFullBackupV2.fileText(backup),'RP_매니저_호환전환전_전체백업_'+new Date().toISOString().slice(0,10)+'.json');status.textContent='현재 자료의 전체 백업 다운로드를 시작했습니다. 실제 파일 저장을 확인해 주세요.';}catch(error){status.textContent='백업 미완료: '+error.message;}finally{if(box.isConnected)box.querySelector('[data-compat-backup]').disabled=false;}};
+    return box;
   }
+
+  function rpcmPositionHeaderMenu(menu) {
+    if(!menu?.open)return;
+    const list=menu.querySelector('.rpcm-header-menu-list'),anchor=menu.querySelector('summary');if(!list||!anchor)return;
+    const view=window.visualViewport,left=view?.offsetLeft||0,top=view?.offsetTop||0,width=view?.width||innerWidth,height=view?.height||innerHeight;
+    const a=anchor.getBoundingClientRect(),w=Math.max(1,Math.min(320,width-24)),y=Math.min(a.bottom+8,top+Math.max(12,height-100));
+    Object.assign(list.style,{position:'fixed',inset:'auto',left:Math.max(left+12,Math.min(a.right-w,left+width-w-12))+'px',top:y+'px',width:w+'px',minWidth:'0',maxWidth:Math.max(1,width-24)+'px',maxHeight:Math.max(1,top+height-y-12)+'px',overflowY:'auto',boxSizing:'border-box',zIndex:'2147483646'});
+  }
+
+  function rpcmStoragePickJson(){
+    return new Promise(resolve=>{
+      const box=rpcmBackupDialogShell('rpcm-backup-picker','백업 JSON 선택','아래 파일 선택을 직접 눌러 주세요. 자동으로 파일창이 열리지 않는 브라우저에서도 선택할 수 있습니다.');
+      const content=box.querySelector('[data-dialog-content]');
+      content.innerHTML='<label style="display:block">전체 백업 JSON 파일<input type="file" accept=".json,application/json" data-backup-file style="display:block;width:100%;margin-top:12px"></label><p data-pick-status role="status"></p>';
+      const input=content.querySelector('input');let settled=false;
+      const finish=value=>{if(settled)return;settled=true;document.removeEventListener('keydown',escape,true);box._rpcmClose();resolve(value);};
+      const escape=event=>{if(event.key==='Escape')finish(null);};document.addEventListener('keydown',escape,true);
+      box.querySelectorAll('[data-dialog-close]').forEach(button=>button.onclick=()=>finish(null));box.onclick=event=>{if(event.target===box)finish(null);};
+      input.oncancel=()=>finish(null);
+      input.onchange=async()=>{const file=input.files?.[0];if(!file)return;input.disabled=true;content.querySelector('[data-pick-status]').textContent='파일을 읽는 중…';try{if(file.size>wrpmFullBackupV2.PROCESS_LIMIT)throw Error('백업 파일이 128MiB 처리 한도를 넘었습니다. 원문은 유지합니다.');finish(JSON.parse(await file.text()));}catch(error){finish({readError:String(error.message||error)});}};
+    });
+  }
+
   function openStorageOptimization(mode='optimize'){
     if(state.fullBackupRestoreBusy||state.fullBackupRestoreNeedsReload||wrpmFullBackupV2.isBusy()){notify('다른 백업·복원 작업이 끝난 뒤 저장방식을 점검해 주세요.','warn');return;}
     const previous=document.querySelector('#rpcm-full-rebuild-dialog');previous?.remove();
@@ -20492,10 +20548,12 @@ ${dialogueText}`;
   // 여는 순간 메타 API를 다시 기다리지 않고 같은 메모리 상태를 사용합니다.
   function prepareManagerOpenRoom(chatId) {
     const roomKey = getRoomScopeKey(chatId);
+    if(state.compatibilityBlockedRoomKey===roomKey)return null;
     if (state.currentChatId === roomKey && state.currentRoom?.chatId === roomKey) return state.currentRoom;
     if (state.managerOpenRoomScope === roomKey && state.managerOpenRoomPromise) return state.managerOpenRoomPromise;
     state.managerOpenRoomScope = roomKey;
     const pending = ensureCurrentRoom(chatId).then(() => {
+      if(state.compatibilityBlockedRoomKey===roomKey&&getRoomScopeKey(getChatIdFromPath())===roomKey)return null;
       if (getRoomScopeKey(getChatIdFromPath()) !== roomKey || state.currentRoom?.chatId !== roomKey) {
         throw new Error('채팅방이 바뀌었습니다. 현재 방에서 다시 열어 주세요.');
       }
@@ -20518,6 +20576,7 @@ ${dialogueText}`;
     }
     const roomReady = prepareManagerOpenRoom(chatId);
     if (roomReady?.then) await roomReady;
+    if(state.compatibilityBlockedRoomKey===getRoomScopeKey(chatId))return rpcmOpenCompatibilityRecovery();
     manualRestoreDrafts(state.currentRoom);
     if (state.modal) closeModal();
     closeQuickInjectionPanel();
@@ -26839,6 +26898,7 @@ html.rpcm-mobile-layout #rpcm-modal #rpcm-section-overview .rpcm-maintenance-act
     }
     const roomReady = prepareManagerOpenRoom(chatId);
     if (roomReady?.then) await roomReady;
+    if(state.compatibilityBlockedRoomKey===getRoomScopeKey(chatId))return rpcmOpenCompatibilityRecovery();
     manualRestoreDrafts(state.currentRoom);
     if (state.modal) closeModal();
 
@@ -38553,6 +38613,8 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
 
     const quickbar = overlay.querySelector('.rpcm-quickbar');
     const headerMenu = overlay.querySelector('.rpcm-header-menu');
+    if(headerMenu)headerMenu.ontoggle=()=>rpcmPositionHeaderMenu(headerMenu);
+    if(!state.headerMenuViewportBound){state.headerMenuViewportBound=true;const reposition=()=>rpcmPositionHeaderMenu(state.modal?.querySelector('.rpcm-header-menu'));window.addEventListener('resize',reposition);window.visualViewport?.addEventListener('resize',reposition);window.visualViewport?.addEventListener('scroll',reposition);}
     const headerSearchToggle = overlay.querySelector('#rpcm-header-search-toggle');
     const headerSearchPop = overlay.querySelector('#rpcm-header-search-pop');
     const setHeaderSearchOpen = open => {
@@ -39850,7 +39912,10 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
     state.currentChatId = roomKey; state.currentApiChatId = apiChatId;
     // 방 메타 API가 느려도 진입 버튼부터 즉시 표시합니다. 실제 모달 데이터는 아래 초기화 완료 후 엽니다.
     ensureManagerButton(); updateFab();
-    const room = await getRoom(roomKey, apiChatId);
+    state.compatibilityBlockedRoomKey=null;
+    let room;
+    try{room=await getRoom(roomKey,apiChatId);}
+    catch(error){if(error.code!=='RPCM_38_INCOMPATIBLE_ROOM')throw error;if(epoch!==state.routeEpoch)return;state.currentRoom=null;state.compatibilityBlockedRoomKey=roomKey;ensureManagerButton();updateFab();return;}
     room.apiChatId = apiChatId;
     room.maxChars = APP.defaultMaxChars;
     const characterId = getCharacterIdFromPath();
