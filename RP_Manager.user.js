@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🪽위시 RP Manager
 // @namespace    local.rp.context.manager
-// @version      0.17.42
+// @version      0.17.43
 // @description  장기 RP용 현재상태·날짜로그·연속성 타임라인·캐릭터 설정을 관리하고, 검수형 AI 생성과 필요한 컨텍스트 자동 주입을 지원합니다.
 // @author       User
 // @license      All Rights Reserved
@@ -975,7 +975,7 @@ const wrpmFullBackupV2 = (() => {
         const style=document.createElement('style');
         style.textContent=':host{all:initial}section{box-sizing:border-box;width:280px;border:1px solid #d898ba;border-radius:12px;background:#fff4f9;color:#442d3b;padding:12px;font:13px/1.5 system-ui;box-shadow:0 4px 20px #0003}strong,span{display:block}span{white-space:pre-wrap;overflow-wrap:anywhere;margin-top:5px}button{font:inherit;margin-top:8px;padding:5px 9px;border:1px solid #b982a2;border-radius:6px;background:white;color:#442d3b;cursor:pointer}';
         const card=document.createElement('section');
-        card.innerHTML='<strong>WISH 0.17.42 · 실행 상태</strong><span role="status" aria-live="polite"></span><button type="button">닫기</button>';
+        card.innerHTML='<strong>WISH 0.17.43 · 실행 상태</strong><span role="status" aria-live="polite"></span><button type="button">닫기</button>';
         card.querySelector('button').onclick=()=>{dismissed=true;host?.remove();host=null;};
         root.append(style,card);document.documentElement.appendChild(host);
         for(const [key,value] of Object.entries({position:'fixed',right:'16px',top:'112px','z-index':'2147483647',display:'block',visibility:'visible',opacity:'1',width:'280px',height:'auto'}))host.style.setProperty(key,value,'important');
@@ -999,13 +999,13 @@ const wrpmFullBackupV2 = (() => {
     wishBoot.status('duplicate', '다른 RP Manager 실행이 감지됐습니다. 버전: '+String(window.__WISH_RP_MANAGER_LOADED__.version||'알 수 없음'));
     return;
   }
-  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.17.42', loadedAt: Date.now() };
+  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.17.43', loadedAt: Date.now() };
   // 같은 페이지에 남아 있는 v0.8.10 복사본이 뒤늦게 시작되는 경우도 차단합니다.
   window.__RP_MANAGER_0810_LOADED__ = true;
 
   const APP = {
     name: '🪽위시 RP Manager',
-    version: '0.17.42',
+    version: '0.17.43',
     dbName: 'RPContextManagerDB',
     dbVersion: 2,
     storeName: 'rooms',
@@ -15287,13 +15287,9 @@ ${dialogueText}`;
     });
 
     if (room) {
-      if (room && (room.memorySeparation084 || room.simplification078 || Object.prototype.hasOwnProperty.call(room.manualUpdateCheckpoints || {}, 'importantItems'))) {
-        if (String(state.currentChatId) === String(chatId)) { state.currentRoom = null; closeModal(); closeQuickInjectionPanel(); }
-        const error = new Error('86/87 형식으로 저장된 방은 자료 보호를 위해 38 기반 버전에서 열거나 저장하지 않습니다. 기존 버전에서 전체 백업을 받아 보관해 주세요. 자동 변환은 하지 않았습니다.');
-        error.code = 'RPCM_38_INCOMPATIBLE_ROOM'; throw error;
-      }
       rpcmStampRoomEpoch(room);
       rpcmRememberRoomBaseline(room);
+      const compatibilityChanged=(room.memorySeparation084||room.simplification078||Object.prototype.hasOwnProperty.call(room.manualUpdateCheckpoints||{},"importantItems"))&&rpcmPrepareLegacyContracts43(room);
       const needsStoryLogMigration = !room.storyLogReviewRevisionV1 || !room.storyTimelineGuideRevisionV15;
       if (!Array.isArray(room.lorePacks)) room.lorePacks = [];
       normalizeRoomSlots(room);
@@ -15322,7 +15318,7 @@ ${dialogueText}`;
           }));
         }
       }
-      if (needsStoryLogMigration || oldPersonBuiltin || oldLoreBuiltin || oldTimelineBuiltin) await saveRoom(room);
+      if (compatibilityChanged || needsStoryLogMigration || oldPersonBuiltin || oldLoreBuiltin || oldTimelineBuiltin) await saveRoom(room);
       return room;
     }
 
@@ -16121,10 +16117,6 @@ ${dialogueText}`;
   }
 
   async function saveRoom(room,writer='saveRoom',validateBeforeWrite=null) {
-    if (room && (room.memorySeparation084 || room.simplification078 || Object.prototype.hasOwnProperty.call(room.manualUpdateCheckpoints || {}, 'importantItems'))) {
-      const error = new Error('86/87 형식으로 저장된 방은 자료 보호를 위해 38 기반 버전에서 열거나 저장하지 않습니다. 기존 버전에서 전체 백업을 받아 보관해 주세요. 자동 변환은 하지 않았습니다.');
-      error.code = 'RPCM_38_INCOMPATIBLE_ROOM'; throw error;
-    }
     rpcmAssertRoomEpoch(room);
     const resetEpoch=areaResetEpoch(room);
     if(areaResetRuntime.active&&areaResetPaused(room))throw new Error('영역 초기화 중에는 다른 저장을 보류합니다.');
@@ -16149,17 +16141,13 @@ ${dialogueText}`;
           let stored;
           try {
             stored=wishLocalStorageRecord(get.result);
-            if (stored && (stored.memorySeparation084 || stored.simplification078 || Object.prototype.hasOwnProperty.call(stored.manualUpdateCheckpoints || {}, 'importantItems'))) {
-              const error = new Error('86/87 형식으로 저장된 방은 자료 보호를 위해 38 기반 버전에서 열거나 저장하지 않습니다. 기존 버전에서 전체 백업을 받아 보관해 주세요. 자동 변환은 하지 않았습니다.');
-              error.code = 'RPCM_38_INCOMPATIBLE_ROOM'; throw error;
-            }
           }
           catch(error){validationError=error;tx.abort();return;}
           storedForTrace=stored||{};
           const revision=Number(stored?._rpcmRevision||0);
           let candidate=rpcmRoomClone(room);writtenLocal=rpcmRoomClone(candidate);
           if(stored&&rescueUseful('room',stored)&&!rescueUseful('room',candidate)&&!state.roomSaveBaselines?.has(key)&&writer!=='backup-restore'){staleReason='빈 초기 데이터로 기존 기억을 덮어쓰려는 저장을 차단했습니다.';abortedForStale=true;tx.abort();return;}
-          if(priorRevision!==revision){
+          if(priorRevision!==revision||(room.compatibility43&&JSON.stringify(state.roomSaveBaselines?.get(key)?.snapshot)!==JSON.stringify(stored))){
             if(!stored){staleReason='저장본이 사라져 자동 병합할 수 없습니다.';abortedForStale=true;tx.abort();return;}
             const rebased=rpcmRebaseRoomOntoStored(room,stored);
             if(!rebased.ok){staleReason=rebased.reason;traceRoomWrite(room,writer,'stale-rejected',priorRevision,revision,'',{startedAt,before:stored,after:room});abortedForStale=true;tx.abort();return;}
@@ -27474,6 +27462,7 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
   }
 
   function manualGuideForTask(room, task) {
+    if(task==='currentItems'&&room.compatibility43){const custom=isGuideTextModified('currentState'),text=custom?getGuideText('currentState'):canonicalGuideText(task);return {text:text+'\n\n[현재 버전 통합 출력 계약]\n현재상태 전체 본문과 중요 물품 전체 목록을 각각 현재상태.txt, 중요물품.txt로 모두 출력합니다. 기존 단독 출력 안내보다 이 출력 계약을 우선합니다. 물품이 없을 때만 빈 물품 목록을 출력하며, 이번 자료의 기존 물품을 임의로 누락하지 않습니다.\n[/현재 버전 통합 출력 계약]',source:custom?'사용자 수정 지침 · 통합 출력 계약':'기본 지침 · 통합 출력 계약'};}
     if (task === 'lore') return manualLoreGuideSlot(room);
     if (task === 'currentItems' && isGuideTextModified('currentState')) return { text:getGuideText('currentState'), source:'사용자 수정 지침' };
     if (task === 'logSummary') {
@@ -27535,7 +27524,40 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
     return packet.replace('[/RP_MANAGER_TASK]', `${metadata}\n[/RP_MANAGER_TASK]`) + `\n\n${notice}`;
   }
 
+  function rpcmPrepareLegacyContracts43(room) {
+    if(!room||room.compatibility43)return false;
+    if(!room.memorySeparation084&&!room.simplification078&&!Object.prototype.hasOwnProperty.call(room.manualUpdateCheckpoints||{},'importantItems'))return false;
+    const copy=value=>value===undefined?null:structuredClone(value);
+    const checkpoints=room.manualUpdateCheckpoints||{},statePoint=checkpoints.currentItems||{},itemPoint=checkpoints.importantItems||{};
+    const same=String(statePoint.endMessageId||'')===String(itemPoint.endMessageId||'');
+    room.compatibility43={version:1,createdAt:nowIso(),combinedCheckpoint:{endMessageId:same?String(statePoint.endMessageId||''):'',appliedAt:'',baselineAt:''},
+      originalContracts:{checkpoints:copy(room.manualUpdateCheckpoints),receipts:copy(room.manualApplyReceipts),editReceipts:copy(room.manualResultEditReceipts),jobs:copy(room.manualPendingJobs),integrated:copy(room.manualIntegratedJob),fullBuilds:copy(room.manualFullBuilds),fullRebuild:copy(room.fullRebuildJob),guides:copy(room.manualUpdateGuides),ai:copy(room.aiMemoryAutomation)},
+      legacyJobIds:Object.fromEntries(Object.entries(room.manualPendingJobs||{}).filter(([task])=>['currentItems','importantItems'].includes(task)).map(([task,job])=>[task,String(job?.id||job?.draft?.jobId||'')])),
+      legacyAiDrafts:Object.fromEntries(Object.entries(room.aiMemoryAutomation?.areas||{}).filter(([,row])=>row?.draft).map(([area,row])=>[area,simpleHash(JSON.stringify(row.draft))]))};
+    return true;
+  }
+
+  function rpcmLegacyManualJob43(room,task,draft) {
+    const archived=room.compatibility43?.originalContracts?.jobs?.[task];
+    return !!archived&&['currentItems','importantItems'].includes(task)&&!!draft&&
+      (draft.jobId?String(draft.jobId)===String(archived.id||archived.draft?.jobId||''):JSON.stringify(draft)===JSON.stringify(archived.draft));
+  }
+
+  function rpcmLegacyAiDraft43(room,area,draft) {
+    return !!draft&&room.compatibility43?.legacyAiDrafts?.[area]===simpleHash(JSON.stringify(draft));
+  }
+
+  function rpcmLegacyContractsDialog43(room) {
+    const box=rpcmBackupDialogShell('rpcm-legacy-contracts43','이전 버전 작업·기준점 보관','최신 기억 본문은 매니저에서 계속 편집·주입할 수 있습니다. 아래에는 86/87에서 넘어온 작업 계약을 원문 그대로 보관합니다.');
+    const archived=room.compatibility43?.originalContracts;
+    box.querySelector('[data-dialog-content]').innerHTML='<p>단독 현재상태/물품 결과와 이전 통합·AI 결과는 새 작업으로 자동 적용하지 않습니다. 새 통합 작업의 기준점을 확정할 수 없으면 전체 범위를 다시 확인합니다. 원래 기준점과 결과는 아래에 유지됩니다.</p><details open><summary>이전 작업·기준점 원문 JSON</summary><pre style="white-space:pre-wrap;overflow-wrap:anywhere"></pre></details>';
+    box.querySelector('pre').textContent=JSON.stringify(archived,null,2);
+    box.querySelector('[data-dialog-actions]').innerHTML='<button type="button" class="rpcm-btn primary" data-legacy-download>이전 작업 원문 JSON 받기</button>';
+    box.querySelector('[data-legacy-download]').onclick=()=>downloadText(JSON.stringify({chatId:room.chatId,...archived},null,2),'RP_이전버전_작업보관.json');return box;
+  }
+
   function manualCheckpointForTask(room, task) {
+    if(task==='currentItems'&&room.compatibility43)return {...room.compatibility43.combinedCheckpoint};
     if (task === 'timeline') return { endMessageId:String(room.storyTimelineLastReviewedMessageId || ''), appliedAt:String(room.storyTimelineLastReviewedAt || ''), baselineAt:String(room.manualUpdateCheckpoints?.timeline?.baselineAt || (String(room.storyTimelineLastReviewedMessageId || '') === String(room.autoStartBaseline?.turnKey || '') ? room.autoStartBaseline?.setAt || '' : '')) };
     const saved = room.manualUpdateCheckpoints?.[task];
     return { endMessageId:String(saved?.endMessageId || ''), appliedAt:String(saved?.appliedAt || ''), baselineAt:String(saved?.baselineAt || '') };
@@ -27686,7 +27708,7 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
     return draft.rangeMode === 'checkpoint' || draft.checkpointIndex < 0 || draft.endIndex > draft.checkpointIndex;
   }
 
-  function manualFullBuildFor(room, task) { return room?.manualFullBuilds?.[task] || null; }
+  function manualFullBuildFor(room, task) {const build=room?.manualFullBuilds?.[task];if(task==='currentItems'&&room.compatibility43?.originalContracts?.fullBuilds?.currentItems&&JSON.stringify(build)===JSON.stringify(room.compatibility43.originalContracts.fullBuilds.currentItems))return null;return build||null;}
 
   async function manualFullHistoryHash(turns) {
     const source = JSON.stringify(turns.map(turn => [String(turn.key), String(turn.text)]));
@@ -28459,7 +28481,7 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
     }catch(error){error.localCommitted=localCommitted;throw error;}finally{manualUpdateRuntime.commitLocks.delete(key);release?.();manualUpdateRuntime.commits.delete(key);integratedRuntime.busy=false;}
   }
   function openIntegratedImport(room){
-    const job=room.manualIntegratedJob;if(!job){notify('먼저 통합 패킷을 만들어 주세요.','warn');return;}
+    const job=room.manualIntegratedJob;if(job&&room.compatibility43?.originalContracts?.integrated&&JSON.stringify(job)===JSON.stringify(room.compatibility43.originalContracts.integrated))return rpcmLegacyContractsDialog43(room);if(!job){notify('먼저 통합 패킷을 만들어 주세요.','warn');return;}
     document.querySelector('#rpcm-full-rebuild-dialog')?.remove();const backdrop=document.createElement('div');backdrop.id='rpcm-full-rebuild-dialog';
     backdrop.innerHTML=`<section class="rpcm-update-dialog rpcm-update-result-dialog rpcm-full-rebuild-dialog rpcm-integrated-dialog" role="dialog" aria-modal="true" aria-label="통합 이어갱신 결과 가져오기"><header><div><h2>통합 이어갱신 · 결과 가져오기</h2><p>${job.turnCount}턴 · 영역별 이유와 변경을 확인한 뒤 선택한 결과를 함께 저장합니다.</p></div><button class="rpcm-update-dialog-close" aria-label="닫기">${rpcmUiIcon('close')}</button></header><div class="rpcm-update-result-body"><label>통합 결과 JSON<input type="file" accept=".json,.txt"><textarea spellcheck="false" data-integrated-result placeholder="외부 AI가 준 순수 JSON을 붙여넣으세요."></textarea></label><p data-integrated-status role="status">새 RP가 더 진행되어도 패킷에 없는 턴은 다음 갱신으로 남습니다.</p><div data-integrated-restore></div><div data-integrated-diff hidden></div></div><footer><span>선택 영역을 함께 저장 · 적용 전 백업</span><button class="rpcm-btn secondary rpcm-update-dialog-close">닫기</button><button class="rpcm-btn secondary" data-integrated-preview>검증 · 비교</button><button class="rpcm-btn primary" data-integrated-apply disabled>선택 영역 적용</button></footer></section>`;
     const input=backdrop.querySelector('textarea');input.value=integratedRuntime.importDrafts.get(job.jobId)||'';const status=backdrop.querySelector('[data-integrated-status]'),diff=backdrop.querySelector('[data-integrated-diff]'),restore=backdrop.querySelector('[data-integrated-restore]'),apply=backdrop.querySelector('[data-integrated-apply]'),preview=backdrop.querySelector('[data-integrated-preview]');let prepared=null,busy=false,committing=false,parsed=null;
@@ -29442,6 +29464,7 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
     }
     const appliedAt = nowIso();
     candidate.manualUpdateCheckpoints = { ...(candidate.manualUpdateCheckpoints || {}), [task]:nextManualCheckpoint(room, task, draft, appliedAt) };
+    if(task==='currentItems'&&candidate.compatibility43&&manualRangeMovesForward(draft))candidate.compatibility43.combinedCheckpoint=structuredClone(candidate.manualUpdateCheckpoints.currentItems);
     advanceManualFullBuild(candidate, room, draft);
     if (task === 'timeline' && manualRangeMovesForward(draft)) candidate.storyTimelineLastReviewedAt = appliedAt;
     candidate.updatedAt = appliedAt;
@@ -29526,8 +29549,9 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
   }
 
   async function stampVerifiedResult(candidate,task,writer,source={}) {
+    if(task==='currentItems'&&candidate.compatibility43&&writer==='integrated-continue')candidate.compatibility43.combinedCheckpoint=structuredClone(candidate.manualUpdateCheckpoints?.currentItems||candidate.compatibility43.combinedCheckpoint);
     const hash=await longTermHash(manualTaskStoredPayload(candidate,task)),checkpoint=manualCheckpointForTask(candidate,task);
-    candidate.manualApplyReceipts={...(candidate.manualApplyReceipts||{}),[task]:{...(candidate.manualApplyReceipts?.[task]||{}),task,writer,jobId:String(source.jobId||''),sourceStartKey:String(source.startKey||source.firstTurnKey||''),sourceEndKey:String(source.endKey||source.lastTurnKey||''),sourceHash:String(source.sourceHash||source.sha256||''),expectedResultHash:hash,resultHash:hash,persistedResultHash:'',checkpointAppliedAt:checkpoint.appliedAt,checkpoint:structuredClone(checkpoint),appliedAt:nowIso(),managerVersion:APP.version,hashSchema:'canonical-v1',verified:false}};
+    candidate.manualApplyReceipts={...(candidate.manualApplyReceipts||{}),[task]:{...(candidate.manualApplyReceipts?.[task]||{}),task,writer,jobId:String(source.jobId||''),sourceStartKey:String(source.startKey||source.firstTurnKey||''),sourceEndKey:String(source.endKey||source.lastTurnKey||''),sourceHash:String(source.sourceHash||source.sha256||''),expectedResultHash:hash,resultHash:hash,persistedResultHash:'',checkpointAppliedAt:checkpoint.appliedAt,checkpoint:structuredClone(checkpoint),appliedAt:nowIso(),managerVersion:APP.version,hashSchema:task==='currentItems'&&candidate.compatibility43?'combined-compat43':'canonical-v1',verified:false}};
     return hash;
   }
 
@@ -29566,6 +29590,7 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
   async function stampManualExplicitEdits(room){
     const tasks=manualExplicitEdits.get(String(room.chatId)),stamped=[];
     for(const [task,version] of tasks||[]){const receipt=room.manualApplyReceipts?.[task];if(!receipt?.verified)continue;
+      if(task==='currentItems'&&room.compatibility43&&receipt.hashSchema!=='combined-compat43')continue;
       const payload=manualTaskStoredPayload(room,task),hash=await longTermHash(payload);
       if(payload!==manualTaskStoredPayload(room,task))continue;
       room.manualResultEditReceipts={...(room.manualResultEditReceipts||{}),[task]:{sourceReceiptHash:receipt.resultHash,resultHash:hash,editedAt:nowIso(),writer:'user-editor',checkpoint:manualCheckpointForTask(room,task)}};
@@ -29601,6 +29626,7 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
   async function manualIntegrityStatus(room,task){
     const checkpoint=manualCheckpointForTask(room,task);
     if(!checkpoint.appliedAt)return {status:'not-applicable'};
+    if(task==='currentItems'&&room.compatibility43&&room.manualApplyReceipts?.currentItems?.hashSchema!=='combined-compat43')return {status:'unverified',reason:'이전 단독 저장 영수증은 통합 검증으로 간주하지 않습니다. 본문과 원래 영수증은 유지됩니다.'};
     const receipt=room.manualApplyReceipts?.[task];
     if(!receipt?.verified)return {status:'unverified',reason:'이전 적용 기록에는 저장 후 검증 영수증이 없습니다.'};
     if(receipt.checkpointAppliedAt&&receipt.checkpointAppliedAt!==checkpoint.appliedAt)return {status:'mismatch',reason:'저장 결과와 수동 체크포인트가 서로 다른 적용을 가리킵니다.'};
@@ -29664,7 +29690,7 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
       checkpointAppliedAt:manualCheckpointForTask(prepared.candidate,task).appliedAt,
       checkpoint:structuredClone(manualCheckpointForTask(prepared.candidate,task)),
       endMessageId:String(draft.endMessageId||''),appliedAt:nowIso(),
-      managerVersion:APP.version,hashSchema:'canonical-v1',verified:false,recovery:!!draft.recovery,sourceVerified:draft.sourceVerified!==false,allowAppended:prepared.sourceOptions?.allowAppended===true
+      managerVersion:APP.version,hashSchema:task==='currentItems'&&prepared.candidate.compatibility43?'combined-compat43':'canonical-v1',verified:false,recovery:!!draft.recovery,sourceVerified:draft.sourceVerified!==false,allowAppended:prepared.sourceOptions?.allowAppended===true
     }};
     if((!draft.recovery||draft.recoveryJobId)&&prepared.candidate.manualPendingJobs?.[task])
       prepared.candidate.manualPendingJobs[task]={...prepared.candidate.manualPendingJobs[task],status:'verifying',resultInputs:structuredClone(values),draft};
@@ -29767,6 +29793,7 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
   }
 
   function assertManualJobCurrent(room,task,draft,values){
+    if(room.compatibility43&&rpcmLegacyManualJob43(room,task,draft))throw new Error('이전 버전의 단독 결과입니다. 이전 작업 보관에서 원문을 확인하고 새 통합 작업자료를 생성해 주세요. 기존 결과는 보관돼 있습니다.');
     const job=room.manualPendingJobs?.[task];
     if(!draft.recovery&&job?.id&&draft.jobId&&job.id!==draft.jobId)throw new Error('다른 작업자료가 선택되어 있습니다. 진행 중 작업을 다시 확인해 주세요.');
     if(draft.memoHash&&draft.memoHash!==simpleHash(userCanonMemoBlock(room)))throw new Error('작업자료를 만든 뒤 사용자 메모가 바뀌었습니다. 작업자료를 다시 만들어 주세요.');
@@ -29833,6 +29860,7 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
 
   function openManualUpdateResultDialog(room, task, draftOverride = null) {
     manualRestoreDrafts(room);
+    if(room.compatibility43&&rpcmLegacyManualJob43(room,task,draftOverride||room.manualPendingJobs?.[task]?.draft))return rpcmLegacyContractsDialog43(room);
     let draft = draftOverride || manualUpdateRuntime.packets.get(manualPacketKey(room, task));
     if(draft&&room.manualPendingJobs?.[task]?.status==='verifying'&&room.manualPendingJobs[task].id===draft.jobId)draft={...draft,recovery:true,recoveryJobId:draft.jobId,sourceVerified:true,checkpoint:manualCheckpointForTask(room,task)};
     if (!draft) { notify('먼저 현재 범위의 작업자료를 만들어 주세요.', 'warn'); return; }
@@ -31239,6 +31267,7 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
       if (old.endMessageId && oldIndex < 0) throw new Error(`${MANUAL_UPDATE_TASKS[task].title} 기존 체크포인트를 현재 RP에서 찾지 못했습니다. 기준점을 안전하게 정렬할 수 없습니다.`);
       if (oldIndex > endIndex) continue;
       candidate.manualUpdateCheckpoints[task] = { ...(candidate.manualUpdateCheckpoints[task] || {}), startMessageId:job.source.firstTurnKey, endMessageId:end, turnCount:job.source.turnCount, appliedAt:now, baselineAt:now };
+      if(task==='currentItems'&&candidate.compatibility43)candidate.compatibility43.combinedCheckpoint=structuredClone(candidate.manualUpdateCheckpoints.currentItems);
       if (task === 'timeline') { candidate.storyTimelineLastReviewedMessageId=end; candidate.storyTimelineLastReviewedAt=now; candidate.storyTimelineUnreviewedTurnCount=currentTurns.length-endIndex-1; candidate.storyTimelineCarryoverTurnKeys=currentTurns.slice(Math.max(0,endIndex-39),endIndex+1).map(turn => String(turn.key)); }
     }
   }
@@ -34349,6 +34378,7 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
     if(overview){const panel=document.createElement('section');panel.id='rpcm-section-overview';overview.before(panel);[main.querySelector('.rpcm-summary'),overview,main.querySelector('.rpcm-update-overview'),main.querySelector('.rpcm-warnings'),main.querySelector('.rpcm-auto-active')].filter(Boolean).forEach(node=>panel.appendChild(node));const aiStatus=document.createElement('div');aiStatus.className='rpcm-pref-card rpcm-ai-memory-overview';aiStatus.innerHTML=aiMemoryOverview(state.currentRoom);panel.appendChild(aiStatus);const refresh=main.querySelector('.rpcm-context-refresh-shortcut');if(refresh){panel.prepend(refresh);refresh.insertAdjacentHTML('afterend',renderInjectionRecheckReport(state.currentRoom));}aiStatus.querySelector('[data-ai-memory-open-settings]')?.addEventListener('click',()=>showWorkView(overlay,'tools',true));}
     rpcmUiOrganizeHome(main);
     const update=main.querySelector('#rpcm-section-update');if(update)update.insertAdjacentHTML('afterbegin',rpcmUiManualGuideHtml(state.currentRoom));
+    if(state.currentRoom?.compatibility43){const note=document.createElement('div');note.className='rpcm-pref-card';note.innerHTML='<strong>이전 버전 자료를 이어서 사용 중</strong><p>기억 본문·원래 기준점·대기 결과를 보존했습니다. 이전 단독 결과는 보관하고, 새 작업은 현재 통합 형식으로 생성합니다.</p><button type="button" class="rpcm-btn secondary">이전 작업·기준점 보기</button>';note.querySelector('button').onclick=()=>rpcmLegacyContractsDialog43(state.currentRoom);main.querySelector('#rpcm-section-overview')?.append(note);}
     bindRpcm74Controls(overlay,state.currentRoom);
     const tools = main.querySelector('#rpcm-section-tools');
     if (tools) {
@@ -36653,6 +36683,8 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
     finally{aiMemoryRuntime.busy=false;aiMemoryRuntime.roomId='';}
   }
   async function aiMemoryPoll(room,force=false) {
+    const oldHybrid=room.compatibility43&&room.aiMemoryAutomation?.hybrid;
+    if(oldHybrid&&!room.compatibility43.autoResumeApprovedAt&&(!oldHybrid.enabled||oldHybrid.paused||oldHybrid.needsStart))return;
     if(areaResetPaused(room))return;
     const config=aiMemoryConfig(room);
     if(state.currentRoom!==room||aiMemoryRuntime.busy||document.hidden)return;
@@ -36923,6 +36955,7 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
     }finally{releaseOwnedCommit();}
   }
   async function aiMemoryTryAutoApply(room,area,draft) {
+    if(room.compatibility43&&rpcmLegacyAiDraft43(room,area,draft))return false;
     const row=aiMemoryConfig(room).areas[area];
     const config=aiMemoryConfig(room);
     let noChangeCandidate=draft.noChange===true;
@@ -36961,6 +36994,7 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
   }
 
   function aiMemoryReviewDialog(room,area) {
+    if(room.compatibility43&&rpcmLegacyAiDraft43(room,area,room.aiMemoryAutomation?.areas?.[area]?.draft))return rpcmLegacyContractsDialog43(room);
     const row=aiMemoryConfig(room).areas[area],draft=row.draft;
     if(!draft){notify('검토할 AI 초안이 없습니다.','warn');return;}
     document.querySelector('#rpcm-ai-memory-backdrop')?.remove();
@@ -37068,7 +37102,7 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
       catch(error){notify(`수동 대기 해제 실패: ${error.message}`,'error',6500);}
       finally{if(button.isConnected)button.disabled=false;}
     }));
-    overlay.querySelector('[data-ai-memory-global]')?.addEventListener('change',async event=>{const config=aiMemoryConfig(room);config.enabled=event.target.checked;config.applyRevision++;await saveRoom(room);renderModalIfOpen();if(config.enabled)void aiMemoryPoll(room,true);});
+    overlay.querySelector('[data-ai-memory-global]')?.addEventListener('change',async event=>{const config=aiMemoryConfig(room);config.enabled=event.target.checked;if(config.enabled&&room.compatibility43)room.compatibility43.autoResumeApprovedAt=nowIso();config.applyRevision++;await saveRoom(room);renderModalIfOpen();if(config.enabled)void aiMemoryPoll(room,true);});
     overlay.querySelectorAll('[data-ai-memory-enable]').forEach(input=>input.addEventListener('change',()=>aiMemorySetEnabled(room,input.dataset.aiMemoryEnable,input.checked,input)));
     overlay.querySelectorAll('[data-ai-memory-auto-apply]').forEach(input=>input.addEventListener('change',async()=>{
       const row=aiMemoryConfig(room).areas[input.dataset.aiMemoryAutoApply],previous=row.autoApply;
@@ -40360,6 +40394,7 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
 
   // Replace only import UI handlers; existing parsers, domain validators, backup and commits stay authoritative.
   openFullRebuildImportDialog=function(room){
+    if(room.compatibility43?.originalContracts?.fullRebuild&&JSON.stringify(room.fullRebuildJob)===JSON.stringify(room.compatibility43.originalContracts.fullRebuild))return rpcmLegacyContractsDialog43(room);
     const job=room.fullRebuildJob;if(!job){notify('먼저 이 방에서 전체 재구축 TXT를 만들어 주세요. 이전 파일의 source를 검증할 작업 기록이 없습니다.','warn');return;}
     document.querySelector('#rpcm-full-rebuild-dialog')?.remove();const backdrop=document.createElement('div');backdrop.id='rpcm-full-rebuild-dialog';
     backdrop.innerHTML=`<section class="rpcm-update-dialog rpcm-update-result-dialog rpcm-full-rebuild-dialog" role="dialog" aria-modal="true" aria-label="전체 기억 재구축 JSON 가져오기"><header><div><h2>전체 기억 재구축 · 최종 JSON 가져오기</h2><p>${job.parts.length}개 TXT · ${job.source.turnCount}턴 · 여섯 영역 모두 검토한 결과에서 반영할 영역을 고릅니다.</p></div><button type="button" class="rpcm-update-dialog-close">${rpcmUiIcon('close')}</button></header><div class="rpcm-update-result-body"><label>Wish-RP-Manager-전체재구축.json<input type="file" accept=".json,application/json" data-rebuild-file><textarea data-rebuild-json spellcheck="false" placeholder="최종 JSON 파일을 선택하거나 순수 JSON을 붙여넣으세요."></textarea></label><div class="rpcm-update-result-status" role="status">파일 선택만으로 저장되지 않습니다.</div><div class="rpcm-update-diff" hidden></div></div><footer><span>선택 영역만 한 번에 저장 · 적용 전 자동 백업</span><button type="button" class="rpcm-btn secondary rpcm-update-dialog-close">취소</button><button type="button" class="rpcm-btn secondary" data-rebuild-preview>형식 검증 · Diff</button><button type="button" class="rpcm-btn primary" data-rebuild-apply disabled>선택 영역 반영</button></footer></section>`;
@@ -40372,7 +40407,7 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
   };
 
   openIntegratedImport=function(room){
-    const job=room.manualIntegratedJob;if(!job){notify('먼저 통합 패킷을 만들어 주세요.','warn');return;}document.querySelector('#rpcm-full-rebuild-dialog')?.remove();const backdrop=document.createElement('div');backdrop.id='rpcm-full-rebuild-dialog';backdrop.innerHTML=`<section class="rpcm-update-dialog rpcm-update-result-dialog rpcm-full-rebuild-dialog rpcm-integrated-dialog" role="dialog" aria-modal="true"><header><div><h2>통합 이어갱신 · 결과 가져오기</h2><p>${job.turnCount}턴 · 영역별 이유와 변경을 확인한 뒤 선택한 결과를 함께 저장합니다.</p></div><button class="rpcm-update-dialog-close">${rpcmUiIcon('close')}</button></header><div class="rpcm-update-result-body"><label>통합 결과 JSON<input type="file" accept=".json,.txt"><textarea spellcheck="false" data-integrated-result></textarea></label><p data-integrated-status role="status">새 RP가 더 진행되어도 패킷에 없는 턴은 다음 갱신으로 남습니다.</p><div data-integrated-restore></div><div data-integrated-diff hidden></div></div><footer><span>선택 영역을 함께 저장 · 적용 전 백업</span><button class="rpcm-btn secondary rpcm-update-dialog-close">닫기</button><button class="rpcm-btn secondary" data-integrated-preview>검증 · 비교</button><button class="rpcm-btn primary" data-integrated-apply disabled>선택 영역 적용</button></footer></section>`;
+    const job=room.manualIntegratedJob;if(job&&room.compatibility43?.originalContracts?.integrated&&JSON.stringify(job)===JSON.stringify(room.compatibility43.originalContracts.integrated))return rpcmLegacyContractsDialog43(room);if(!job){notify('먼저 통합 패킷을 만들어 주세요.','warn');return;}document.querySelector('#rpcm-full-rebuild-dialog')?.remove();const backdrop=document.createElement('div');backdrop.id='rpcm-full-rebuild-dialog';backdrop.innerHTML=`<section class="rpcm-update-dialog rpcm-update-result-dialog rpcm-full-rebuild-dialog rpcm-integrated-dialog" role="dialog" aria-modal="true"><header><div><h2>통합 이어갱신 · 결과 가져오기</h2><p>${job.turnCount}턴 · 영역별 이유와 변경을 확인한 뒤 선택한 결과를 함께 저장합니다.</p></div><button class="rpcm-update-dialog-close">${rpcmUiIcon('close')}</button></header><div class="rpcm-update-result-body"><label>통합 결과 JSON<input type="file" accept=".json,.txt"><textarea spellcheck="false" data-integrated-result></textarea></label><p data-integrated-status role="status">새 RP가 더 진행되어도 패킷에 없는 턴은 다음 갱신으로 남습니다.</p><div data-integrated-restore></div><div data-integrated-diff hidden></div></div><footer><span>선택 영역을 함께 저장 · 적용 전 백업</span><button class="rpcm-btn secondary rpcm-update-dialog-close">닫기</button><button class="rpcm-btn secondary" data-integrated-preview>검증 · 비교</button><button class="rpcm-btn primary" data-integrated-apply disabled>선택 영역 적용</button></footer></section>`;
     const input=backdrop.querySelector('textarea'),status=backdrop.querySelector('[data-integrated-status]'),diff=backdrop.querySelector('[data-integrated-diff]'),restore=backdrop.querySelector('[data-integrated-restore]'),apply=backdrop.querySelector('[data-integrated-apply]'),preview=backdrop.querySelector('[data-integrated-preview]');input.value=integratedRuntime.importDrafts.get(job.jobId)||'';let prepared=null,busy=false,committing=false,parsed=null;const guard=()=>state.currentRoom===room&&room.manualIntegratedJob?.jobId===job.jobId;const invalidate=()=>{prepared=null;apply.disabled=true;diff.hidden=true;};input.oninput=()=>{integratedRuntime.importDrafts.set(job.jobId,input.value);invalidate();restore.innerHTML='';parsed=null;};restore.onchange=invalidate;backdrop.querySelector('input[type=file]').onchange=async e=>{try{const f=e.target.files?.[0];if(!f)return;if(f.size>4000000)throw new Error('4MB 이하 파일을 선택하세요.');input.value=await f.text();input.oninput();}catch(error){status.textContent=error.message;}};
     const runPreview=async(rawOverride=null)=>{if(busy)return;if(rawOverride!==null){input.value=String(rawOverride);input.oninput();}if(rpcmExternalBusy('integrated'))return rpcmOpenImportHold(room,'통합 이어갱신 JSON',input.value,kept=>runPreview(kept),guard);busy=true;invalidate();try{try{parsed=parseIntegratedResult(input.value,job);}catch(error){if(rpcmImportErrorRepairable(error)&&rpcmOpenJsonRepair(room,'통합 이어갱신 JSON',input.value,kept=>runPreview(kept),guard)){status.textContent='JSON 형식 오류 · 수정창에서 고친 뒤 재검증하세요.';return;}throw error;}const source=await assertIntegratedSource(room,job);if(!restore.innerHTML&&parsed.outputs.personInfo.status==='updated'){const policy=manualPersonImportPolicy(room,job.drafts.personInfo,parsed.outputs.personInfo),names=[...new Set([...policy.deleted,...policy.missing])];if(names.length)restore.innerHTML=`<details><summary>삭제·복원 대상 인물 확인</summary><p>삭제한 인물은 기본 제외됩니다. 다시 살릴 인물만 선택하고 검증하세요.</p>${names.map(name=>`<label><input type="checkbox" data-integrated-person value="${esc(name)}"> ${esc(name)} 복원</label>`).join('')}</details>`;}prepared=prepareIntegratedResult(room,job,parsed,[...restore.querySelectorAll('input:checked')].map(n=>n.value));diff.innerHTML=fullRebuildDiffCardsHtml(prepared,room);for(const {key} of FULL_REBUILD_DOMAINS){const section=diff.querySelector(`[data-rebuild-domain="${key}"]`);if(section){const reason=document.createElement('p');reason.textContent='변경 이유 · '+parsed.outputs[key].reason;reason.style.margin='8px 0';section.querySelector('.rpcm-rebuild-domain-head')?.insertAdjacentElement('afterend',reason);}}diff.hidden=false;apply.disabled=!Object.values(prepared.domains).some(d=>d.valid);status.textContent=`검증 완료 · ${source.newerTurns?`후속 ${source.newerTurns}턴은 다음 갱신에 남습니다. `:''}각 영역의 이유와 Diff를 확인하세요.`;}catch(error){status.textContent='적용 불가: '+error.message;}finally{busy=false;}};
     preview.onclick=()=>runPreview();diff.onchange=()=>{apply.disabled=busy||!prepared||!diff.querySelector('[data-rebuild-select]:checked');};apply.onclick=async()=>{if(busy||!prepared)return;busy=true;committing=true;apply.disabled=true;preview.disabled=true;backdrop.querySelectorAll('textarea,input').forEach(n=>n.disabled=true);try{const selected=new Set([...diff.querySelectorAll('[data-rebuild-select]:checked')].map(n=>n.dataset.rebuildSelect)),result=await commitIntegratedResult(room,job,prepared,selected);status.textContent='선택 영역 저장·확인 완료 · '+result.carrier;integratedRuntime.importDrafts.delete(job.jobId);prepared=null;renderModalIfOpen();}catch(error){status.textContent=error.localCommitted?'로컬 쓰기 후 확인 실패 · 다시 화면을 열어 저장 결과를 점검하세요: '+error.message:'저장하지 않았습니다: '+error.message;prepared=null;}finally{busy=false;committing=false;preview.disabled=false;backdrop.querySelectorAll('textarea,input').forEach(n=>n.disabled=!!n.closest('.is-invalid'));}};const close=()=>{if(committing){status.textContent='저장 결과를 확인 중입니다. 완료 후 닫을 수 있습니다.';return;}backdrop.remove();};backdrop.querySelectorAll('.rpcm-update-dialog-close').forEach(b=>b.onclick=close);backdrop.onclick=e=>{if(e.target===backdrop)close();};backdrop.onkeydown=e=>{if(e.key==='Escape')close();};document.body.append(backdrop);input.focus();
