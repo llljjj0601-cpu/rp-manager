@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🪽위시 RP Manager
 // @namespace    local.rp.context.manager
-// @version      0.17.43
+// @version      0.17.44
 // @description  장기 RP용 현재상태·날짜로그·연속성 타임라인·캐릭터 설정을 관리하고, 검수형 AI 생성과 필요한 컨텍스트 자동 주입을 지원합니다.
 // @author       User
 // @license      All Rights Reserved
@@ -975,7 +975,7 @@ const wrpmFullBackupV2 = (() => {
         const style=document.createElement('style');
         style.textContent=':host{all:initial}section{box-sizing:border-box;width:280px;border:1px solid #d898ba;border-radius:12px;background:#fff4f9;color:#442d3b;padding:12px;font:13px/1.5 system-ui;box-shadow:0 4px 20px #0003}strong,span{display:block}span{white-space:pre-wrap;overflow-wrap:anywhere;margin-top:5px}button{font:inherit;margin-top:8px;padding:5px 9px;border:1px solid #b982a2;border-radius:6px;background:white;color:#442d3b;cursor:pointer}';
         const card=document.createElement('section');
-        card.innerHTML='<strong>WISH 0.17.43 · 실행 상태</strong><span role="status" aria-live="polite"></span><button type="button">닫기</button>';
+        card.innerHTML='<strong>WISH 0.17.44 · 실행 상태</strong><span role="status" aria-live="polite"></span><button type="button">닫기</button>';
         card.querySelector('button').onclick=()=>{dismissed=true;host?.remove();host=null;};
         root.append(style,card);document.documentElement.appendChild(host);
         for(const [key,value] of Object.entries({position:'fixed',right:'16px',top:'112px','z-index':'2147483647',display:'block',visibility:'visible',opacity:'1',width:'280px',height:'auto'}))host.style.setProperty(key,value,'important');
@@ -999,13 +999,13 @@ const wrpmFullBackupV2 = (() => {
     wishBoot.status('duplicate', '다른 RP Manager 실행이 감지됐습니다. 버전: '+String(window.__WISH_RP_MANAGER_LOADED__.version||'알 수 없음'));
     return;
   }
-  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.17.43', loadedAt: Date.now() };
+  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.17.44', loadedAt: Date.now() };
   // 같은 페이지에 남아 있는 v0.8.10 복사본이 뒤늦게 시작되는 경우도 차단합니다.
   window.__RP_MANAGER_0810_LOADED__ = true;
 
   const APP = {
     name: '🪽위시 RP Manager',
-    version: '0.17.43',
+    version: '0.17.44',
     dbName: 'RPContextManagerDB',
     dbVersion: 2,
     storeName: 'rooms',
@@ -7791,7 +7791,7 @@ ${dialogueText}`;
     }
     room.personUiActors = [...personUiMap.values()];
     room.personPlayerName = String(room.personPlayerName || '').trim();
-    if (!room.personBundleV01411) {
+    if (!room.personBundleV01411 && typeof room.speechInjectionEnabled!=='boolean' && typeof room.relationshipInjectionEnabled!=='boolean') {
       const previouslyEnabled = room.knowledgeInjectionEnabled || room.personStateInjectionEnabled;
       room.knowledgeInjectionEnabled = !!previouslyEnabled;
       room.personStateInjectionEnabled = !!previouslyEnabled;
@@ -10326,6 +10326,25 @@ ${dialogueText}`;
     return [...byName.values()];
   }
 
+  function personInjectionEnabled(room,kind) {
+    if(kind==='knowledge')return room.knowledgeInjectionEnabled===true;
+    const field=kind==='speech'?'speechInjectionEnabled':'relationshipInjectionEnabled';
+    return typeof room[field]==='boolean'?room[field]:room.personStateInjectionEnabled===true;
+  }
+  function setPersonInjectionEnabled(room,kind,enabled) {
+    if(!['knowledge','speech','relationship'].includes(kind))throw new Error('인물정보 종류를 확인해 주세요.');
+    const speech=personInjectionEnabled(room,'speech'),relationship=personInjectionEnabled(room,'relationship');
+    room.speechInjectionEnabled=speech;room.relationshipInjectionEnabled=relationship;room.personBundleV01411=true;
+    if(kind==='knowledge')room.knowledgeInjectionEnabled=!!enabled;
+    else room[kind==='speech'?'speechInjectionEnabled':'relationshipInjectionEnabled']=!!enabled;
+    room.personStateInjectionEnabled=room.speechInjectionEnabled||room.relationshipInjectionEnabled;
+  }
+  async function rpcmCallRefinerConnectionTest44(options) {
+    const bridge=window.__WISH_RP_MANAGER_AI_BRIDGE__;
+    if(typeof bridge?.call!=='function')throw new Error('응답교정의 공용 AI 연결이 아직 준비되지 않았습니다. RP Manager를 최신 버전으로 업데이트하고 페이지를 새로고침해 주세요.');
+    return bridge.call('연결 테스트입니다. 정확히 OK만 출력하세요.',{...options,test:true,responseRefiner:true});
+  }
+
   function personInformationItem(room, bundle) {
     const conflict = knowledgeConflicts(room);
     const name = bundle.name;
@@ -10335,8 +10354,8 @@ ${dialogueText}`;
       return card.inject && card.fact.trim() && card.status !== 'unconfirmed'
         && (card.status !== 'mistaken' || card.actualFact.trim()) && !conflict.has(key);
     }) : [];
-    const speech = room.personStateInjectionEnabled ? bundle.speech.filter(record => record.inject && (!player || record.target.trim() === player)) : [];
-    const relationships = room.personStateInjectionEnabled ? bundle.relationship.filter(record => record.inject && (!player || record.target.trim() === player)) : [];
+    const speech = personInjectionEnabled(room,'speech') ? bundle.speech.filter(record => record.inject && (!player || record.target.trim() === player)) : [];
+    const relationships = personInjectionEnabled(room,'relationship') ? bundle.relationship.filter(record => record.inject && (!player || record.target.trim() === player)) : [];
     if (!knowledge.length && !speech.length && !relationships.length) return null;
     const labels = { knows:'알고 있음', 'does-not-know':'모름 (직접 확인)', suspects:'의심 중', mistaken:'오해' };
     const related = relationships.map(record => [record.official && `실제 관계: ${record.official}`, record.stance && `${name}의 태도: ${record.stance}`, record.conflict && `남은 갈등·경계: ${record.conflict}`, record.trajectory && `핵심 전환: ${record.trajectory}`].filter(Boolean).join('\n')).join('\n\n');
@@ -10467,8 +10486,7 @@ ${dialogueText}`;
     });
     panel.addEventListener('change', event => {
       if (event.target.id === 'rpcm-knowledge-enabled') {
-        room.knowledgeInjectionEnabled = event.target.checked;
-        room.personStateInjectionEnabled = event.target.checked;
+        setPersonInjectionEnabled(room,'knowledge',event.target.checked);
         // 사용자가 명시적으로 주입을 켤 때 간편 주입 관리의 일시 제외도 해제합니다.
         if (room.knowledgeInjectionEnabled && room.pending) room.pending.quickRemovedItems = quickRemovedPendingItems(room.pending).filter(item => !isKnowledgePendingItem(item));
         void persist().then(() => renderModalIfOpen());
@@ -10723,9 +10741,9 @@ ${dialogueText}`;
     const empty=text=>`<p class="rpcm-person-reader-empty">${text}</p>`;
     const body=pane==='knowledge'?`<div class="rpcm-person-reader-caption"><span>기록 있는 정보 ${knownFacts.length} · 전체 정보 ${facts.length}</span><small>이 인물의 카드가 없으면 확인 안 됨으로 표시합니다.</small></div>${facts.map(factHtml).join('')||empty('저장된 인지 정보가 없습니다.')}`:pane==='speech'?speaking.map((target,index)=>partnerHtml(target,index,'speech')).join('')||empty('저장된 호칭·말투가 없습니다.'):pane==='review'?reviewHtml||empty('이전에 종료한 기록이 없습니다.'):relational.map((target,index)=>partnerHtml(target,index,'relationship')).join('')||empty('저장된 관계 정보가 없습니다. 호칭 탭에서 서로 쓰는 호칭·말투를 확인할 수 있습니다.');
     host.dataset.pane=pane;host.dataset.personName=selected;
-    host.innerHTML=`<section class="rpcm-person-reader" data-person-name="${escapeValue(selected)}"><header class="rpcm-person-reader-head"><span class="rpcm-person-reader-avatar">${escapeValue(Array.from(selected)[0]||'?')}</span><div class="rpcm-person-reader-head-copy"><h3>${escapeValue(selected)}</h3><p>${escapeValue(actor.aliases.join(' · '))}${actor.aliases.length?' · ':''}관계 ${relational.length} · 인지 ${knownFacts.length}</p></div><div class="rpcm-person-reader-head-actions">${active?'<span class="rpcm-person-reader-status" data-status="aware">지금 주입</span>':''}<details class="rpcm-person-reader-settings"><summary>주입 설정</summary><div><label><input id="rpcm-person-bundle-enabled" type="checkbox" ${room.knowledgeInjectionEnabled&&room.personStateInjectionEnabled?'checked':''}> 인물 세트 자동 주입</label></div></details></div></header>${personReaderTabs(pane,archived.length)}<div class="rpcm-person-reader-body" role="tabpanel" aria-label="${{relationship:'관계',knowledge:'인지',speech:'호칭·말투',review:'이전 검토'}[pane]}">${body}</div></section>`;
+    host.innerHTML=`<section class="rpcm-person-reader" data-person-name="${escapeValue(selected)}"><header class="rpcm-person-reader-head"><span class="rpcm-person-reader-avatar">${escapeValue(Array.from(selected)[0]||'?')}</span><div class="rpcm-person-reader-head-copy"><h3>${escapeValue(selected)}</h3><p>${escapeValue(actor.aliases.join(' · '))}${actor.aliases.length?' · ':''}관계 ${relational.length} · 인지 ${knownFacts.length}</p></div><div class="rpcm-person-reader-head-actions">${active?'<span class="rpcm-person-reader-status" data-status="aware">지금 주입</span>':''}<details class="rpcm-person-reader-settings"><summary>주입 설정</summary><div><label><input id="rpcm-person-bundle-enabled" type="checkbox" ${personInjectionEnabled(room,pane==='review'?'knowledge':pane)?'checked':''}> ${{knowledge:'인지 카드 주입',speech:'호칭·말투 주입',relationship:'관계·감정선 주입',review:'인지 카드 주입'}[pane]}</label></div></details></div></header>${personReaderTabs(pane,archived.length)}<div class="rpcm-person-reader-body" role="tabpanel" aria-label="${{relationship:'관계',knowledge:'인지',speech:'호칭·말투',review:'이전 검토'}[pane]}">${body}</div></section>`;
     const bundleInput=host.querySelector('#rpcm-person-bundle-enabled');
-    if(bundleInput)bundleInput.onchange=async event=>{const enabled=event.target.checked;room.knowledgeInjectionEnabled=enabled;room.personStateInjectionEnabled=enabled;if(enabled&&room.pending)room.pending.quickRemovedItems=quickRemovedPendingItems(room.pending).filter(item=>!isKnowledgePendingItem(item));try{await saveRoom(room);await rebuildPendingKnowledgeItem(room);renderPersonCoreUi(room,overlay);}catch(error){notify('인물 세트 주입 갱신 실패: '+error.message,'error');}};
+    if(bundleInput)bundleInput.onchange=async event=>{const enabled=event.target.checked;setPersonInjectionEnabled(room,pane==='review'?'knowledge':pane,enabled);if(enabled&&room.pending)room.pending.quickRemovedItems=quickRemovedPendingItems(room.pending).filter(item=>!isKnowledgePendingItem(item));try{await saveRoom(room);await rebuildPendingKnowledgeItem(room);renderPersonCoreUi(room,overlay);}catch(error){notify('인물 세트 주입 갱신 실패: '+error.message,'error');}};
     host.onclick=event=>{
       const pin=event.target.closest('[data-person-pin]');if(pin){event.preventDefault();void personTogglePin(room,overlay,pin.dataset.personPin);return;}
       const edit=event.target.closest('[data-profile-edit]');if(edit){openPersonCoreCardEditor(room,overlay,edit.dataset.profileEdit,edit.dataset.profileId);return;}
@@ -10811,7 +10829,7 @@ ${dialogueText}`;
       return nav+items.slice(start,end).map(renderer).join('')+nav;
     };
     const content = selected ? '<div id="rpcm-person-profiles" class="rpcm-person-profiles"></div>'
-      : pane === 'knowledge' ? factsHtml : pane === 'speech' ? `<div class="m3-toolbar"><span class="m3-muted m3-grow">현재 호칭·말투 ${speech.length}쌍</span><div class="m3-actions">${personCoreButton('추가','addSpeech')}${personCoreButton(`호칭·말투 주입 ${room.personStateInjectionEnabled ? 'ON' : 'OFF'}`,'toggleInjection','person',room.personStateInjectionEnabled ? 'mini is-on' : 'mini')}</div></div>${renderShortList(speech,speechPanel,'아직 호칭·말투 기록이 없습니다.')}` : pane === 'relationship' ? `<div class="m3-toolbar"><span class="m3-muted m3-grow">관계·감정선 ${relations.length}방향</span><div class="m3-actions">${personCoreButton('추가','addRelationship')}${personCoreButton(`관계 주입 ${room.personStateInjectionEnabled ? 'ON' : 'OFF'}`,'toggleInjection','person',room.personStateInjectionEnabled ? 'mini is-on' : 'mini')}</div></div>${renderShortList(relations,relationPanel,'아직 관계 기록이 없습니다.')}` : `<div class="m3-sechead"><span class="m3-muted">종료한 인지·호칭·관계 기록을 확인합니다.</span></div>${room.personLastImportSummary ? `<p class="m3-muted">최근 가져오기 · ${esc(room.personLastImportSummary)}</p>` : ''}${renderShortList(vm.archived,reviewPanel,'검토할 항목이 없습니다.')}`;
+      : pane === 'knowledge' ? factsHtml : pane === 'speech' ? `<div class="m3-toolbar"><span class="m3-muted m3-grow">현재 호칭·말투 ${speech.length}쌍</span><div class="m3-actions">${personCoreButton('추가','addSpeech')}${personCoreButton(`호칭·말투 주입 ${personInjectionEnabled(room,'speech') ? 'ON' : 'OFF'}`,'toggleInjection','speech',personInjectionEnabled(room,'speech') ? 'mini is-on' : 'mini')}</div></div>${renderShortList(speech,speechPanel,'아직 호칭·말투 기록이 없습니다.')}` : pane === 'relationship' ? `<div class="m3-toolbar"><span class="m3-muted m3-grow">관계·감정선 ${relations.length}방향</span><div class="m3-actions">${personCoreButton('추가','addRelationship')}${personCoreButton(`관계 주입 ${personInjectionEnabled(room,'relationship') ? 'ON' : 'OFF'}`,'toggleInjection','relationship',personInjectionEnabled(room,'relationship') ? 'mini is-on' : 'mini')}</div></div>${renderShortList(relations,relationPanel,'아직 관계 기록이 없습니다.')}` : `<div class="m3-sechead"><span class="m3-muted">종료한 인지·호칭·관계 기록을 확인합니다.</span></div>${room.personLastImportSummary ? `<p class="m3-muted">최근 가져오기 · ${esc(room.personLastImportSummary)}</p>` : ''}${renderShortList(vm.archived,reviewPanel,'검토할 항목이 없습니다.')}`;
     host.innerHTML = `${actorsHtml}${tabHtml}<div class="m3-sub" data-key="cog-${pane}">${content}</div>`;
     host.querySelectorAll('.m3-who [data-person-pin]').forEach(button=>button.onclick=()=>personTogglePin(room,overlay,button.dataset.personPin));
     if (selected) renderPersonProfileOverview(room,overlay,selected,pane,previousDetailOpen);
@@ -10847,8 +10865,8 @@ ${dialogueText}`;
       if (action === 'manageHidden') { openPersonHiddenDialog(room,overlay); return; }
       if (action === 'addActor' || action === 'editActor') { openPersonCoreActorDialog(room,overlay,action === 'editActor' ? arg : ''); return; }
       if (action === 'toggleInjection') {
-        const enabled = arg === 'knowledge' ? !room.knowledgeInjectionEnabled : !room.personStateInjectionEnabled;
-        room.knowledgeInjectionEnabled = enabled; room.personStateInjectionEnabled = enabled;
+        const kind=arg==='person'?'speech':arg,enabled=!personInjectionEnabled(room,kind);
+        setPersonInjectionEnabled(room,kind,enabled);
         if (enabled && room.pending) room.pending.quickRemovedItems = quickRemovedPendingItems(room.pending).filter(item => !isKnowledgePendingItem(item));
         try { await saveRoom(room); await rebuildPendingKnowledgeItem(room); renderPersonCoreUi(room,overlay); }
         catch (error) { notify(`인물정보 주입 갱신 실패: ${error.message}`,'error',6000); }
@@ -10869,24 +10887,27 @@ ${dialogueText}`;
     });
   }
 
-  async function deletePersonSpeechRecord(room,id) {
+  async function deletePersonStateRecord(room,id,type='speech') {
+    if(!['speech','relationship'].includes(type))throw new Error('삭제할 카드 종류를 확인해 주세요.');
     if(state.currentRoom!==room)throw new Error('방이 바뀌었습니다. 현재 방에서 다시 확인해 주세요.');
     const rows=(room.personStateRecords||[]).filter(row=>String(row.id)===String(id));
-    if(rows.length!==1||rows[0].type!=='speech')throw new Error('삭제할 호칭 카드를 확인할 수 없습니다.');
+    if(rows.length!==1||rows[0].type!==type)throw new Error('삭제할 인물정보 카드를 확인할 수 없습니다.');
     const signature=row=>{const copy={personStateRecords:[structuredClone(row)]};normalizePersonStateRecords(copy);return JSON.stringify(Object.entries(copy.personStateRecords[0]).sort(([a],[b])=>a.localeCompare(b)));};
     const source=signature(rows[0]),before=JSON.stringify(room),candidate=structuredClone(room);
     candidate.personStateRecords=candidate.personStateRecords.filter(row=>String(row.id)!==String(id));
-    await saveRoom(candidate,'speech-record-delete',(next,stored)=>{
+    await saveRoom(candidate,`${type}-record-delete`,(next,stored)=>{
       if(state.currentRoom!==room||JSON.stringify(room)!==before)throw new Error('삭제 중 화면의 자료가 바뀌었습니다. 다시 확인해 주세요.');
       const latest=(stored?.personStateRecords||[]).filter(row=>String(row.id)===String(id));
-      if(latest.length!==1||latest[0].type!=='speech'||signature(latest[0])!==source)throw new Error('다른 작업에서 호칭 카드를 변경했습니다. 최신 내용을 다시 확인해 주세요.');
-      if((next.personStateRecords||[]).some(row=>String(row.id)===String(id)))throw new Error('호칭 삭제 내용을 병합하지 못했습니다. 다시 확인해 주세요.');
+      if(latest.length!==1||latest[0].type!==type||signature(latest[0])!==source)throw new Error('다른 작업에서 인물정보 카드를 변경했습니다. 최신 내용을 다시 확인해 주세요.');
+      if((next.personStateRecords||[]).some(row=>String(row.id)===String(id)))throw new Error('인물정보 삭제 내용을 병합하지 못했습니다. 다시 확인해 주세요.');
     });
     const stored=await readManualStoredRoom(room);
     if(!stored||(stored.personStateRecords||[]).some(row=>String(row.id)===String(id)))throw new Error('삭제 후 저장본 확인에 실패했습니다. 새로고침 후 확인해 주세요.');
-    if(state.currentRoom!==room||JSON.stringify(room)!==before)throw new Error('호칭 삭제 저장 후 화면의 자료가 바뀌었습니다. 새로고침 후 확인해 주세요.');
+    if(state.currentRoom!==room||JSON.stringify(room)!==before)throw new Error('인물정보 삭제 저장 후 화면의 자료가 바뀌었습니다. 새로고침 후 확인해 주세요.');
     rpcmReplaceRoomObject(room,stored);
   }
+  async function deletePersonSpeechRecord(room,id){return deletePersonStateRecord(room,id,'speech');}
+
 
   function openPersonCoreCardEditor(room,overlay,kind,id = '') {
     state.personAdvancedOpen = true;
@@ -11107,18 +11128,17 @@ ${dialogueText}`;
         grouped.get(name).push(record);
       }
       const editing = new Set([...parent.querySelectorAll('.rpcm-person-fields:not([hidden])')].map(node => node.closest('[data-person-record]')?.dataset.personRecord));
-      parent.innerHTML = `<div class="rpcm-person-type-head"><div><strong>${label(type)} · ${active.length}개</strong><span>${type === 'speech' ? '누가 누구를 어떻게 부르는지, 상황별 말투를 구분합니다.' : '공식 관계와 각 인물의 감정·경계를 방향별로 구분합니다.'}</span></div><label><input type="checkbox" class="rpcm-person-injection" ${room.personStateInjectionEnabled ? 'checked' : ''}> 호칭·관계 주입 ${room.personStateInjectionEnabled ? 'ON' : 'OFF'}</label><button type="button" class="rpcm-add-btn rpcm-person-add">＋ 카드</button></div>`
+      parent.innerHTML = `<div class="rpcm-person-type-head"><div><strong>${label(type)} · ${active.length}개</strong><span>${type === 'speech' ? '누가 누구를 어떻게 부르는지, 상황별 말투를 구분합니다.' : '공식 관계와 각 인물의 감정·경계를 방향별로 구분합니다.'}</span></div><label><input type="checkbox" class="rpcm-person-injection" ${personInjectionEnabled(room,type) ? 'checked' : ''}> ${type==='speech'?'호칭·말투':'관계·감정선'} 주입 ${room.personStateInjectionEnabled ? 'ON' : 'OFF'}</label><button type="button" class="rpcm-add-btn rpcm-person-add">＋ 카드</button></div>`
         + ([...grouped].map(([name, entries]) => `<div class="rpcm-person-group" data-person="${esc(name)}"><h3>👤 ${esc(name)} <small>${entries.length}개</small></h3>${entries.map(record => {
           const detail = record.type === 'speech' ? [record.address && '호칭 ' + record.address, record.tone && '말투 ' + record.tone, record.context && '조건 ' + record.context].filter(Boolean).join(' · ') : [record.official && '공식 ' + record.official, record.stance && '태도 ' + record.stance, record.conflict && '갈등 ' + record.conflict, record.trajectory && `핵심 전환 ${record.trajectory.length}자`].filter(Boolean).join(' · ');
           const fields = record.type === 'speech' ? `<label>호칭<input data-person-field="address" value="${esc(record.address)}"></label><label>말투<input data-person-field="tone" value="${esc(record.tone)}"></label><label>적용 조건<input data-person-field="context" value="${esc(record.context)}"></label>` : `<label>공식 관계<input data-person-field="official" value="${esc(record.official)}"></label><label>이 인물의 태도<textarea data-person-field="stance" rows="2">${esc(record.stance)}</textarea></label><label>남은 갈등·경계<textarea data-person-field="conflict" rows="2">${esc(record.conflict)}</textarea></label><label>핵심 전환<textarea data-person-field="trajectory" rows="3">${esc(record.trajectory || '')}</textarea></label>`;
-          return `<details class="rpcm-person-record" data-person-record="${esc(record.id)}"><summary><strong>${esc(record.person || '인물')} → ${esc(record.target || '상대')}</strong><span>${esc(detail || '내용 입력')}</span><em>${record.inject ? '주입 포함' : '보관만'}</em></summary><div class="rpcm-person-read"><p>${esc(detail || '내용 입력')}</p><small>${esc(record.evidence || '근거 미기록')}</small><button type="button" data-person-action="edit">편집</button></div><div class="rpcm-person-fields" hidden><label>인물<input data-person-field="person" value="${esc(record.person)}"></label><label>상대<input data-person-field="target" value="${esc(record.target)}"></label>${fields}${record.type==='relationship'?relationshipGraphFieldsHtml(record):''}<label>확인 근거<textarea data-person-field="evidence" rows="2">${esc(record.evidence)}</textarea></label><div class="rpcm-person-record-actions"><label><input data-person-field="inject" type="checkbox" ${record.inject ? 'checked' : ''}> 주입에 포함</label><button type="button" data-person-action="archive">종료 · 보관</button>${record.type==='speech'?'<button type="button" data-person-action="delete-speech">삭제</button>':''}<button type="button" data-person-action="close">접기</button></div></div></details>`;
+          return `<details class="rpcm-person-record" data-person-record="${esc(record.id)}"><summary><strong>${esc(record.person || '인물')} → ${esc(record.target || '상대')}</strong><span>${esc(detail || '내용 입력')}</span><em>${record.inject ? '주입 포함' : '보관만'}</em></summary><div class="rpcm-person-read"><p>${esc(detail || '내용 입력')}</p><small>${esc(record.evidence || '근거 미기록')}</small><button type="button" data-person-action="edit">편집</button></div><div class="rpcm-person-fields" hidden><label>인물<input data-person-field="person" value="${esc(record.person)}"></label><label>상대<input data-person-field="target" value="${esc(record.target)}"></label>${fields}${record.type==='relationship'?relationshipGraphFieldsHtml(record):''}<label>확인 근거<textarea data-person-field="evidence" rows="2">${esc(record.evidence)}</textarea></label><div class="rpcm-person-record-actions"><label><input data-person-field="inject" type="checkbox" ${record.inject ? 'checked' : ''}> 주입에 포함</label><button type="button" data-person-action="archive">종료 · 보관</button><button type="button" data-person-action="${record.type==='speech'?'delete-speech':'delete-relationship'}">삭제</button><button type="button" data-person-action="close">접기</button></div></div></details>`;
         }).join('')}</div>`).join('') || '<div class="rpcm-person-empty">등록된 카드가 없습니다. 전용 방 결과물을 가져오거나 직접 추가하세요.</div>');
       for (const node of parent.querySelectorAll('.rpcm-person-record')) {
         if (editing.has(node.dataset.personRecord)) { node.open = true; node.querySelector('.rpcm-person-fields').hidden = false; node.querySelector('.rpcm-person-read').hidden = true; }
       }
       parent.querySelector('.rpcm-person-injection').onchange = async event => {
-        room.personStateInjectionEnabled = event.target.checked;
-        room.knowledgeInjectionEnabled = event.target.checked;
+        setPersonInjectionEnabled(room,type,event.target.checked);
         if (room.personStateInjectionEnabled && room.pending) room.pending.quickRemovedItems = quickRemovedPendingItems(room.pending).filter(item => !isKnowledgePendingItem(item));
         await saveRoom(room);
         try { await rebuildPendingKnowledgeItem(room); } catch (error) { notify(`인물정보 주입 갱신 실패: ${error.message}`, 'error', 5400); }
@@ -11143,14 +11163,14 @@ ${dialogueText}`;
           node.querySelector('.rpcm-person-read').hidden = show;
           node.querySelector('.rpcm-person-fields').hidden = !show;
           if (show) node.querySelector('[data-person-field="person"]')?.focus();
-        } else if (action.dataset.personAction === 'delete-speech' && record.type==='speech') {
-          if(action.disabled||!confirm(`${record.person || '인물'} → ${record.target || '상대'} 호칭 카드를 삭제할까요?\n이 카드 하나만 삭제하며 인물·인지·관계와 다른 호칭은 유지합니다.`))return;
+        } else if ((action.dataset.personAction === 'delete-speech' && record.type==='speech'||action.dataset.personAction === 'delete-relationship' && record.type==='relationship')) {
+          if(action.disabled||!confirm(`${record.person || '인물'} → ${record.target || '상대'} ${record.type==='speech'?'호칭':'관계·감정선'} 카드를 삭제할까요?\n이 카드 하나만 삭제하며 인물·인지·관계와 다른 호칭은 유지합니다.`))return;
           action.disabled=true;
-          void deletePersonSpeechRecord(room,record.id).then(async()=>{
+          void deletePersonStateRecord(room,record.id,record.type).then(async()=>{
             renderPersonPanel(room,overlay);state.capacityUiRefresh?.();
-            try{await rebuildPendingKnowledgeItem(room);notify('호칭 카드를 삭제했습니다.','success');}
-            catch(error){notify(`호칭은 로컬에서 삭제됐지만 현재 주입 갱신에 실패했습니다: ${error.message}`,'error',6500);}
-          }).catch(error=>notify(`호칭 삭제 확인 실패: ${error.message}`,'error',6500)).finally(()=>{if(action.isConnected)action.disabled=false;});
+            try{await rebuildPendingKnowledgeItem(room);notify('인물정보 카드를 삭제했습니다.','success');}
+            catch(error){notify(`인물정보 카드는 로컬에서 삭제됐지만 현재 주입 갱신에 실패했습니다: ${error.message}`,'error',6500);}
+          }).catch(error=>notify(`인물정보 삭제 확인 실패: ${error.message}`,'error',6500)).finally(()=>{if(action.isConnected)action.disabled=false;});
         } else if (action.dataset.personAction === 'archive' && confirm('이 카드를 주입에서 제외하고 이전 검토로 보낼까요?')) {
           record.active = false; record.inject = false;
           void saveRoom(room).then(() => rebuildPendingKnowledgeItem(room)).then(() => renderModalIfOpen()).catch(error => notify(error.message,'error'));
@@ -19393,6 +19413,8 @@ ${dialogueText}`;
       personStateRecords:room?.personStateRecords || [],
       knowledgeInjectionEnabled:!!room?.knowledgeInjectionEnabled,
       personStateInjectionEnabled:!!room?.personStateInjectionEnabled,
+      speechInjectionEnabled:room?.speechInjectionEnabled,
+      relationshipInjectionEnabled:room?.relationshipInjectionEnabled,
       personPlayerName:String(room?.personPlayerName || ''),
       autoCharacterDetection:!!room?.autoCharacterDetection,
       autoCharacterLibraryId:String(room?.autoCharacterLibraryId || ''),
@@ -22581,7 +22603,7 @@ ${dialogueText}`;
               if(commonStatus)commonStatus.textContent=status.textContent;
               try {
                 if(!testedConnections.has(connectionKey))testedConnections.set(connectionKey,Promise.resolve().then(async()=>feature==='responseRefiner'
-                  ? await window.__WISH_RP_MANAGER_AI_BRIDGE__.call('연결 테스트입니다. 정확히 OK만 출력하세요.',{test:true,responseRefiner:true,model,thinkingLevel:next.thinkingLevel})
+                  ? await rpcmCallRefinerConnectionTest44({model,thinkingLevel:next.thinkingLevel})
                   : await callAiSummaryProvider(next.provider, next, readAiSecret(next.provider), '짧게 응답하세요.', '연결 테스트입니다. 정확히 OK만 출력하세요.', 64, () => {}, { feature, room, test:true })));
                 const result = await testedConnections.get(connectionKey);
                 setAiFeatureStatus(feature, 'ok', next.provider, result.model || model, `연결 및 모델 호출 정상 · ${((Date.now()-started)/1000).toFixed(1)}초`);
@@ -28547,7 +28569,7 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
     }
     if(selected.has('personInfo')) {
       for(const field of ['knowledgeCards','personStateRecords','personUiActors','personDeletedNames','personHiddenActors'])next[field]=[];
-      next.knowledgeInjectionEnabled=false;next.personStateInjectionEnabled=false;
+      next.knowledgeInjectionEnabled=false;next.personStateInjectionEnabled=false;next.speechInjectionEnabled=false;next.relationshipInjectionEnabled=false;
       clear(['personLastImportSummary']);
     }
     if(selected.has('lore')) {next.lorePacks=[];clear(['loreBackups','_loreBudgetInfo']);}
@@ -28799,6 +28821,7 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
     manualRestoreDrafts(room);
     return `<section class="rpcm-update-center" id="rpcm-section-update" aria-label="수동 업데이트 센터">
       <div class="rpcm-update-intro"><div><strong>수동 업데이트 센터</strong><p>작업자료를 만든 뒤 결과를 붙여넣거나 파일로 가져옵니다. 자료집은 JSON 파일도 지원합니다. 변경 내용을 검토하고 확인해야만 저장합니다.</p></div><div class="rpcm-update-intro-actions"><button type="button" class="rpcm-btn primary" id="rpcm-update-batch">작업자료 일괄 생성</button><button type="button" class="rpcm-btn secondary" id="rpcm-update-export">${rpcmUiIcon('download')} RP 원문 내보내기</button><button type="button" class="rpcm-btn secondary" id="rpcm-update-refresh">새 RP 범위 확인</button><details class="rpcm-update-more"><summary>점검·복구</summary><div class="rpcm-update-more-actions"><button type="button" class="rpcm-btn secondary" id="rpcm-manual-integrity-check">수동 결과 적용 누락 점검</button><button type="button" class="rpcm-btn secondary" id="rpcm-manual-recovery">복구용 결과 재적용</button></div></details></div></div>
+      <details class="rpcm-pref-card" data-update-usage><summary>처음 쓰는 방·20턴 갱신·장기기억 사용 안내</summary><p><b>새 RP 갱신:</b> 통합 이어갱신은 20턴 이내를 권장하며 최대 40턴을 선택합니다. 작업자료를 외부 AI에 전달하고 결과를 검토·저장해야 기억이 갱신됩니다. TXT를 받거나 주입만 반복하는 것과는 다릅니다.</p><p><b>이미 100턴 이상 진행한 방:</b> 버릴 필요 없습니다. 처음에는 전체 기억 재구축 또는 개별 작업의 전체 RP/범위 지정으로 지난 대화를 반영하세요. 과거 내용도 반영하려면 ‘지금부터’로 시작점을 넘기지 마세요. 긴 자료는 기존 자동 분할 기능을 사용할 수 있습니다.</p><p><b>파일 선택:</b> 통합 패킷은 여러 영역을 한 TXT로 묶고, 일괄 생성은 영역별 TXT를 ZIP으로 받습니다. 인물정보 위주로 관리하려면 인물정보 작업을 선택하고 기본 성격·말투는 캐릭터 설정에도 보관해 결과를 검토하세요.</p><p><b>장기기억:</b> 크랙 장기기억은 별도 저장소입니다. 매니저 주입과 같은 기능이 아니며 수동 갱신만 했다고 장기기억도 자동 정리되는 것은 아닙니다. 필요에 따라 별도로 관리하세요.</p></details>
       <section class="rpcm-auto-start" aria-labelledby="rpcm-auto-start-heading"><div><h3 id="rpcm-auto-start-heading">업데이트 시작점</h3><p>각 작업의 다음 기본 업데이트 범위를 정합니다. 이미 저장된 기억은 유지되며, 시작점이 바뀌면 해당 작업의 미저장 작업자료·결과 대기는 취소됩니다.</p><span id="rpcm-auto-start-status">작업별 기준점은 아래 카드에서 확인할 수 있습니다.</span></div><button type="button" class="rpcm-btn secondary" id="rpcm-auto-start-now">${rpcmUiIcon('calendar')} 시작점 설정</button></section>
       <div class="rpcm-update-steps" aria-label="작업 순서"><span><b>1</b>작업자료 만들기</span><span><b>2</b>외부 AI에 보내기</span><span><b>3</b>결과 검토·저장</span></div><div class="rpcm-update-list">${integratedCardHtml(room)}${Object.entries(MANUAL_UPDATE_TASKS).map(([task, info]) => { const blocked = task === 'lore' && !manualLoreGuideSlot(room).ready; return `<article class="rpcm-update-card${blocked ? ' rpcm-update-card-planned' : ''}" data-update-task="${task}"><div class="rpcm-update-card-main"><div class="rpcm-update-card-title"><h3>${esc(info.title)}</h3><span class="rpcm-badge-row">${wishStatusBadge(info.version)}${wishStatusBadge(task==='lore'?'증분 · 삭제 없음':info.fullOutput?'전체 결과':'변경 날짜만')}</span></div><p>${esc(info.outputs)}${blocked ? ' · 최종 지침 연결 후 실행할 수 있습니다.' : ''}</p><div class="rpcm-update-status">${manualTaskStatusHtml(room, task)}</div></div><div class="rpcm-update-actions">${manualTaskActionsHtml(room,task,blocked)}</div></article>`; }).join('')}${renderLongTermUpdateCards(room)}</div>
       <p class="rpcm-update-footnote">일반 작업자료 생성과 미리보기는 기억·체크포인트를 바꾸지 않습니다. 자동 분할 시작은 이어가기용 진행 위치만 저장합니다. 각 구간 결과를 확인해 저장한 뒤에만 결과와 진행 위치가 확정됩니다. 로컬 저장과 현재 주입 반영은 별도로 표시합니다.</p>
@@ -29193,7 +29216,7 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
     if(manualBatchRuntime.busy){notify('작업자료 일괄 생성이 끝난 뒤 다시 열어 주세요.','warn');return;}
     manualBatchStyles();document.getElementById('rpcm-manual-batch-backdrop')?.remove();
     const box=document.createElement('div');box.id='rpcm-manual-batch-backdrop';
-    box.innerHTML=`<section role="dialog" aria-modal="true" aria-label="작업자료 일괄 생성"><header><div><h2>작업자료 일괄 생성</h2><p>범위가 같은 작업은 함께 준비하고, TXT는 카테고리별로 각각 만듭니다.</p></div><button type="button" data-close aria-label="닫기">×</button></header><div class="rpcm-batch-body"><div class="rpcm-batch-settings"><label>작업자료 형식<select data-batch-format><option value="standalone">지침 포함 · 기본</option><option value="light">지침 제외 · 전용방에 같은 지침이 있을 때</option></select></label><button type="button" data-reload>RP 범위 다시 확인</button></div><p data-batch-status role="status">완료 RP를 한 번 조회하고 있습니다…</p><div data-batch-rows></div><aside data-batch-groups aria-live="polite"></aside><div data-batch-files hidden></div></div><footer><p data-batch-summary>범위를 확인한 뒤 생성하세요.</p><div><button type="button" data-close>닫기</button><button type="button" class="primary" data-generate disabled>선택 작업자료 생성 · TXT 받기</button></div></footer></section>`;
+    box.innerHTML=`<section role="dialog" aria-modal="true" aria-label="작업자료 일괄 생성"><header><div><h2>작업자료 일괄 생성</h2><p>범위가 같은 작업은 함께 준비하고, TXT는 카테고리별로 각각 만듭니다.</p></div><button type="button" data-close aria-label="닫기">×</button></header><div class="rpcm-batch-body"><div class="rpcm-batch-settings"><label>작업자료 형식<select data-batch-format><option value="standalone">지침 포함 · 기본</option><option value="light">지침 제외 · 전용방에 같은 지침이 있을 때</option></select></label><button type="button" data-reload>RP 범위 다시 확인</button></div><p data-batch-status role="status">완료 RP를 한 번 조회하고 있습니다…</p><div data-batch-rows></div><aside data-batch-groups aria-live="polite"></aside><div data-batch-files hidden></div></div><footer><p data-batch-summary>범위를 확인한 뒤 생성하세요.</p><div><button type="button" data-close>닫기</button><button type="button" class="primary" data-generate disabled>선택 작업자료 생성 · ZIP 준비</button></div></footer></section>`;
     document.body.append(box);
     let turns=[],busy=false,generating=false,closed=false,files=[],selections=new Map();
     const status=box.querySelector('[data-batch-status]'),host=box.querySelector('[data-batch-rows]'),groups=box.querySelector('[data-batch-groups]'),summary=box.querySelector('[data-batch-summary]'),generate=box.querySelector('[data-generate]');
@@ -29216,10 +29239,10 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
     generate.onclick=async()=>{
       if(busy)return;const choices=selected(),format=box.querySelector('[data-batch-format]').value;generating=true;lock(true);
       try{const result=await createManualBatchPackets(room,turns,choices,format,message=>status.textContent=message);files=result.files;if(!box.isConnected)return;
-        const output=box.querySelector('[data-batch-files]');output.hidden=false;output.innerHTML=`<h3>카테고리별 TXT 준비 완료</h3><p>외부 AI의 결과는 기존 각 카테고리 카드에서 가져오세요. 다운로드되지 않은 파일은 아래에서 각각 받을 수 있습니다.</p>${files.map((file,i)=>`<div><span>${esc(MANUAL_UPDATE_TASKS[file.task].title)}<small>${file.draft.startIndex+1}~${file.draft.endIndex+1}턴 · ${file.draft.turnCount}턴 · ${format==='standalone'?'지침 포함':'지침 제외'}</small></span><button type="button" data-batch-download="${i}">TXT 받기</button></div>`).join('')}<button type="button" data-batch-zip>TXT ${files.length}개 ZIP으로 받기</button>`;
+        const output=box.querySelector('[data-batch-files]');output.hidden=false;output.innerHTML=`<h3>카테고리별 TXT 준비 완료</h3><p>아래 ZIP 버튼으로 선택한 작업자료를 한 번에 받으세요. 모바일에서 여러 파일을 자동으로 열지 않습니다. 필요하면 개별 TXT도 받을 수 있습니다. 외부 AI의 결과는 각 카테고리 카드에서 가져오세요.</p>${files.map((file,i)=>`<div><span>${esc(MANUAL_UPDATE_TASKS[file.task].title)}<small>${file.draft.startIndex+1}~${file.draft.endIndex+1}턴 · ${file.draft.turnCount}턴 · ${format==='standalone'?'지침 포함':'지침 제외'}</small></span><button type="button" data-batch-download="${i}">TXT 받기</button></div>`).join('')}<button type="button" data-batch-zip>선택한 TXT ${files.length}개 ZIP으로 받기</button>`;
         output.querySelectorAll('[data-batch-download]').forEach(b=>b.onclick=()=>{const file=files[Number(b.dataset.batchDownload)];downloadText(file.text,file.name,'text/plain;charset=utf-8');});output.querySelector('[data-batch-zip]').onclick=()=>manualSplitDownloadZip(files,'Wish_작업자료_'+Date.now()+'.zip');
-        status.textContent=`${files.length}개 작업자료 저장 완료 · 각 카테고리에서 결과 가져오기가 활성화됩니다.`;
-        files.forEach(file=>downloadText(file.text,file.name,'text/plain;charset=utf-8'));refreshManualUpdateCards(state.modal,room);output.scrollIntoView({block:'nearest'});
+        status.textContent=`${files.length}개 작업자료 저장 완료 · 아래 ZIP 받기를 눌러 주세요. 각 카테고리에서 결과를 가져올 수 있습니다.`;
+        refreshManualUpdateCards(state.modal,room);output.scrollIntoView({block:'nearest'});
       }catch(error){status.textContent=`일괄 생성 중단: ${error.message}${error.code==='RPCM_FULL_SPLIT_REQUIRED'?' 해당 카테고리의 범위를 줄이거나 개별 카드에서 자동 분할을 진행하세요.':''}`;}
       finally{generating=false;lock(false);if(files.length){host.querySelectorAll('input,select').forEach(n=>n.disabled=true);box.querySelector('[data-batch-format]').disabled=true;box.querySelector('[data-reload]').disabled=true;generate.hidden=true;}}
     };
