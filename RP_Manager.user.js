@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🪽위시 RP Manager
 // @namespace    local.rp.context.manager
-// @version      0.17.47
+// @version      0.17.48
 // @description  장기 RP용 현재상태·날짜로그·연속성 타임라인·캐릭터 설정을 관리하고, 검수형 AI 생성과 필요한 컨텍스트 자동 주입을 지원합니다.
 // @author       User
 // @license      All Rights Reserved
@@ -975,7 +975,7 @@ const wrpmFullBackupV2 = (() => {
         const style=document.createElement('style');
         style.textContent=':host{all:initial}section{box-sizing:border-box;width:280px;border:1px solid #d898ba;border-radius:12px;background:#fff4f9;color:#442d3b;padding:12px;font:13px/1.5 system-ui;box-shadow:0 4px 20px #0003}strong,span{display:block}span{white-space:pre-wrap;overflow-wrap:anywhere;margin-top:5px}button{font:inherit;margin-top:8px;padding:5px 9px;border:1px solid #b982a2;border-radius:6px;background:white;color:#442d3b;cursor:pointer}';
         const card=document.createElement('section');
-        card.innerHTML='<strong>WISH 0.17.47 · 실행 상태</strong><span role="status" aria-live="polite"></span><button type="button">닫기</button>';
+        card.innerHTML='<strong>WISH 0.17.48 · 실행 상태</strong><span role="status" aria-live="polite"></span><button type="button">닫기</button>';
         card.querySelector('button').onclick=()=>{dismissed=true;host?.remove();host=null;};
         root.append(style,card);document.documentElement.appendChild(host);
         for(const [key,value] of Object.entries({position:'fixed',right:'16px',top:'112px','z-index':'2147483647',display:'block',visibility:'visible',opacity:'1',width:'280px',height:'auto'}))host.style.setProperty(key,value,'important');
@@ -999,13 +999,13 @@ const wrpmFullBackupV2 = (() => {
     wishBoot.status('duplicate', '다른 RP Manager 실행이 감지됐습니다. 버전: '+String(window.__WISH_RP_MANAGER_LOADED__.version||'알 수 없음'));
     return;
   }
-  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.17.47', loadedAt: Date.now() };
+  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.17.48', loadedAt: Date.now() };
   // 같은 페이지에 남아 있는 v0.8.10 복사본이 뒤늦게 시작되는 경우도 차단합니다.
   window.__RP_MANAGER_0810_LOADED__ = true;
 
   const APP = {
     name: '🪽위시 RP Manager',
-    version: '0.17.47',
+    version: '0.17.48',
     dbName: 'RPContextManagerDB',
     dbVersion: 2,
     storeName: 'rooms',
@@ -15310,6 +15310,7 @@ ${dialogueText}`;
       rpcmStampRoomEpoch(room);
       rpcmRememberRoomBaseline(room);
       const compatibilityChanged=(room.memorySeparation084||room.simplification078||Object.prototype.hasOwnProperty.call(room.manualUpdateCheckpoints||{},"importantItems"))&&rpcmPrepareLegacyContracts43(room);
+      const aiRecoveryChanged=rpcmRepairLegacyAi48(room);
       const needsStoryLogMigration = !room.storyLogReviewRevisionV1 || !room.storyTimelineGuideRevisionV15;
       if (!Array.isArray(room.lorePacks)) room.lorePacks = [];
       normalizeRoomSlots(room);
@@ -15338,7 +15339,7 @@ ${dialogueText}`;
           }));
         }
       }
-      if (compatibilityChanged || needsStoryLogMigration || oldPersonBuiltin || oldLoreBuiltin || oldTimelineBuiltin) await saveRoom(room);
+      if (compatibilityChanged || aiRecoveryChanged || needsStoryLogMigration || oldPersonBuiltin || oldLoreBuiltin || oldTimelineBuiltin) await saveRoom(room);
       return room;
     }
 
@@ -27546,6 +27547,51 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
     return packet.replace('[/RP_MANAGER_TASK]', `${metadata}\n[/RP_MANAGER_TASK]`) + `\n\n${notice}`;
   }
 
+  function rpcmRepairLegacyAi48(room) {
+    const compat=room?.compatibility43,config=room?.aiMemoryAutomation;
+    if(!compat||compat.aiRecovery48||!config?.areas)return false;
+    const affected=Object.entries(config.areas).filter(([area,row])=>row&&(rpcmLegacyAiDraft43(room,area,row.draft)||String(row.error||'').includes('요청 영역의 전체 결과 문자열만 가진 JSON')));
+    if(!affected.length)return false;
+    compat.aiRecovery48={at:nowIso(),original:{enabled:config.enabled,areas:Object.fromEntries(affected.map(([area,row])=>[area,structuredClone(row)]))},areas:affected.map(([area])=>area)};
+    for(const [area,row] of affected){
+      if(rpcmLegacyAiDraft43(room,area,row.draft))row.draft=null;
+      row.failedEnd='';row.lastAttemptKey='';row.error='';row.autoApplyError='';row.status='이전 작업 보관 · 새 형식 생성 대기';
+    }
+    return true;
+  }
+
+  function rpcmAiOutputObject48(raw) {
+    const prepared=manualLoreJsonCandidates(String(raw||'').trim());
+    for(const candidate of prepared.candidates)for(const variant of [candidate,normalizeSmartJsonQuotes(candidate)]){
+      let parsed;try{parsed=JSON.parse(variant);}catch(_){continue;}
+      if(!parsed||typeof parsed!=='object'||Array.isArray(parsed))continue;
+      if(Object.hasOwn(parsed,'outputs')){
+        if(!parsed.outputs||typeof parsed.outputs!=='object'||Array.isArray(parsed.outputs))throw new Error('outputs는 요청 영역별 본문 문자열을 담은 객체여야 합니다.');
+        if(['currentState','importantItems','logSummary','personInfo','timeline','lore'].some(key=>Object.hasOwn(parsed,key)))throw new Error('결과 영역이 JSON 안에 중복되어 있습니다. 본문 위치를 하나로 정리해 주세요.');
+        return parsed.outputs;
+      }
+      return parsed;
+    }
+    return null;
+  }
+
+  function longTermGeneratedResult48(text) {
+    const rawOutput=String(text||'');
+    if(rawOutput.length>600000)throw new Error('생성 결과가 600,000자 안전 한도를 넘습니다.');
+    try{return {cards:longTermParseCards(rawOutput)};}
+    catch(error){const report=error.validationReport||longTermInspectResult(rawOutput);return {cards:report.blocks.map(block=>({title:block.title,summary:block.summary})),rawOutput,validationError:String(error.message||error)};}
+  }
+
+  function longTermDraftText48(draft) {
+    return draft.validationError&&typeof draft.rawOutput==='string'?draft.rawOutput:draft.cards.map(card=>`[${card.title}]\n${card.summary}`).join('\n\n');
+  }
+
+  function longTermDraftCards48(draft,text) {
+    const cards=longTermParseCards(text);
+    if(draft.mode==='manual-compress'&&(cards.length>Math.min(25,draft.source.length)||(draft.source.length>=26&&cards.length<20)))throw new Error('2차 압축 카드 수가 지침의 최종 슬롯 기준을 벗어났습니다.');
+    return cards;
+  }
+
   function rpcmPrepareLegacyContracts43(room) {
     if(!room||room.compatibility43)return false;
     if(!room.memorySeparation084&&!room.simplification078&&!Object.prototype.hasOwnProperty.call(room.manualUpdateCheckpoints||{},'importantItems'))return false;
@@ -28424,7 +28470,7 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
   const INTEGRATED_FORMAT='WISH_CONTINUE_V1';
   const integratedRuntime={busy:false,importDrafts:new Map()};
   function integratedFingerprint(room){return JSON.stringify({data:fullRebuildDataView(structuredClone(room)),checkpoints:Object.fromEntries(Object.keys(MANUAL_UPDATE_TASKS).map(task=>[task,manualCheckpointForTask(room,task)])),deleted:room.personDeletedNames||[],hidden:room.personHiddenActors||[],memo:userCanonMemoBlock(room),timeline:activeLogTimelineLabel(room),guides:Object.fromEntries(Object.keys(MANUAL_UPDATE_TASKS).map(task=>[task,manualGuideMetadata(room,task).hash]))});}
-  function integratedCardHtml(room){const job=room.manualIntegratedJob;return `<article class="rpcm-update-card" id="rpcm-integrated-card"><div class="rpcm-update-card-main"><div class="rpcm-update-card-title"><h3>통합 이어갱신</h3><span class="rpcm-badge-row">${wishStatusBadge("권장 20턴","accent")}${wishStatusBadge("최대 40턴")}${wishStatusBadge("TXT 1개")}</span></div><p>현재상태·중요 물품·날짜로그·인물정보·타임라인·자료집을 함께 갱신합니다.</p><details><summary>언제 사용하면 좋나요?</summary><p>20턴 이내를 권장하며, 최대 40턴까지 선택할 수 있습니다. 중요한 관계 전환·비밀 공개가 몰렸거나 원문이 길면 더 짧게 나누세요. 품질을 우선한다면 아래 개별 수동 업데이트로 전용방에서 각각 처리하세요. 각 항목의 시작점이 같아야 통합할 수 있습니다. 전체 재구축과 달리 기존 기억을 유지하고 새 RP만 이어서 반영합니다.</p></details><p>${job?`${job.turnCount}턴 작업자료 준비됨 · 결과 검토 대기`:'파일 안에 모든 지침과 기존 기억이 포함됩니다.'}</p></div><div class="rpcm-update-actions"><label>최대 <select data-integrated-limit aria-label="통합 이어갱신 최대 턴 수"><option>10</option><option selected>20</option><option>30</option><option>40</option></select>턴</label><button type="button" class="rpcm-btn ${job?'secondary':'primary'}" data-integrated-create>통합 패킷 TXT 받기</button><button type="button" class="rpcm-btn ${job?'primary':'secondary'}" data-integrated-import ${job?'':'disabled'}>통합 결과 가져오기</button>${job?'<button type="button" class="rpcm-btn secondary" data-integrated-download>TXT 다시 받기</button>':''}</div></article>`;}
+  function integratedCardHtml(room){const job=room.manualIntegratedJob;return `<article class="rpcm-update-card" id="rpcm-integrated-card"><div class="rpcm-update-card-main"><div class="rpcm-update-card-title"><h3>통합 이어갱신</h3><span class="rpcm-badge-row">${wishStatusBadge("권장 20턴","accent")}${wishStatusBadge("최대 40턴")}${wishStatusBadge("TXT 1개")}</span></div><p>현재상태·중요 물품·날짜로그·인물정보·타임라인·자료집을 함께 갱신합니다. 이 TXT에는 지침이 모두 포함됩니다. 외부 AI에 파일을 보내고, 받은 통합 JSON은 바로 옆 ‘통합 결과 가져오기’에 넣으세요. 개별 현재상태·날짜로그 칸에 나누어 덮어쓰지 마세요.</p><details><summary>언제 사용하면 좋나요?</summary><p>20턴 이내를 권장하며, 최대 40턴까지 선택할 수 있습니다. 중요한 관계 전환·비밀 공개가 몰렸거나 원문이 길면 더 짧게 나누세요. 품질을 우선한다면 아래 개별 수동 업데이트로 전용방에서 각각 처리하세요. 각 항목의 시작점이 같아야 통합할 수 있습니다. 전체 재구축과 달리 기존 기억을 유지하고 새 RP만 이어서 반영합니다.</p></details><p>${job?`${job.turnCount}턴 작업자료 준비됨 · 결과 검토 대기`:'파일 안에 모든 지침과 기존 기억이 포함됩니다.'}</p></div><div class="rpcm-update-actions"><label>최대 <select data-integrated-limit aria-label="통합 이어갱신 최대 턴 수"><option>10</option><option selected>20</option><option>30</option><option>40</option></select>턴</label><button type="button" class="rpcm-btn ${job?'secondary':'primary'}" data-integrated-create>통합 패킷 TXT 받기</button><button type="button" class="rpcm-btn ${job?'primary':'secondary'}" data-integrated-import ${job?'':'disabled'}>통합 결과 가져오기</button>${job?'<button type="button" class="rpcm-btn secondary" data-integrated-download>TXT 다시 받기</button>':''}</div></article>`;}
   async function buildIntegratedPacket(room,limit=20){
     if(integratedRuntime.busy)throw new Error('통합 작업이 진행 중입니다.');manualBatchGuard(room);
     const tasks=Object.keys(MANUAL_UPDATE_TASKS);limit=Number(limit);if(![10,20,30,40].includes(limit))throw new Error('10·20·30·40턴 중 선택하세요.');
@@ -29216,7 +29262,7 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
     if(manualBatchRuntime.busy){notify('작업자료 일괄 생성이 끝난 뒤 다시 열어 주세요.','warn');return;}
     manualBatchStyles();document.getElementById('rpcm-manual-batch-backdrop')?.remove();
     const box=document.createElement('div');box.id='rpcm-manual-batch-backdrop';
-    box.innerHTML=`<section role="dialog" aria-modal="true" aria-label="작업자료 일괄 생성"><header><div><h2>작업자료 일괄 생성</h2><p>범위가 같은 작업은 함께 준비하고, TXT는 카테고리별로 각각 만듭니다.</p></div><button type="button" data-close aria-label="닫기">×</button></header><div class="rpcm-batch-body"><div class="rpcm-batch-settings"><label>작업자료 형식<select data-batch-format><option value="standalone">지침 포함 · 기본</option><option value="light">지침 제외 · 전용방에 같은 지침이 있을 때</option></select></label><button type="button" data-reload>RP 범위 다시 확인</button></div><p data-batch-status role="status">완료 RP를 한 번 조회하고 있습니다…</p><div data-batch-rows></div><aside data-batch-groups aria-live="polite"></aside><div data-batch-files hidden></div></div><footer><p data-batch-summary>범위를 확인한 뒤 생성하세요.</p><div><button type="button" data-close>닫기</button><button type="button" class="primary" data-generate disabled>선택 작업자료 생성 · ZIP 준비</button></div></footer></section>`;
+    box.innerHTML=`<section role="dialog" aria-modal="true" aria-label="작업자료 일괄 생성"><header><div><h2>작업자료 일괄 생성</h2><p>영역별 TXT를 각각 외부 AI에 보내세요. 지침 포함이 기본이며 추가 지침은 필요 없습니다. 결과는 수동 업데이트 센터의 같은 영역에서 각각 가져옵니다. 통합 결과 가져오기에 넣는 방식과 다릅니다.</p></div><button type="button" data-close aria-label="닫기">×</button></header><div class="rpcm-batch-body"><div class="rpcm-batch-settings"><label>작업자료 형식<select data-batch-format><option value="standalone">지침 포함 · 기본</option><option value="light">지침 제외 · 전용방에 같은 지침이 있을 때</option></select></label><button type="button" data-reload>RP 범위 다시 확인</button></div><p data-batch-status role="status">완료 RP를 한 번 조회하고 있습니다…</p><div data-batch-rows></div><aside data-batch-groups aria-live="polite"></aside><div data-batch-files hidden></div></div><footer><p data-batch-summary>범위를 확인한 뒤 생성하세요.</p><div><button type="button" data-close>닫기</button><button type="button" class="primary" data-generate disabled>선택 작업자료 생성 · ZIP 준비</button></div></footer></section>`;
     document.body.append(box);
     let turns=[],busy=false,generating=false,closed=false,files=[],selections=new Map();
     const status=box.querySelector('[data-batch-status]'),host=box.querySelector('[data-batch-rows]'),groups=box.querySelector('[data-batch-groups]'),summary=box.querySelector('[data-batch-summary]'),generate=box.querySelector('[data-generate]');
@@ -32063,9 +32109,9 @@ RP 원문과 사용자 확정 메모를 사실 근거로 삼는다. Crack의 미
       const prompt=`[WISH_LONG_TERM_FIRST_V1]\nMODE=${automatic?'AUTO':'MANUAL'}\nROOM=${stamp.roomId}\nSOURCE_FIRST=${stamp.firstKey}\nSOURCE_LAST=${stamp.lastKey}\nTURN_COUNT=${stamp.count}\nSOURCE_SHA256=${stamp.sourceHash}\n기존 장기기억은 중복·연속 사건 판정 참고 자료다. 실제 새 RP 범위와 USER_CANON_MEMO를 우선한다. 완성된 [제목] 다음 줄에 290~300자 본문을 쓰고 기억 사이에 빈 줄 하나만 둔다. 설명은 출력하지 않는다.\n[EXISTING_MEMORIES]\n${existing || '(없음)'}\n[/EXISTING_MEMORIES]\n[NEW_RP]\n${range.chosen.map((turn,index)=>`[TURN ${range.start+index+1} | ${turn.key}]\n${turn.text}`).join('\n\n')}\n[/NEW_RP]`;
       if (prompt.length > AI_SUMMARY_MAX_INPUT_CHARS) throw new Error('기존 장기기억을 포함한 입력이 안전 크기를 넘습니다. 범위를 줄이거나 기존 기억을 정리해 주세요.');
       const response=await longTermCall(room,guideKey,prompt,automatic?'longTermAutoFirst':'longTermManualFirst');
-      const cards=longTermParseCards(response.text);
+      const generated=longTermGeneratedResult48(response.text),cards=generated.cards;
       await longTermAssertSource(room,stamp,guideKey);
-      const draft={...stamp,mode:automatic?'auto-first':'manual-first',cards,createdAt:nowIso(),usage:response.usage,model:response.model,provider:response.provider,inventoryHash:longTermInventoryHash(inventory),existingIds:inventory.map(longTermId),existingFingerprints:Object.fromEntries(inventory.map(item=>[longTermId(item),longTermFingerprint(item)])),updateTargets:automatic?[]:longTermFirstUpdateTargets(room,inventory,cards),nativeStorage:automatic,savedIds:[]};
+      const draft={...stamp,mode:automatic?'auto-first':'manual-first',...generated,cards,createdAt:nowIso(),usage:response.usage,model:response.model,provider:response.provider,inventoryHash:longTermInventoryHash(inventory),existingIds:inventory.map(longTermId),existingFingerprints:Object.fromEntries(inventory.map(item=>[longTermId(item),longTermFingerprint(item)])),updateTargets:automatic?[]:longTermFirstUpdateTargets(room,inventory,cards),nativeStorage:automatic,savedIds:[]};
       if (automatic) { meta.firstStage.autoDraft=draft;meta.firstStage.autoStatus='생성 완료 · 저장 확인 전'; }
       else meta.drafts.first=draft;
       await saveRoom(room);
@@ -32258,9 +32304,9 @@ RP 원문과 사용자 확정 메모를 사실 근거로 삼는다. Crack의 미
       const prompt=`[WISH_LONG_TERM_SECOND_V1]\n선택한 원본 장기기억을 압축한다. 원본은 자동 삭제하지 않는다. ${userCanonMemoBlock(room)}\n결과는 완성된 [제목] + 한 문단 본문(290~300자) 블록만 출력한다.\n[SELECTED_MEMORIES]\n${source.map(item=>`ID=${item.id}\n[${item.title}]\n${item.summary}`).join('\n\n')}\n[/SELECTED_MEMORIES]`;
       if (prompt.length>AI_SUMMARY_MAX_INPUT_CHARS) throw new Error('선택한 기억이 입력 안전 크기를 넘습니다. 선택을 줄여 주세요.');
       const response=await longTermCall(room,guideKey,prompt,'longTermSecond');
-      const cards=longTermParseCards(response.text);
-      if (cards.length > Math.min(25, chosen.length) || (chosen.length >= 26 && cards.length < 20)) throw new Error('2차 압축 카드 수가 지침의 최종 슬롯 기준을 벗어났습니다.');
-      const draft={ roomId:String(room.chatId),chatId:String(apiChatIdOf(room)),mode:'manual-compress',proposal:!!options.proposal,source,sourceHash:longTermInventoryHash(chosen),memoHash:simpleHash(userCanonMemoBlock(room)),guideHash:longTermGuideHash(room,guideKey),cards,createdAt:nowIso(),usage:response.usage,model:response.model,provider:response.provider,inventoryHash:longTermInventoryHash(inventory),existingIds:inventory.map(longTermId),existingFingerprints:Object.fromEntries(inventory.map(item=>[longTermId(item),longTermFingerprint(item)])),savedIds:[] };
+      const generated=longTermGeneratedResult48(response.text),cards=generated.cards;
+      if (cards.length > Math.min(25, chosen.length) || (chosen.length >= 26 && cards.length < 20)) generated.validationError=[generated.validationError,'2차 압축 카드 수가 지침의 최종 슬롯 기준을 벗어났습니다.'].filter(Boolean).join(' · ');
+      const draft={ roomId:String(room.chatId),chatId:String(apiChatIdOf(room)),mode:'manual-compress',...generated,proposal:!!options.proposal,source,sourceHash:longTermInventoryHash(chosen),memoHash:simpleHash(userCanonMemoBlock(room)),guideHash:longTermGuideHash(room,guideKey),cards,createdAt:nowIso(),usage:response.usage,model:response.model,provider:response.provider,inventoryHash:longTermInventoryHash(inventory),existingIds:inventory.map(longTermId),existingFingerprints:Object.fromEntries(inventory.map(item=>[longTermId(item),longTermFingerprint(item)])),savedIds:[] };
       meta.drafts.second=draft;await saveRoom(room);return draft;
     });
   }
@@ -32914,8 +32960,8 @@ RP 원문과 사용자 확정 메모를 사실 근거로 삼는다. Crack의 미
     return w.draftKind==='second'?m.drafts.second:w.draftKind==='auto'?m.firstStage.pendingApply||m.firstStage.autoDraft:w.draftKind==='first'?m.drafts.first:null;
   }
   function longTermWorkspaceUseDraft(room,draft,kind){
-    const w=longTermWorkspace(room);w.text=draft.cards.map(c=>`[${c.title}]\n${c.summary}`).join('\n\n');w.draftKind=kind;w.draftAt=draft.createdAt;w.guideKey=kind==='second'?'second':'first';
-    w.status=`생성 완료 · ${draft.cards.length}개 · 아직 서버에 저장하지 않았습니다.`;
+    const w=longTermWorkspace(room);w.text=longTermDraftText48(draft);w.draftKind=kind;w.draftAt=draft.createdAt;w.guideKey=kind==='second'?'second':'first';
+    w.status=draft.validationError?'수정 필요 · 결과 보관 · '+draft.validationError:`생성 완료 · ${draft.cards.length}개 · 아직 서버에 저장하지 않았습니다.`;
   }
   async function longTermWorkspaceGenerate(room){
     const w=longTermWorkspace(room),m=longTermState(room),existing=m.drafts.first;
@@ -32951,10 +32997,10 @@ RP 원문과 사용자 확정 메모를 사실 근거로 삼는다. Crack의 미
   }
   async function longTermWorkspaceReview(room,section){
     const w=longTermWorkspace(room),draft=longTermWorkspaceDraft(room),text=section.querySelector('[data-ltm-work-text]').value;
-    w.text=text;const cards=longTermBulkParseText(text).map(card=>longTermBulkValidateWritable(card));
+    w.text=text;const cards=draft?longTermDraftCards48(draft,text):longTermBulkParseText(text).map(card=>longTermBulkValidateWritable(card));
     if(!cards.length)throw new Error('저장할 결과가 비어 있습니다.');
     if(draft){if(draft.applyStarted||draft.savedIds?.some(Boolean))throw new Error('부분 저장된 결과는 원래 검토창에서 확인해 주세요.');
-      const targets=new Map(draft.cards.map((c,i)=>[c.title,draft.updateTargets?.[i]||'']));draft.updateTargets=cards.map(c=>targets.get(c.title)||'');draft.cards=cards;await saveRoom(room);}
+      const targets=new Map(draft.cards.map((c,i)=>[c.title,draft.updateTargets?.[i]||'']));draft.updateTargets=cards.map(c=>targets.get(c.title)||'');draft.cards=cards;draft.rawOutput=text;draft.validationError='';await saveRoom(room);}
     const removeOriginals=draft?.mode==='manual-compress'&&!!section.querySelector('[data-ltm-work-replace]')?.checked;
     if(removeOriginals&&cards.length>=draft.source.length)throw new Error('압축 결과가 원본보다 적지 않습니다. 원본 유지로 검토하거나 결과를 다시 생성하세요.');
     await longTermOpenBulkEdit(room,{draft,initialCards:draft?null:cards,removeOriginalIds:removeOriginals?draft.source.map(x=>x.id):[],onSaved:()=>{w.text='';w.draftKind='';w.draftAt='';w.status='저장 완료 · 서버 확인을 마쳤습니다.';queueRoomAutoSave(room,100);}});
@@ -33229,7 +33275,7 @@ RP 원문과 사용자 확정 메모를 사실 근거로 삼는다. Crack의 미
       <article class="rpcm-pref-card rpcm-ltm-native-settings" data-ltm-pane="auto"><header><div><span class="rpcm-ltm-kicker">CRACK 장기기억</span><h3>크랙 생성 기억 자동 관리</h3></div><span class="rpcm-pref-scope">${native.enabled?'자동 ON':'자동 OFF'}</span></header><label class="rpcm-pref-row"><span>Crack 생성 기억 자동 관리<small>시작점 이후 생성된 기억과 그 정리 결과만 누적·병합합니다. 기존 기억은 보존합니다.</small></span><input type="checkbox" data-ltm-auto-native ${native.enabled?'checked':''}></label><label class="rpcm-pref-row"><span>정리 결과 자동 반영<small>OFF면 병합·수정 계획을 검토한 뒤 적용합니다.</small></span><input type="checkbox" data-ltm-auto-apply="native" ${native.autoApply?'checked':''}></label>${native.pendingApply?'<button type="button" class="rpcm-btn primary" data-ltm-action="native-review">정리 계획 검토</button>':''}<div class="rpcm-ltm-checkpoint"><div><strong>기존 기억 보존 기준</strong><span>${native.scopeReady?`${esc(native.scopeStartedAt)} · 기준 기억 ${native.scopeBaselineIds.length}개 보존`:'자동 관리를 처음 켜면 현재 기억을 보존 기준으로 저장합니다.'}</span><small>껐다 켜도 기준을 유지합니다. 다시 설정하면 현재 기억까지 보존합니다. RP 요약 카운트와 별개입니다.</small></div><button type="button" class="rpcm-btn secondary" data-ltm-action="native-count-now">지금부터 관리</button></div><div class="rpcm-ltm-metrics"><span>정리 가능 <b>${nativeCount}개</b></span><span>새·변경 <b>${nativeNew}개</b></span><span>정리 제외 <b>${protectedCount}개</b></span><span>정리된 기억 <b>${managedCards.length}개</b></span></div><div class="rpcm-ltm-output-link"><div><strong>Crack 자동 정리 기억</strong><small>자동 정리로 수정·병합한 뒤 서버에 남아 있는 카드입니다.</small></div><button type="button" class="rpcm-btn secondary" data-ltm-show-managed>정리된 기억 보기 <b>${managedCards.length}</b></button></div><div class="rpcm-ltm-status-line"><span>${native.error?'확인 필요':esc(native.status)}</span><small>새 카드 정리까지 ${Math.max(0,native.mergeEvery-nativeNew)}개 · 중간 병합 ${native.processedSinceMerge}/${native.midMergeTurns||'OFF'}턴</small></div><details class="rpcm-ltm-advanced"><summary>고급 정리 설정</summary><div class="rpcm-ltm-native-fields"><label><span>함께 읽을 참고 카드</span><input type="number" min="0" max="20" data-ltm-native-setting="contextCards" value="${native.contextCards}"></label><label><span>새·변경 카드 병합 주기</span><input type="number" min="1" max="30" data-ltm-native-setting="mergeEvery" value="${native.mergeEvery}"></label><label><span>중간 병합 주기 (0=OFF)</span><input type="number" min="0" max="100" data-ltm-native-setting="midMergeTurns" value="${native.midMergeTurns}"></label><label><span>전체 최대 슬롯 (보호 포함)</span><input type="number" min="5" max="100" data-ltm-native-setting="maxSlots" value="${native.maxSlots}"></label><label><span>압축 목표 슬롯</span><input type="number" min="3" max="100" data-ltm-native-setting="targetSlots" value="${native.targetSlots}"></label></div><p>시작점 이전 기억과 사용자 [추가]·수동 생성·직접 편집·고정·자동 정리 보호 카드는 보호합니다. 이후 Crack 생성 기억과 그 정리 결과만 누적·중간 병합·압축합니다. 최대 수에는 보호 기억도 포함하며, 보호 때문에 목표를 맞출 수 없으면 삭제하지 않고 안내합니다. 기존 자동 정리 확장프로그램과 동시에 켜지 마세요.</p></details>${native.error?`<details class="rpcm-ltm-error-detail"><summary>오류 내용 확인</summary><p>${esc(native.error)}</p></details>`:''}<div class="rpcm-ltm-row"><button type="button" class="rpcm-btn secondary" data-ltm-action="run-native">지금 확인</button><button type="button" class="rpcm-btn secondary" data-ltm-show-crack>Crack 생성 기억 보기</button></div></article>
       <article class="rpcm-pref-card" data-ltm-pane="manual"><header><h3>지침·프롬프트</h3><small>1차/2차 canonical 0.7V</small></header><div class="rpcm-ltm-row"><select data-ltm-guide-key>${Object.entries(LONG_TERM_GUIDE_KEYS).map(([key,label])=>`<option value="${key}">${label}</option>`).join('')}</select><button type="button" class="rpcm-btn secondary" data-ltm-action="guide">지침 보기·편집</button><button type="button" class="rpcm-btn secondary" data-ltm-action="model">공용 API·모델 설정</button></div></article>
       <article class="rpcm-pref-card" data-ltm-pane="manual"><header><h3>외부 결과 가져오기</h3><div class="rpcm-ltm-row">${meta.drafts.externalPacket?`<button type="button" class="rpcm-btn secondary" data-ltm-action="packet-redownload">작업자료 다시 받기</button><button type="button" class="rpcm-btn secondary" data-ltm-action="packet-cancel">작업 취소</button>`:''}</div><small>${meta.drafts.externalPacket?`${meta.drafts.externalPacket.kind==='first'?'1차':'2차'} ${meta.drafts.externalPacket.status==='reviewed'?'결과 검토 중':meta.drafts.externalPacket.status==='result-imported'?'결과 도착 · 검증 필요':'결과 기다리는 중'}`:'작업자료를 먼저 만드세요'} · TXT 파일 또는 붙여넣기</small></header><div class="rpcm-ltm-row"><input type="file" accept=".txt,text/plain" data-ltm-import-file aria-label="장기기억 결과 TXT 파일"><button type="button" class="rpcm-btn secondary" data-ltm-action="import-preview">결과 미리보기</button></div><textarea data-ltm-import-text placeholder="[제목] 다음 줄에 본문을 붙여넣으세요.">${esc(longTermRuntime.externalText)}</textarea></article>
-      ${draft?`<article class="rpcm-pref-card rpcm-ltm-draft" data-ltm-pane="manual"><header><h3>검토 대기 초안 · ${esc(draft.mode)}</h3><small>${draft.cards.length}개 카드 · 제목 20자 / 내용 300자 이내</small></header>${draftEntries.length>1?`<label>초안 선택 <select data-ltm-draft-choice>${draftEntries.map(([key,value])=>`<option value="${key}" ${key===draftChoice?'selected':''}>${esc(value.mode)} · ${value.cards.length}개</option>`).join('')}</select></label>`:''}${draft.mode==='manual-compress'?`<details><summary>선택한 원본 ${draft.source.length}개와 결과 비교</summary><div class="rpcm-ltm-source-preview">${draft.source.map(item=>`<article><strong>${esc(item.title)}</strong><p>${esc(item.summary)}</p></article>`).join('')}</div><p>원본 유지: 총 ${inventory.length+draft.cards.length}개 · 원본 정리: 총 ${inventory.length+draft.cards.length-draft.source.filter(item=>!draft.deletedSourceIds?.includes(item.id)).length}개. 기준 ${noticeState(room).longTermLimit}개 이하를 보장할 수 없는 경우 선택 범위 또는 고정 목록을 검토하세요.</p></details><label><input type="checkbox" data-ltm-replace-source ${(draft.applyStarted?draft.replaceSource:draft.replaceSource||draft.proposal)?'checked':''} ${draft.applyStarted?'disabled':''}> 검증된 결과 저장 후 선택 원본만 정리 · 원본 백업 보관</label><label><input type="checkbox" data-ltm-mark-final ${draft.markFinal?'checked':''}> 결과를 자동 정리 보호 기억으로 표시</label>`:''}<div class="rpcm-ltm-draft-counts">${draft.cards.map(card=>`<p><span>[${esc(card.title)}]</span>${longTermCardCountHtml(card)}</p>`).join('')}</div><textarea data-ltm-draft-text>${esc(draft.cards.map(card=>`[${card.title}]\n${card.summary}`).join('\n\n'))}</textarea><div class="rpcm-ltm-row">${!draft.applyStarted?'<button type="button" class="rpcm-btn primary" data-ltm-action="review-draft">기존 기억과 함께 편집</button>':''}<button type="button" class="rpcm-btn secondary" data-ltm-action="apply-draft">검증 후 Crack 저장</button><button type="button" class="rpcm-btn secondary" data-ltm-action="discard-draft">초안 폐기</button></div></article>`:''}
+      ${draft?`<article class="rpcm-pref-card rpcm-ltm-draft" data-ltm-pane="manual"><header><h3>검토 대기 초안 · ${esc(draft.mode)}</h3><small>${draft.cards.length}개 카드 · 제목 20자 / 내용 300자 이내</small></header>${draftEntries.length>1?`<label>초안 선택 <select data-ltm-draft-choice>${draftEntries.map(([key,value])=>`<option value="${key}" ${key===draftChoice?'selected':''}>${esc(value.mode)} · ${value.cards.length}개</option>`).join('')}</select></label>`:''}${draft.mode==='manual-compress'?`<details><summary>선택한 원본 ${draft.source.length}개와 결과 비교</summary><div class="rpcm-ltm-source-preview">${draft.source.map(item=>`<article><strong>${esc(item.title)}</strong><p>${esc(item.summary)}</p></article>`).join('')}</div><p>원본 유지: 총 ${inventory.length+draft.cards.length}개 · 원본 정리: 총 ${inventory.length+draft.cards.length-draft.source.filter(item=>!draft.deletedSourceIds?.includes(item.id)).length}개. 기준 ${noticeState(room).longTermLimit}개 이하를 보장할 수 없는 경우 선택 범위 또는 고정 목록을 검토하세요.</p></details><label><input type="checkbox" data-ltm-replace-source ${(draft.applyStarted?draft.replaceSource:draft.replaceSource||draft.proposal)?'checked':''} ${draft.applyStarted?'disabled':''}> 검증된 결과 저장 후 선택 원본만 정리 · 원본 백업 보관</label><label><input type="checkbox" data-ltm-mark-final ${draft.markFinal?'checked':''}> 결과를 자동 정리 보호 기억으로 표시</label>`:''}<div class="rpcm-ltm-draft-counts">${draft.cards.map(card=>`<p><span>[${esc(card.title)}]</span>${longTermCardCountHtml(card)}</p>`).join('')}</div><textarea data-ltm-draft-text>${esc(longTermDraftText48(draft))}</textarea><div class="rpcm-ltm-row">${!draft.applyStarted?'<button type="button" class="rpcm-btn primary" data-ltm-action="review-draft">기존 기억과 함께 편집</button>':''}<button type="button" class="rpcm-btn secondary" data-ltm-action="apply-draft">검증 후 Crack 저장</button><button type="button" class="rpcm-btn secondary" data-ltm-action="discard-draft">초안 폐기</button></div></article>`:''}
       <article class="rpcm-pref-card" data-ltm-pane="manage"><header><h3>Crack 장기기억 목록</h3><div class="rpcm-ltm-row"><button type="button" class="rpcm-btn secondary" data-ltm-action="bulk-edit">일괄 편집 · 전체 보기</button><button type="button" class="rpcm-btn secondary" data-ltm-action="refresh">새로고침</button></div></header><p>체크박스는 수동 2차 압축 원본 선택입니다. 고정은 고정 목록에서 찾기 쉽게 하고 자동 정리에서도 보호합니다. 자동 정리 보호는 목록 고정 없이 자동 수정·삭제만 막습니다. 수동 편집은 가능합니다. 사용자 [추가]·수동 생성·직접 수정·고정·자동 정리 보호 기억은 보호합니다. 관리 시작점 이전 기억은 보존합니다. 이후 생성되어 자동 관리 대상인 기억만 누적·병합·압축합니다.</p><nav class="rpcm-ltm-origin-tabs" aria-label="장기기억 출처와 정리 여부">${originTabs}</nav><div class="rpcm-ltm-row"><input type="search" data-ltm-search value="${esc(longTermRuntime.search)}" placeholder="제목·본문 검색"><label><input type="checkbox" data-ltm-pin-only ${longTermRuntime.pinOnly?'checked':''}> 고정만 보기</label><button type="button" class="rpcm-btn secondary" data-ltm-action="pin-selected">선택 고정</button><button type="button" class="rpcm-btn secondary" data-ltm-action="unpin-selected">선택 고정 해제</button></div><div class="rpcm-ltm-list-status"><span data-ltm-visible-count></span><small>Crack 생성에는 자동 정리한 카드도 포함됩니다.</small></div><div class="rpcm-ltm-list">${cardList}<div class="rpcm-ltm-empty" data-ltm-list-empty hidden><strong>표시할 기억이 없습니다.</strong><p>현재 목록에서 이 출처·정리 기록에 해당하는 카드가 없습니다. 검색과 고정 필터도 확인해 주세요.</p><button type="button" class="rpcm-btn secondary" data-ltm-reset-filters>전체 기억 보기</button></div></div></article>
       <article class="rpcm-pref-card" data-ltm-pane="manage"><header><h3>처리 이력</h3></header>${meta.batches.slice(0,15).map(batch=>`<p>${esc(batch.mode)} · ${esc(batch.sourceStartKey||'')} ~ ${esc(batch.sourceEndKey||'')} · ${batch.crackSummaryIds?.length||batch.updatedIds?.length||0}카드 · ${esc(batch.appliedAt||'')}</p>`).join('')||'<p>기록 없음</p>'}</article>
     </section>`;
@@ -33393,7 +33439,7 @@ RP 원문과 사용자 확정 메모를 사실 근거로 삼는다. Crack의 미
           const choice=section.querySelector('[data-ltm-draft-choice]')?.value||section.dataset.ltmDraftKind||longTermRuntime.draftView;
           const draft=choice==='second'?meta.drafts.second:choice==='auto'?meta.firstStage.pendingApply||meta.firstStage.autoDraft:meta.drafts.first||meta.drafts.second||meta.firstStage.pendingApply||meta.firstStage.autoDraft;
           if(!draft)throw new Error('적용할 초안이 없습니다.');
-          const edited=longTermParseCards(section.querySelector('[data-ltm-draft-text]').value);
+          const edited=longTermDraftCards48(draft,section.querySelector('[data-ltm-draft-text]').value);
           const replaceSource=draft.mode==='manual-compress'&&!!section.querySelector('[data-ltm-replace-source]')?.checked;
           if(draft.applyCardsHash&&draft.applyCardsHash!==longTermInventoryHash(edited))throw new Error('일부 저장된 초안의 본문은 변경할 수 없습니다. 원래 결과를 사용하세요.');
           if(!confirm(`장기기억 ${edited.length}개를 Crack 서버에 저장할까요?\n${draft.mode==='manual-compress'?(replaceSource?'압축 결과 전체 저장을 확인한 뒤 선택한 원본만 삭제합니다. 원본 백업은 파일과 이 방에 보관합니다.':'선택한 원본은 유지합니다. 압축 결과가 추가되어 전체 카드 수는 줄지 않습니다.'):'기존 연속 사건 카드는 갱신되고, 독립 사건은 새 카드로 추가됩니다.'}`))return;
@@ -36201,14 +36247,7 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
           ? {currentState:String(raw||''),importantItems:String(draft.sharedOtherOutput||'')}
           : {currentState:String(draft.sharedOtherOutput||''),importantItems:String(raw||'')};
       }
-      const text=String(raw||'').trim(),prepared=manualLoreJsonCandidates(text);
-      let object=null;
-      for(const candidate of prepared.candidates){
-        for(const variant of [candidate,normalizeSmartJsonQuotes(candidate)]){
-          try{const parsed=JSON.parse(variant);if(parsed&&typeof parsed==='object'&&!Array.isArray(parsed)){object=parsed;break;}}catch(_){}
-        }
-        if(object)break;
-      }
+      const text=String(raw||'').trim(),object=rpcmAiOutputObject48(text);
       const field=area==='currentState'?'currentState':'importantItems';
       if(object){
         if(typeof object[field]!=='string')throw new Error(field+' 전체 본문 문자열이 필요합니다. 다른 항목의 결과로 대신 적용하지 않습니다.');
@@ -36219,6 +36258,9 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
       if(area==='importantItems'&&(plain===''||plain.startsWith('- **')))return {importantItems:plain};
       throw new Error(field+' 결과를 읽지 못했습니다. 완성된 JSON 문자열 또는 해당 항목의 전체 본문이 필요합니다.');
     }
+    const object=rpcmAiOutputObject48(raw);
+    if(object&&Object.hasOwn(object,area)){if(typeof object[area]!=='string')throw new Error(area+' 전체 본문 문자열이 필요합니다.');return {result:object[area]};}
+    if(object&&['currentState','importantItems','logSummary','personInfo','timeline','lore'].some(key=>Object.hasOwn(object,key)))throw new Error(area+' 결과 본문이 없습니다. 다른 영역으로 대신 적용하지 않습니다.');
     return {result:String(raw||'')};
   }
 
@@ -36693,16 +36735,19 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
       const result=await callAiSummaryProvider(provider,settings,secret,instruction,bundle.draft.packet,16384,message=>{for(const key of targets)aiMemoryConfig(room).areas[key].status=message;},{feature:area==='timeline'?'timeline':'summary',room,allowEmptyText:false});
       if(/(?:MAX_TOKENS|LENGTH|TOKEN_LIMIT|INCOMPLETE|BUDGET_EXCEEDED)/i.test(String(result.finishReason||'')))throw new Error('AI 출력이 중간에 끊겼습니다. 초안을 저장하지 않았습니다.');
       if(state.currentRoom!==room)throw new Error('생성 중 방이 바뀌었습니다. 결과를 저장하지 않았습니다.');
-      const combined=pairedArea?aiMemoryOutputValues(area,result.text):null;
+      let combined=null,combinedError='';
+      if(pairedArea)try{combined=aiMemoryOutputValues(area,result.text);if(typeof combined.currentState!=='string'||typeof combined.importantItems!=='string')throw new Error('현재상태와 중요물품의 전체 본문 문자열이 모두 필요합니다.');}catch(error){combinedError=String(error.message||error);combined=null;}
       const sharedCallId=pairedArea?`currentItems_${Date.now()}_${Math.random().toString(36).slice(2)}`:'';
       const accepted=[],rejected=[];
       for(const key of targets){
         const target=aiMemoryConfig(room).areas[key];
-        const draft={...policy[key],roomId:String(room.chatId),area:key,startKey:String(turns[startIndex].key),endKey:String(turns[endIndex].key),startIndex,endIndex,turnCount:endIndex-startIndex+1,historyPrefix,historyStartKey:String(turns[0].key),endAnchorEvidence:{key:String(turns[endIndex].key),hash:aiMemoryAnchorFingerprint(turns[endIndex]),chatId:String(apiChatIdOf(room)),supersededCheckpoint:String(manualCheckpointForTask(room,AI_MEMORY_AREAS[key].manual).endMessageId||"" )},sourceHash:simpleHash(JSON.stringify(historyPrefix)),areaSnapshot:snapshots[key],memoHash,guideHash:guideMeta.hash,guideVersion:guideMeta.version,createdAt:nowIso(),packetDraft:structuredClone(bundle.draft),output:pairedArea?combined[key]:String(result.text||''),provider,model:result.model||model,usage:result.usage||null};
-        if(pairedArea){draft.sharedCurrentItems=true;draft.sharedCallId=sharedCallId;draft.sharedOtherOutput=combined[key==='currentState'?'importantItems':'currentState'];draft.sharedCurrentItemsSlots=structuredClone(sharedSlots);}
+        const draft={...policy[key],roomId:String(room.chatId),area:key,startKey:String(turns[startIndex].key),endKey:String(turns[endIndex].key),startIndex,endIndex,turnCount:endIndex-startIndex+1,historyPrefix,historyStartKey:String(turns[0].key),endAnchorEvidence:{key:String(turns[endIndex].key),hash:aiMemoryAnchorFingerprint(turns[endIndex]),chatId:String(apiChatIdOf(room)),supersededCheckpoint:String(manualCheckpointForTask(room,AI_MEMORY_AREAS[key].manual).endMessageId||"" )},sourceHash:simpleHash(JSON.stringify(historyPrefix)),areaSnapshot:snapshots[key],memoHash,guideHash:guideMeta.hash,guideVersion:guideMeta.version,createdAt:nowIso(),packetDraft:structuredClone(bundle.draft),output:pairedArea&&combined?combined[key]:String(result.text||''),provider,model:result.model||model,usage:result.usage||null};
+        if(pairedArea&&combined){draft.sharedCurrentItems=true;draft.sharedCallId=sharedCallId;draft.sharedOtherOutput=combined[key==='currentState'?'importantItems':'currentState'];draft.sharedCurrentItemsSlots=structuredClone(sharedSlots);}
         try{
           await aiMemoryAssertDraft(room,key,draft);
-          const prepared=aiMemoryPrepare(room,key,draft,draft.output); // Parse and validate each independent draft.
+          let prepared;
+          try{if(combinedError)throw new Error(combinedError);prepared=aiMemoryPrepare(room,key,draft,draft.output);}
+          catch(error){draft.validationError=String(error.message||error);draft.noChange=false;target.draft=draft;target.status='수정 필요 · 결과 보관';target.error=draft.validationError;target.autoApplyError='';target.failedEnd='';target.lastGeneratedAt=nowIso();target.lastUsage=draft.usage;accepted.push(draft);continue;}
           draft.noChange=aiMemoryIsNoChange(room,key,prepared);
           if(draft.noChange)prepared.candidate=structuredClone(room);
           target.draft=draft;target.status='검토 대기';target.error='';target.autoApplyError='';target.failedEnd='';target.lastGeneratedAt=nowIso();target.lastUsage=draft.usage;
@@ -36710,7 +36755,7 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
         }catch(error){target.status='실패';target.error=String(error.message||error);target.failedEnd=String(turns.at(-1)?.key||'');rejected.push({area:key,error});}
       }
       await saveRoom(room);aiMemoryRefreshStatusUi(room);
-      for(const draft of accepted){const current=aiMemoryConfig(room).areas[draft.area].draft;if(aiMemorySameDraft(current,draft)){if(draft.noChange){await aiMemoryCommitDraft(room,draft.area,current,{candidate:structuredClone(room),baseSnapshot:JSON.stringify(room)},false);aiMemoryRuntime.lastCounts.delete(String(room.chatId));}else await aiMemoryTryAutoApply(room,draft.area,current);}}
+      for(const draft of accepted){const current=aiMemoryConfig(room).areas[draft.area].draft;if(aiMemorySameDraft(current,draft)){if(draft.noChange){await aiMemoryCommitDraft(room,draft.area,current,{candidate:structuredClone(room),baseSnapshot:JSON.stringify(room)},false);aiMemoryRuntime.lastCounts.delete(String(room.chatId));}else if(!draft.validationError)await aiMemoryTryAutoApply(room,draft.area,current);}}
       const waiting=accepted.filter(draft=>aiMemorySameDraft(aiMemoryConfig(room).areas[draft.area].draft,draft));
       if(waiting.length)aiMemoryAnnounceDrafts(room,waiting);
       if(!accepted.length)throw rejected[0]?.error||new Error('AI 초안 검증 실패');
@@ -36898,8 +36943,8 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
   }
   function aiMemoryManualWaits(room,area) {
     const task=AI_MEMORY_AREAS[area]?.manual,job=room.manualPendingJobs?.[task],integrated=room.manualIntegratedJob,waits=[];
-    if(job&&!['applied','cancelled'].includes(job.status))waits.push({task,label:infoForManualTask(task),job});
-    if(integrated&&!['applied','cancelled'].includes(integrated.status))waits.push({task:'integrated',label:'통합 이어갱신',job:integrated});
+    if(job&&!['applied','cancelled'].includes(job.status)&&!(room.compatibility43&&rpcmLegacyManualJob43(room,task,job.draft||{jobId:job.id})))waits.push({task,label:infoForManualTask(task),job});
+    if(integrated&&!['applied','cancelled'].includes(integrated.status)&&!(room.compatibility43?.originalContracts?.integrated&&JSON.stringify(integrated)===JSON.stringify(room.compatibility43.originalContracts.integrated)))waits.push({task:'integrated',label:'통합 이어갱신',job:integrated});
     return waits;
   }
   function aiMemoryClearManualPause(room,area) {
@@ -36991,6 +37036,7 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
     }finally{releaseOwnedCommit();}
   }
   async function aiMemoryTryAutoApply(room,area,draft) {
+    if(draft?.validationError)return false;
     if(room.compatibility43&&rpcmLegacyAiDraft43(room,area,draft))return false;
     const row=aiMemoryConfig(room).areas[area];
     const config=aiMemoryConfig(room);
@@ -37075,7 +37121,8 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
     backdrop.querySelector('[data-ai-memory-discard]').onclick=async()=>{if(busy||!confirm('미적용 AI 초안을 버릴까요? 저장된 기억은 그대로 유지됩니다.'))return;row.draft=null;row.status='대기';row.plannedStart='';row.plannedEnd='';await saveRoom(room);backdrop.remove();renderModalIfOpen();};
     backdrop.querySelector('[data-ai-memory-close]').onclick=()=>{if(!busy)backdrop.remove();};
     backdrop.onkeydown=event=>{if(event.key==='Escape'&&!busy)backdrop.remove();};
-    document.body.appendChild(backdrop);backdrop.querySelector('[data-ai-memory-close]').focus();void check.onclick();
+    if(draft.validationError){backdrop.querySelector('.rpcm-ai-review-raw').open=true;status.textContent='결과 보관 · '+draft.validationError+' · 원문을 수정한 뒤 다시 확인해 주세요.';}
+    document.body.appendChild(backdrop);backdrop.querySelector('[data-ai-memory-close]').focus();if(!draft.validationError)void check.onclick();
   }
 
 
