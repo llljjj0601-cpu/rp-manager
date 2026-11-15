@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🪽위시 RP Manager
 // @namespace    local.rp.context.manager
-// @version      0.17.88
+// @version      0.17.89
 // @description  장기 RP용 현재상태·날짜로그·연속성 타임라인·캐릭터 설정을 관리하고, 검수형 AI 생성과 필요한 컨텍스트 자동 주입을 지원합니다.
 // @author       User
 // @license      All Rights Reserved
@@ -116,9 +116,20 @@ const wrpmStorageMaintenanceV11 = (() => {
       if (!Array.isArray(rows) || rows.some(row=>!row || typeof row !== 'object' || Array.isArray(row))) throw new Error('기록 형식 손상: 원본을 빈 목록으로 덮어쓰지 않습니다.');
       return clone(rows);
     }
+    async function decodeRescue(value) {
+      if(typeof value!=='string')return value;
+      const prefix='RPCM_RESCUE_GZIP_UTF16_V1:';
+      if(!value.startsWith(prefix))return JSON.parse(value);
+      if(typeof DecompressionStream!=='function')throw new Error('구버전 비상본 압축 해제를 지원하지 않는 브라우저입니다. 원문은 유지합니다.');
+      const data=await readStream(new Blob([unbase64(value.slice(prefix.length))]).stream().pipeThrough(new DecompressionStream('gzip')),LIMIT);
+      if(data.length%2)throw new Error('구버전 비상본 UTF-16 원문 길이가 올바르지 않습니다.');
+      let text='';
+      for(let offset=0;offset<data.length;offset+=32768){const units=[];for(let i=offset;i<Math.min(offset+32768,data.length);i+=2)units.push(data[i]|data[i+1]<<8);text+=String.fromCharCode(...units);}
+      return JSON.parse(text);
+    }
     async function validateRescue(key,value) {
       const role = rescueRole(key); if (!role || !validator) throw new Error('비상본 검증 연결을 확인하지 못했습니다.');
-      const entry = typeof value === 'string' ? JSON.parse(value) : value;
+      const entry = await decodeRescue(value);
       await validator(entry,role.kind,role.id);
     }
     async function openDB() {
@@ -221,7 +232,7 @@ const wrpmStorageMaintenanceV11 = (() => {
       const role=rescueRole(key);
       if(role?.role.startsWith('previous-')){
         const currentKey='RPCM_RESCUE_V1:'+ORIGIN+':'+role.kind+':'+role.id,pending=await rotationValue(currentKey);
-        if(pending){const current=await readRescue(currentKey),entry=typeof current==='string'?JSON.parse(current):current;if(entry?.hash===pending.intendedHash)return pending.value;}
+        if(pending){const current=await readRescue(currentKey),entry=await decodeRescue(current);if(entry?.hash===pending.intendedHash)return pending.value;}
       }
       const row=readRoute(key);
       if(!row || row.target==='legacy'){
@@ -319,7 +330,7 @@ const wrpmStorageMaintenanceV11 = (() => {
     }
     async function finishRotation(key) {
       const pending=await rotationValue(key);if(!pending)return;
-      const current=await readRescue(key),entry=typeof current==='string'?JSON.parse(current):current,prior=typeof pending.value==='string'?JSON.parse(pending.value):pending.value,role=rescueRole(key);
+      const current=await readRescue(key),entry=await decodeRescue(current),prior=await decodeRescue(pending.value),role=rescueRole(key);
       if(entry?.hash===pending.intendedHash){const previousKey='RPCM_RESCUE_V1:'+ORIGIN+':previous-'+role.kind+':'+role.id;await writeRescue(previousKey,pending.value);}
       else if(entry?.hash!==prior.hash)throw new Error('중단된 비상본 교체와 현재 자료가 다릅니다. 양쪽을 보존합니다.');
       if(!equal(GM_getValue(rotationKey(key),null),pending.raw))throw new Error('다른 탭이 교체 복구본을 바꿨습니다.');
@@ -549,7 +560,7 @@ const wrpmStorageMaintenanceV11 = (() => {
     return {configure:fn=>{validator=fn;},archiveRows,archiveStatus,mutateArchive,flushArchives,readRescue,writeRescue,scan,rollbackFile,apply,cleanup,rollback,backupExtension,importExtension,usage,
       refinerCacheRead,refinerCacheWrite,refinerCacheDelete,refinerCacheKeys,isRefinerCacheKey,releaseRefinerCache,
       // Pure helpers are also used by the isolated native regression harness.
-      digest,pack,unpack,readRoute,listRoutes,protectRotation,finishRotation,settlePackedSources,purgeRescue};
+      digest,pack,unpack,decodeRescue,readRoute,listRoutes,protectRotation,finishRotation,settlePackedSources,purgeRescue};
 })();
 
 
@@ -825,7 +836,7 @@ const wrpmFullBackupV2 = (() => {
         if(store==='GM'&&/^(wish-rp-core-response-refiner-history:|wish-rp-correction-text-archive-v1:)/.test(row.key)){const parsed=typeof value==='string'?JSON.parse(value):value;if(!Array.isArray(parsed)||parsed.some(item=>!plain(item)))throw Error();}
         if(store==='GM'&&['RPCM_global_ai_memory_notice_policy_v1','RPCM_legacy_per_room_policy_before_global_v1'].includes(row.key)&&!plain(typeof value==='string'?JSON.parse(value):value))throw Error();
         if(store==='GM'&&row.key==='RPCM_carrier_encoding_global_v1'&&(value?.version!==1||!['utf-8','utf-16le'].includes(value.encoding)))throw Error();
-        if(store==='GM'&&row.key.startsWith('RPCM_RESCUE_V1:'+ORIGIN+':')){const parts=row.key.slice(('RPCM_RESCUE_V1:'+ORIGIN+':').length).split(':');if(['room','library','previous-room','previous-library'].includes(parts[0])&&hooks.validateRescue)await hooks.validateRescue(typeof value==='string'?JSON.parse(value):value,parts[0].replace(/^previous-/,''),parts.slice(1).join(':'));}
+        if(store==='GM'&&row.key.startsWith('RPCM_RESCUE_V1:'+ORIGIN+':')){const parts=row.key.slice(('RPCM_RESCUE_V1:'+ORIGIN+':').length).split(':');if(['room','library','previous-room','previous-library'].includes(parts[0])&&hooks.validateRescue)await hooks.validateRescue(await wrpmStorageMaintenanceV11.decodeRescue(value),parts[0].replace(/^previous-/,''),parts.slice(1).join(':'));}
         if(store==='aux'&&(row.origin!==ORIGIN||await wrpmStorageMaintenanceV11.digest(row.value)!==row.digest))throw Error();
       }catch{info.status='damaged';info.reason='자료 형식 또는 원문 hash 검증 실패 · 원문은 변경하지 않았습니다.';}
       records.push(info);
@@ -975,7 +986,7 @@ const wrpmFullBackupV2 = (() => {
         const style=document.createElement('style');
         style.textContent=':host{all:initial}section{box-sizing:border-box;width:280px;border:1px solid #d898ba;border-radius:12px;background:#fff4f9;color:#442d3b;padding:12px;font:13px/1.5 system-ui;box-shadow:0 4px 20px #0003}strong,span{display:block}span{white-space:pre-wrap;overflow-wrap:anywhere;margin-top:5px}button{font:inherit;margin-top:8px;padding:5px 9px;border:1px solid #b982a2;border-radius:6px;background:white;color:#442d3b;cursor:pointer}';
         const card=document.createElement('section');
-        card.innerHTML='<strong>WISH 0.17.88 · 실행 상태</strong><span role="status" aria-live="polite"></span><button type="button">닫기</button>';
+        card.innerHTML='<strong>WISH 0.17.89 · 실행 상태</strong><span role="status" aria-live="polite"></span><button type="button">닫기</button>';
         card.querySelector('button').onclick=()=>{dismissed=true;host?.remove();host=null;};
         root.append(style,card);document.documentElement.appendChild(host);
         for(const [key,value] of Object.entries({position:'fixed',right:'16px',top:'112px','z-index':'2147483647',display:'block',visibility:'visible',opacity:'1',width:'280px',height:'auto'}))host.style.setProperty(key,value,'important');
@@ -999,13 +1010,13 @@ const wrpmFullBackupV2 = (() => {
     wishBoot.status('duplicate', '다른 RP Manager 실행이 감지됐습니다. 버전: '+String(window.__WISH_RP_MANAGER_LOADED__.version||'알 수 없음'));
     return;
   }
-  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.17.88', loadedAt: Date.now() };
+  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.17.89', loadedAt: Date.now() };
   // 같은 페이지에 남아 있는 v0.8.10 복사본이 뒤늦게 시작되는 경우도 차단합니다.
   window.__RP_MANAGER_0810_LOADED__ = true;
 
   const APP = {
     name: '🪽위시 RP Manager',
-    version: '0.17.88',
+    version: '0.17.89',
     dbName: 'RPContextManagerDB',
     dbVersion: 2,
     storeName: 'rooms',
@@ -15734,7 +15745,7 @@ ${dialogueText}`;
     const scopes=new Set();
     if(state.currentRoom?.chatId)scopes.add('chat:'+String(state.currentRoom.chatId));
     for(const row of await rescueListEntries())if(row.kind==='room'){
-      try{let raw=await rescueReadStored(rescueKey('room',row.id));if(raw===null)raw=await rescueReadStored(rescueKey('previous-room',row.id));if(raw!==null){const value=typeof raw==='string'?JSON.parse(raw):raw;await rescueValidateEnvelope(value,'room',row.id);scopes.add('chat:'+row.id);}}catch(_){}
+      try{let raw=await rescueReadStored(rescueKey('room',row.id));if(raw===null)raw=await rescueReadStored(rescueKey('previous-room',row.id));if(raw!==null){const value=await wrpmStorageMaintenanceV11.decodeRescue(raw);await rescueValidateEnvelope(value,'room',row.id);scopes.add('chat:'+row.id);}}catch(_){}
     }
     return [...scopes];
   }
@@ -15911,14 +15922,14 @@ ${dialogueText}`;
     if(!rescueUseful(kind,value)){
       const id=String(kind==='room'?value?.chatId||'':value?.scopeId||'');if(!id)return;const markerRaw=await GM_getValue(rescueKey('deleted-'+kind,id),null);let marker=null;try{marker=typeof markerRaw==='string'?JSON.parse(markerRaw):markerRaw;}catch(_){}
       if(marker?.format!=='RPCM_RESCUE_DELETION_V1'||marker.origin!==location.origin||marker.kind!==kind||marker.id!==id||marker.deleted!==false)return;
-      const old=await rescueReadStored(rescueKey(kind,id));if(old===null)return;await rescueValidateEnvelope(typeof old==='string'?JSON.parse(old):old,kind,id);allowCleared=true;
+      const old=await rescueReadStored(rescueKey(kind,id));if(old===null)return;await rescueValidateEnvelope(await wrpmStorageMaintenanceV11.decodeRescue(old),kind,id);allowCleared=true;
     }
     return rescueWithLock(async()=>{
       const id=String(kind==='room'?value.chatId:value.scopeId);
       if(typeof state!=='undefined'&&state.db){const current=kind==='room'?await readManualStoredRoom({chatId:id}):await getCharacterLibrary(id);if(!current||!rescueUseful(kind,current)&&!allowCleared)return;value=current;}
       const data=rescueCopy(value),hash=await longTermHash(JSON.stringify(data));
       const key=rescueKey(kind,id);if(typeof wrpmStorageMaintenanceV11!=='undefined')await wrpmStorageMaintenanceV11.finishRotation(key);const previous=await rescueReadStored(key);let prior=null;
-      if(previous!==null){try{prior=typeof previous==='string'?JSON.parse(previous):previous;await rescueValidateEnvelope(prior,kind,id);}catch(error){
+      if(previous!==null){try{prior=await wrpmStorageMaintenanceV11.decodeRescue(previous);await rescueValidateEnvelope(prior,kind,id);}catch(error){
         const quarantine=rescueKey('invalid-'+kind,id);await GM_setValue(quarantine,previous);
         if(!rescueRawEqual(await GM_getValue(quarantine,null),previous))throw new Error('손상된 비상 보관본의 원문 보존 실패');prior=null;
       }}
@@ -15992,7 +16003,7 @@ ${dialogueText}`;
     await flushRescueCopies();const entries=await rescueListEntries(),rooms=[],characterLibraries=[],errors=[];
     for(const row of entries){try{
       let raw=await rescueReadStored(rescueKey((previous?'previous-':'')+row.kind,row.id));if(raw===null&&previous)raw=await rescueReadStored(rescueKey(row.kind,row.id));if(raw===null)continue;
-      const entry=typeof raw==='string'?JSON.parse(raw):raw;await rescueValidateEnvelope(entry,row.kind,row.id);
+      const entry=await wrpmStorageMaintenanceV11.decodeRescue(raw);await rescueValidateEnvelope(entry,row.kind,row.id);
       if(row.kind==='room')rooms.push(entry.data);else characterLibraries.push(entry.data);
     }catch(error){errors.push(row.label+': '+error.message);}}
     return {_rpContextManagerBackup:true,version:APP.version,exportedAt:nowIso(),rooms,characterLibraries,errors,rescueEntries:entries.map(row=>({kind:row.kind,id:row.id,deletionState:row.deletionState,deletedAt:row.deletedAt||null})),discoveryWarning:rescueRuntime.discoveryWarning||''};
@@ -27897,6 +27908,7 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
     candidate.manualUpdateCheckpoints = { ...(candidate.manualUpdateCheckpoints || {}) };
     for (const task of targets) {
       candidate.manualUpdateCheckpoints[task] = { ...(candidate.manualUpdateCheckpoints[task] || {}), endMessageId:key, baselineAt:now };
+      if(task==='currentItems'&&candidate.compatibility43)candidate.compatibility43.combinedCheckpoint=structuredClone(candidate.manualUpdateCheckpoints[task]);
       if (task === 'timeline') {
         candidate.storyTimelineLastReviewedMessageId = key;
         const checkpointIndex = key ? rpcmFindTurnIndex(turns,key) : -1;
@@ -29206,7 +29218,7 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
       if(!info||seen.has(task))throw new Error('생성할 카테고리를 다시 선택해 주세요.');seen.add(task);
       const blocked=manualBatchAvailable(room,task);if(blocked)throw new Error(`${info.title}: ${blocked}`);
       const checkpoint=manualCheckpointForTask(room,task),anchor=checkpoint.endMessageId?rpcmFindTurnIndex(turns,checkpoint.endMessageId):-1;
-      if(checkpoint.endMessageId&&anchor<0)throw new Error(`${info.title}: 기준 RP가 변경·삭제됐거나 분기가 바뀌었습니다. 시작점을 다시 확인하세요.`);
+      if((choice.mode||'checkpoint')==='checkpoint'&&checkpoint.endMessageId&&anchor<0)throw new Error(`${info.title}: 기준 RP가 변경·삭제됐거나 분기가 바뀌었습니다. 시작점을 다시 확인하세요.`);
       const mode=choice.mode||'checkpoint';if(!['checkpoint','custom'].includes(mode))throw new Error('RP 범위를 다시 선택해 주세요.');
       const startIndex=mode==='checkpoint'?anchor+1:Number(choice.start)-1,endIndex=mode==='checkpoint'?turns.length-1:Number(choice.end)-1;
       if(mode==='checkpoint'&&startIndex===turns.length)throw new Error(`${info.title}: 기준점 이후 완료된 새 RP가 없습니다. 과거 자료가 필요하면 범위 지정을 선택하세요.`);
@@ -29666,17 +29678,21 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
       stamped.push([task,version]);
     }return stamped;
   }
+  function manualIntegrityTarget89(room,task){
+    return JSON.stringify({chatId:room.chatId,payload:manualTaskStoredPayload(room,task),checkpoint:manualCheckpointForTask(room,task),receipt:room.manualApplyReceipts?.[task]||null,editReceipt:room.manualResultEditReceipts?.[task]||null});
+  }
   async function confirmManualStoredEdit(room,task,expectedSnapshot){
     if(state.currentRoom!==room||state.autoSaveTimers.has(String(room.chatId)))throw new Error('현재 편집 저장이 끝난 뒤 다시 확인해 주세요.');
     const stored=await readManualStoredRoom(room);
-    if(!stored||JSON.stringify(stored)!==expectedSnapshot||JSON.stringify(room)!==expectedSnapshot)throw new Error('확인 화면을 연 뒤 저장본이 바뀌었습니다. 다시 확인해 주세요.');
+    const expected=JSON.parse(expectedSnapshot),target=manualIntegrityTarget89(expected,task);
+    if(!stored||manualIntegrityTarget89(stored,task)!==target||manualIntegrityTarget89(room,task)!==target)throw new Error('확인 화면을 연 뒤 저장본이 바뀌었습니다. 다시 확인해 주세요.');
     const candidate=structuredClone(stored),receipt=candidate.manualApplyReceipts?.[task];
     if(!receipt?.verified)throw new Error('기존 검증 기록이 없는 영역은 복구용 결과 재적용으로 검증해 주세요.');
     if(receipt.checkpointAppliedAt&&receipt.checkpointAppliedAt!==manualCheckpointForTask(candidate,task).appliedAt)throw new Error('검증 기록과 작업 기준점이 다릅니다. 복구용 결과 재적용으로 다시 검증해 주세요.');
     candidate.manualResultEditReceipts={...(candidate.manualResultEditReceipts||{}),[task]:{sourceReceiptHash:receipt.resultHash,resultHash:await longTermHash(manualTaskStoredPayload(candidate,task)),editedAt:nowIso(),writer:'user-confirmed-current',checkpoint:manualCheckpointForTask(candidate,task)}};
     await saveRoom(candidate,'manual-confirm-current');const verified=await readManualStoredRoom(candidate);
     if(!verified||JSON.stringify(verified)!==JSON.stringify(candidate))throw new Error('수동 편집 확인 기록을 저장 후 확인하지 못했습니다.');
-    rpcmReplaceRoomObject(room,verified);noticeResolve(room,'manual:integrity:'+task);updateNoticeBadge(room);return verified;
+    rpcmReplaceRoomObject(room,rpcmKeepLateEdits(expected,room,verified));noticeResolve(room,'manual:integrity:'+task);updateNoticeBadge(room);return verified;
   }
   async function openManualIntegrityDialog(room){
     const stored=await readManualStoredRoom(room);if(!stored)throw new Error('저장본을 읽을 수 없습니다.');
@@ -29812,6 +29828,7 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
         if(!readback||JSON.stringify(readback)!==JSON.stringify(verifiedCandidate)||await longTermHash(manualTaskStoredPayload(readback,task))!==resultHash)throw new Error('검증 기록 확정 후 실제 저장본을 확인하지 못했습니다.');
         traceRoomWrite(readback,'manual-import:'+task,'readback-verified',room._rpcmRevision,readback._rpcmRevision,resultHash,{startedAt:writeStartedAt,before:JSON.parse(prepared.storedSnapshot)||{}});
         rpcmReplaceRoomObject(room,readback);
+        rpcmRememberRoomBaseline(readback);
         if(!readback.manualFullBuilds)delete room.manualFullBuilds;
         state.lastSavedAt=Date.now();updateSaveStatusUi('saved');
       }catch(error){error.localCommitted=localCommitted;throw error;}
@@ -30137,7 +30154,7 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
     if(JSON.stringify(room)!==prepared.baseSnapshot)
       throw new Error('저장 중 화면 데이터가 바뀌었습니다. 새로고침 후 저장본을 확인해 주세요.');
     const verified=task?await finalizeStoredResultReceipts(room,stored,[task],'direct-paste'):stored;
-    rpcmReplaceRoomObject(room,verified);
+    rpcmReplaceRoomObject(room,verified);rpcmRememberRoomBaseline(verified);
   }
 
   async function applyDirectItemsReplace(room, prepared) {
@@ -31389,7 +31406,7 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
         throw new Error('저장 후 실제 IndexedDB 값이 예상 결과와 다릅니다. 적용 완료로 표시하지 않았습니다. 적용 전 자동 백업으로 복구할 수 있습니다.');
       }
       const verified=await finalizeStoredResultReceipts(room,persisted,[...selected],'full-rebuild');
-      rpcmReplaceRoomObject(room,verified);
+      rpcmReplaceRoomObject(room,verified);rpcmRememberRoomBaseline(verified);
       delete room.fullRebuildJob;
       state.lastSavedAt=Date.now();
       updateSaveStatusUi('saved');
