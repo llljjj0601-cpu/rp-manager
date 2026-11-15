@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🪽위시 RP Manager
 // @namespace    local.rp.context.manager
-// @version      0.17.89
+// @version      0.17.90
 // @description  장기 RP용 현재상태·날짜로그·연속성 타임라인·캐릭터 설정을 관리하고, 검수형 AI 생성과 필요한 컨텍스트 자동 주입을 지원합니다.
 // @author       User
 // @license      All Rights Reserved
@@ -986,7 +986,7 @@ const wrpmFullBackupV2 = (() => {
         const style=document.createElement('style');
         style.textContent=':host{all:initial}section{box-sizing:border-box;width:280px;border:1px solid #d898ba;border-radius:12px;background:#fff4f9;color:#442d3b;padding:12px;font:13px/1.5 system-ui;box-shadow:0 4px 20px #0003}strong,span{display:block}span{white-space:pre-wrap;overflow-wrap:anywhere;margin-top:5px}button{font:inherit;margin-top:8px;padding:5px 9px;border:1px solid #b982a2;border-radius:6px;background:white;color:#442d3b;cursor:pointer}';
         const card=document.createElement('section');
-        card.innerHTML='<strong>WISH 0.17.89 · 실행 상태</strong><span role="status" aria-live="polite"></span><button type="button">닫기</button>';
+        card.innerHTML='<strong>WISH 0.17.90 · 실행 상태</strong><span role="status" aria-live="polite"></span><button type="button">닫기</button>';
         card.querySelector('button').onclick=()=>{dismissed=true;host?.remove();host=null;};
         root.append(style,card);document.documentElement.appendChild(host);
         for(const [key,value] of Object.entries({position:'fixed',right:'16px',top:'112px','z-index':'2147483647',display:'block',visibility:'visible',opacity:'1',width:'280px',height:'auto'}))host.style.setProperty(key,value,'important');
@@ -1010,13 +1010,13 @@ const wrpmFullBackupV2 = (() => {
     wishBoot.status('duplicate', '다른 RP Manager 실행이 감지됐습니다. 버전: '+String(window.__WISH_RP_MANAGER_LOADED__.version||'알 수 없음'));
     return;
   }
-  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.17.89', loadedAt: Date.now() };
+  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.17.90', loadedAt: Date.now() };
   // 같은 페이지에 남아 있는 v0.8.10 복사본이 뒤늦게 시작되는 경우도 차단합니다.
   window.__RP_MANAGER_0810_LOADED__ = true;
 
   const APP = {
     name: '🪽위시 RP Manager',
-    version: '0.17.89',
+    version: '0.17.90',
     dbName: 'RPContextManagerDB',
     dbVersion: 2,
     storeName: 'rooms',
@@ -28037,7 +28037,7 @@ Existing REF must come from this packet. NEW REF are temporary, and a NEW_P pack
     const fullBuildStatus = fullBuild
       ? `<span class="rpcm-update-chip is-created">${task === 'lore' && !lorePacksFor(room).some(pack => lorePackManagedBy(pack) === 'ai') ? '자료집 최초 구축' : `${infoForManualTask(task)} 전체 구축`} · ${fullBuild.completedParts}구간 완료 · 다음 ${fullBuild.lastAppliedIndex + 2}턴부터 · 전체 ${fullBuild.totalTurns}턴${fullBuild.estimatedParts ? ` · 예상 약 ${fullBuild.estimatedParts}구간` : ''}</span><span class="rpcm-update-muted">각 구간 결과를 먼저 저장한 뒤 다음 구간을 생성합니다.</span>`
       : completedBuild ? `<span class="rpcm-update-chip is-created">${infoForManualTask(task)} 전체 구축 완료 · ${completedBuild.completedParts}구간 · ${completedBuild.totalTurns}턴</span>` : '';
-    const carrierText = carrier?.appliedAt === checkpoint.appliedAt && carrier.roomUpdatedAt === String(room.updatedAt || '') ? carrier.text : room.pending ? '현재 주입 반영 여부 확인 필요' : '현재 주입 없음';
+    const carrierText = carrier && carrier.appliedAt === checkpoint.appliedAt && carrier.roomUpdatedAt === String(room.updatedAt || '') ? carrier.text : room.pending ? '현재 주입 반영 여부 확인 필요' : '현재 주입 없음';
     const aiAreas=task==='currentItems'?['currentState','importantItems']:[task];
     const turnKeys=manualUpdateRuntime.counts.get(String(room.chatId||''))?.turnKeys||[];
     const turnLabel=key=>{const index=turnKeys.indexOf(String(key));return index>=0?`${index+1}턴`:String(key).slice(0,12);};
