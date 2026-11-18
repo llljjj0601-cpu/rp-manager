@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🪽위시 RP Manager
 // @namespace    local.rp.context.manager
-// @version      0.17.94
+// @version      0.17.95
 // @description  장기 RP용 현재상태·날짜로그·연속성 타임라인·캐릭터 설정을 관리하고, 검수형 AI 생성과 필요한 컨텍스트 자동 주입을 지원합니다.
 // @author       User
 // @license      All Rights Reserved
@@ -607,12 +607,17 @@ const wrpmFullBackupV2 = (() => {
       for(;offset+64<=data.length;offset+=64)block(data,offset);
       if(offset<data.length){tail.set(data.subarray(offset),0);used=data.length-offset;}
     };
-    for(let offset=0;offset<serialized.length;){
-      let end=Math.min(offset+1024*1024,serialized.length);
-      if(end<serialized.length){const high=serialized.charCodeAt(end-1),low=serialized.charCodeAt(end);if(high>=0xd800&&high<=0xdbff&&low>=0xdc00&&low<=0xdfff)end--;}
-      update(encoder.encode(serialized.slice(offset,end)));offset=end;
-      await new Promise(resolve=>setTimeout(resolve,0));
-    }
+    const channel=typeof MessageChannel==='function'?new MessageChannel():null;
+    const yieldWork=()=>new Promise(resolve=>{if(channel){channel.port1.onmessage=()=>resolve();channel.port2.postMessage(null);}else setTimeout(resolve,0);});
+    let nextYield=Date.now()+24;
+    try{
+      for(let offset=0;offset<serialized.length;){
+        let end=Math.min(offset+1024*1024,serialized.length);
+        if(end<serialized.length){const high=serialized.charCodeAt(end-1),low=serialized.charCodeAt(end);if(high>=0xd800&&high<=0xdbff&&low>=0xdc00&&low<=0xdfff)end--;}
+        update(encoder.encode(serialized.slice(offset,end)));offset=end;
+        if(offset<serialized.length&&Date.now()>=nextYield){await yieldWork();nextYield=Date.now()+24;}
+      }
+    }finally{channel?.port1.close();channel?.port2.close();}
     tail[used++]=0x80;
     if(used>56){tail.fill(0,used);block(tail,0);used=0;}
     tail.fill(0,used,56);const view=new DataView(tail.buffer);view.setUint32(56,Math.floor(total/0x20000000));view.setUint32(60,(total*8)>>>0);block(tail,0);
@@ -1016,7 +1021,7 @@ const wrpmFullBackupV2 = (() => {
         const style=document.createElement('style');
         style.textContent=':host{all:initial}section{box-sizing:border-box;width:280px;border:1px solid #d898ba;border-radius:12px;background:#fff4f9;color:#442d3b;padding:12px;font:13px/1.5 system-ui;box-shadow:0 4px 20px #0003}strong,span{display:block}span{white-space:pre-wrap;overflow-wrap:anywhere;margin-top:5px}button{font:inherit;margin-top:8px;padding:5px 9px;border:1px solid #b982a2;border-radius:6px;background:white;color:#442d3b;cursor:pointer}';
         const card=document.createElement('section');
-        card.innerHTML='<strong>WISH 0.17.94 · 실행 상태</strong><span role="status" aria-live="polite"></span><button type="button">닫기</button>';
+        card.innerHTML='<strong>WISH 0.17.95 · 실행 상태</strong><span role="status" aria-live="polite"></span><button type="button">닫기</button>';
         card.querySelector('button').onclick=()=>{dismissed=true;host?.remove();host=null;};
         root.append(style,card);document.documentElement.appendChild(host);
         for(const [key,value] of Object.entries({position:'fixed',right:'16px',top:'112px','z-index':'2147483647',display:'block',visibility:'visible',opacity:'1',width:'280px',height:'auto'}))host.style.setProperty(key,value,'important');
@@ -1039,13 +1044,13 @@ const wrpmFullBackupV2 = (() => {
     wishBoot.status('duplicate', '다른 RP Manager 실행이 감지됐습니다. 버전: '+String(window.__WISH_RP_MANAGER_LOADED__.version||'알 수 없음'));
     return;
   }
-  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.17.94', loadedAt: Date.now() };
+  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.17.95', loadedAt: Date.now() };
   // 같은 페이지에 남아 있는 v0.8.10 복사본이 뒤늦게 시작되는 경우도 차단합니다.
   window.__RP_MANAGER_0810_LOADED__ = true;
 
   const APP = {
     name: '🪽위시 RP Manager',
-    version: '0.17.94',
+    version: '0.17.95',
     dbName: 'RPContextManagerDB',
     dbVersion: 2,
     storeName: 'rooms',
@@ -15851,9 +15856,17 @@ ${dialogueText}`;
     if(room){syncOpenModalIntoRoom(room);await saveRoom(room,'full-backup');}
     return wrpmFullBackupV2.exportFull();
   }
-  async function rpcmCreateRestorePreimage(){
-    try{return await rpcmCreateFullBackup();}
+  async function rpcmCreateRestorePreimage(currentSaved=false){
+    try{return await (currentSaved?wrpmFullBackupV2.exportFull():rpcmCreateFullBackup());}
     catch(_){return await wrpmFullBackupV2.exportRawPreimage();}
+  }
+  async function rpcmCreateCopyPreimage(room,libraryIds){
+    if(room.pending)throw new Error('현재 방의 주입을 먼저 해제해 주세요.');
+    syncOpenModalIntoRoom(room);await saveRoom(room,'before-backup-copy');
+    const saved=await readManualStoredRoom(room);
+    if(!saved||saved.pending||Number(saved._rpcmRevision||0)!==Number(room._rpcmRevision||0))throw new Error('복사 전 현재 방의 저장본 또는 주입 상태가 바뀌었습니다. 다시 선택해 주세요.');
+    const libraries=await Promise.all([...libraryIds].map(id=>getCharacterLibrary(id)));
+    return {_rpContextManagerBackup:true,backupMode:'room-transfer',version:APP.version,exportedAt:nowIso(),sourceRoomId:String(saved.chatId),rooms:[saved],characterLibraries:libraries.filter(Boolean)};
   }
   function rpcmStorageDiagnosticHelp(){return '자료가 어느 저장소에 얼마나 있고 읽기/무결성 오류가 있는지 확인합니다. RP 본문이나 API 키 값은 보고서에 넣지 않습니다. 문제가 생기면 진단 JSON을 개발자나 분석 도우미(Codex 등)에게 전달해 원인을 점검할 수 있습니다. 사이트 주소·저장 ID·해시는 포함됩니다. 원문 복구용 전체 백업을 대신하지 않습니다.';}
   function rpcmBackupFileHelp(){return '이미 내려받은 전체 백업 JSON을 선택해 시험 공간에 복원한 뒤 다시 읽어 검사합니다. 현재 RP나 설정을 덮어쓰지 않습니다. 검사 결과 JSON은 확인 기록이며 원문 백업 파일이 아닙니다. 실제 복원은 백업 불러오기에서 따로 선택합니다.';}
@@ -40266,14 +40279,18 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
       const assertImport=()=>{if(state.currentRoom!==importRoom||state.routeEpoch!==importEpoch||file.files?.[0]!==f)throw new Error('파일 또는 현재 방이 바뀌었습니다. 백업을 다시 선택해 주세요.');};
       try {
         const data = JSON.parse(await f.text());
-        assertImport();if(data.storageSnapshot)await wrpmFullBackupV2.validate(data);
+        assertImport();
         if (!data?._rpContextManagerBackup || !Array.isArray(data.rooms)) throw new Error('🪽위시 RP Manager 백업 파일이 아닙니다.');
-        const preimage=await rpcmCreateRestorePreimage();assertImport();
-        const [existingRooms, existingLibraries] = await Promise.all([getAllRooms(), getAllCharacterLibraries()]);
-        const choice = await openBackupImportDialog(data, existingRooms, existingLibraries);
+        if(data.characterLibraries!==undefined&&!Array.isArray(data.characterLibraries))throw new Error('설정집 목록 형식이 올바르지 않습니다.');
+        if(data.storageSnapshot){
+          const snapshot=data.storageSnapshot;
+          if(snapshot.format!==wrpmFullBackupV2.FORMAT||snapshot.origin!==location.origin||snapshot.complete!==true||typeof snapshot.apiKeysIncluded!=='boolean'||!snapshot.manifest||typeof snapshot.manifest!=='object'||!snapshot.sections||!['gm','local','aux'].every(key=>Array.isArray(snapshot.sections[key])))throw new Error('백업의 사이트/형식 또는 묶음 목록이 올바르지 않습니다.');
+        }
+        const roomIds=[...new Set(data.rooms.filter(row=>row?.chatId).map(row=>row.chatId))],libraryIds=[...new Set((data.characterLibraries||[]).filter(row=>row?.scopeId).map(row=>row.scopeId))];
+        const [roomRows,libraryRows]=await Promise.all([Promise.all(roomIds.map(chatId=>readManualStoredRoom({chatId}))),Promise.all(libraryIds.map(scopeId=>getCharacterLibrary(scopeId)))]);
+        const existingRooms=roomRows.filter(Boolean),existingLibraries=libraryRows.filter(Boolean);
+        assertImport();const choice = await openBackupImportDialog(data, existingRooms, existingLibraries);
         if (!choice) return;assertImport();
-        if(data.storageMaintenance)await wrpmStorageMaintenanceV11.importExtension(data.storageMaintenance,choice,true);
-        assertImport();downloadText(wrpmFullBackupV2.fileText(preimage),'RP_복원전_원본백업.json');
         const selectedRoomIds = new Set(choice.roomIds.map(String));
         const selectedLibraryIds = new Set(choice.libraryIds.map(String));
         if (choice.mode === 'clone-current') {
@@ -40283,10 +40300,15 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
           if (!sourceRoom) throw new Error('선택한 RP 데이터를 백업에서 찾지 못했습니다.');
           const sourceLabel = String(sourceRoom.label || `RP ${shortId(sourceRoom.chatId)}`);
           if (!confirm(`‘${sourceLabel}’의 RP Manager 전체 데이터를 현재 방에 복사할까요?\n현재 방의 기존 RP Manager 데이터는 덮어씁니다.`)) return;
+          if(data.storageSnapshot)await wrpmFullBackupV2.validate(data);
+          else if(data.storageMaintenance)await wrpmStorageMaintenanceV11.importExtension(data.storageMaintenance,choice,true);
+          assertImport();const preimage=await rpcmCreateCopyPreimage(room,selectedLibraryIds);assertImport();
+          if(room.pending)throw new Error('현재 방의 주입을 먼저 해제해 주세요.');
+          downloadText(wrpmFullBackupV2.fileText(preimage),'RP_복원전_원본백업.json');
           if (Array.isArray(data.characterLibraries)) {
             for (const lib of data.characterLibraries) {
               if (!lib?.scopeId || !selectedLibraryIds.has(String(lib.scopeId))) continue;
-              assertImport();await saveCharacterLibrary(lib);
+              assertImport();await saveCharacterLibrary(structuredClone(lib));
             }
           }
           const clonedRoom = cloneBackupRoomIntoCurrent(sourceRoom, room);
@@ -40297,22 +40319,33 @@ reason은 각 항목에서 무엇을 줄이거나 합쳤는지와 그 이유를 
           renderModalIfOpen();
           return;
         }
-        for (const r of data.rooms) {
-          if (!r?.chatId || !selectedRoomIds.has(String(r.chatId))) continue;
+        if(data.storageSnapshot)await wrpmFullBackupV2.validate(data);
+        else if(data.storageMaintenance)await wrpmStorageMaintenanceV11.importExtension(data.storageMaintenance,choice,true);
+        assertImport();const restoringCurrent=selectedRoomIds.has(String(room.chatId));
+        if(restoringCurrent){
+          const revision=Number(existingRooms.find(saved=>String(saved.chatId)===String(room.chatId))?._rpcmRevision||0);
+          syncOpenModalIntoRoom(room);await saveRoom(room,'before-backup-restore',(_candidate,stored)=>{if(Number(stored?._rpcmRevision||0)!==revision||stored?.pending)throw new Error('백업 선택 뒤 저장본 또는 주입 상태가 바뀌었습니다. 최신 자료로 다시 선택해 주세요.');});
+        }
+        const currentRestoreRevision=Number(room._rpcmRevision||0);
+        assertImport();const preimage=await rpcmCreateRestorePreimage(restoringCurrent);assertImport();
+        downloadText(wrpmFullBackupV2.fileText(preimage),'RP_복원전_원본백업.json');
+        for (const original of data.rooms) {
+          if (!original?.chatId || !selectedRoomIds.has(String(original.chatId))) continue;
+          const r=structuredClone(original);
           r.pending = null;
           if (!Array.isArray(r.lorePacks)) r.lorePacks = [];
           normalizeRoomSlots(r);
-          r._rpcmRevision=Number(existingRooms.find(saved=>String(saved.chatId)===String(r.chatId))?._rpcmRevision||0);
+          r._rpcmRevision=restoringCurrent&&String(r.chatId)===String(room.chatId)?currentRestoreRevision:Number(existingRooms.find(saved=>String(saved.chatId)===String(r.chatId))?._rpcmRevision||0);
           assertImport();await saveRestoredRoom(r);
         }
         if (Array.isArray(data.characterLibraries)) {
           for (const lib of data.characterLibraries) {
             if (!lib?.scopeId || !selectedLibraryIds.has(String(lib.scopeId))) continue;
-            assertImport();await saveCharacterLibrary(lib);
+            assertImport();await saveCharacterLibrary(structuredClone(lib));
           }
         }
         assertImport();if(data.storageMaintenance)await wrpmStorageMaintenanceV11.importExtension(data.storageMaintenance,choice);
-        assertImport();if(data.storageSnapshot)await wrpmFullBackupV2.importOptions(data,choice);
+        assertImport();if(data.storageSnapshot&&(choice.includeOptions||(data.storageSnapshot.sections.session||[]).some(row=>selectedRoomIds.has(String(JSON.parse(row.key.slice('wish-rpcm-result-draft:'.length))[0])))))await wrpmFullBackupV2.importOptions(data,choice);
         await ensureCurrentRoom(getChatIdFromPath(), true);
         notify(`백업 복원 완료 · RP ${selectedRoomIds.size}개 · 설정집 ${selectedLibraryIds.size}개`, 'success', 4500);
         renderModalIfOpen();
