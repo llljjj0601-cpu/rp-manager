@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🪽위시 RP Manager
 // @namespace    local.rp.context.manager
-// @version      0.17.95
+// @version      0.17.96
 // @description  장기 RP용 현재상태·날짜로그·연속성 타임라인·캐릭터 설정을 관리하고, 검수형 AI 생성과 필요한 컨텍스트 자동 주입을 지원합니다.
 // @author       User
 // @license      All Rights Reserved
@@ -88,7 +88,7 @@ const wrpmStorageMaintenanceV11 = (() => {
     }
     async function locked(task) {
       if (!globalThis.navigator?.locks?.request) throw new Error('이 환경은 탭 간 잠금을 지원하지 않습니다. 기존 자료를 유지합니다.');
-      return navigator.locks.request('RPCM_STORAGE_V11:' + ORIGIN + ':' + installation(), {mode:'exclusive'}, task);
+      return wishRequestStorageLock('RPCM_STORAGE_V11:' + ORIGIN + ':' + installation(), task);
     }
     async function optionalLock(task) {
       if(globalThis.navigator?.locks?.request)return locked(task);
@@ -998,6 +998,19 @@ const wrpmFullBackupV2 = (() => {
 
 
 
+  async function wishRequestStorageLock(name,task) {
+    if(typeof exportFunction!=='function'||typeof cloneInto!=='function')return navigator.locks.request(name,{mode:'exclusive'},task);
+    let value,failure,failed=false;
+    // Firefox LockManager consumes the callback in the page realm. Export only
+    // a completion thenable; keep task results and errors in the userscript.
+    const callback=exportFunction(()=>cloneInto({then(resolve){
+      Promise.resolve().then(task).then(result=>{value=result;resolve();},error=>{failed=true;failure=error;resolve();});
+    }},window,{cloneFunctions:true}),window);
+    await navigator.locks.request(name,{mode:'exclusive'},callback);
+    if(failed)throw failure;
+    return value;
+  }
+
   function wishLocalStorageRecord(value) {
     if (value === null || typeof value !== 'object') return value;
     return structuredClone(value);
@@ -1021,7 +1034,7 @@ const wrpmFullBackupV2 = (() => {
         const style=document.createElement('style');
         style.textContent=':host{all:initial}section{box-sizing:border-box;width:280px;border:1px solid #d898ba;border-radius:12px;background:#fff4f9;color:#442d3b;padding:12px;font:13px/1.5 system-ui;box-shadow:0 4px 20px #0003}strong,span{display:block}span{white-space:pre-wrap;overflow-wrap:anywhere;margin-top:5px}button{font:inherit;margin-top:8px;padding:5px 9px;border:1px solid #b982a2;border-radius:6px;background:white;color:#442d3b;cursor:pointer}';
         const card=document.createElement('section');
-        card.innerHTML='<strong>WISH 0.17.95 · 실행 상태</strong><span role="status" aria-live="polite"></span><button type="button">닫기</button>';
+        card.innerHTML='<strong>WISH 0.17.96 · 실행 상태</strong><span role="status" aria-live="polite"></span><button type="button">닫기</button>';
         card.querySelector('button').onclick=()=>{dismissed=true;host?.remove();host=null;};
         root.append(style,card);document.documentElement.appendChild(host);
         for(const [key,value] of Object.entries({position:'fixed',right:'16px',top:'112px','z-index':'2147483647',display:'block',visibility:'visible',opacity:'1',width:'280px',height:'auto'}))host.style.setProperty(key,value,'important');
@@ -1044,13 +1057,13 @@ const wrpmFullBackupV2 = (() => {
     wishBoot.status('duplicate', '다른 RP Manager 실행이 감지됐습니다. 버전: '+String(window.__WISH_RP_MANAGER_LOADED__.version||'알 수 없음'));
     return;
   }
-  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.17.95', loadedAt: Date.now() };
+  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.17.96', loadedAt: Date.now() };
   // 같은 페이지에 남아 있는 v0.8.10 복사본이 뒤늦게 시작되는 경우도 차단합니다.
   window.__RP_MANAGER_0810_LOADED__ = true;
 
   const APP = {
     name: '🪽위시 RP Manager',
-    version: '0.17.95',
+    version: '0.17.96',
     dbName: 'RPContextManagerDB',
     dbVersion: 2,
     storeName: 'rooms',
@@ -7190,6 +7203,8 @@ try {
   function rpcmErrorAdvice(error) {
     const raw=String(error?.message||error||'알 수 없는 오류');
     const lower=raw.toLowerCase();
+    if (/permission denied to access property ["'“”]then["'“”]/.test(lower))
+      return {kind:'브라우저·확장 스크립트 호환',steps:'파이어폭스(Firefox)의 페이지와 확장 스크립트 사이에서 발생한 호환 오류입니다. RP Manager를 최신 버전으로 설치한 뒤 크랙 페이지를 새로고침해 주세요. 기존 자료를 초기화하거나 삭제하지 마세요.'};
     if (/app.?check|firebaseappcheck|attestation|recaptcha enterprise/.test(lower))
       return {kind:'Firebase App Check 인증',steps:'API 설정에서 AppCheck 디버그 토큰을 복사하고 Firebase Console → App Check → 해당 앱 → 디버그 토큰 관리에 등록하세요. 현재 브라우저의 토큰과 등록한 토큰이 같은지 확인한 뒤 연결 테스트하세요. API 키만 다시 입력해도 해결되지 않습니다.'};
     if (/quotaexceedederror|the quota has been exceeded|storage quota|indexeddb.*한도|저장공간.*초과/.test(lower))
@@ -15674,7 +15689,7 @@ ${dialogueText}`;
   }
   async function rescueWithLock(task){
     const locks=globalThis.navigator?.locks;
-    if(locks?.request)return locks.request('RPCM_RESCUE_WRITE:'+location.origin,{mode:'exclusive'},task);
+    if(locks?.request)return wishRequestStorageLock('RPCM_RESCUE_WRITE:'+location.origin,task);
     return task();
   }
   async function rescueReadIndex(){
