@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         🪽위시 RP Manager
 // @namespace    local.rp.context.manager
-// @version      0.17.96
+// @version      0.17.97
 // @description  장기 RP용 현재상태·날짜로그·연속성 타임라인·캐릭터 설정을 관리하고, 검수형 AI 생성과 필요한 컨텍스트 자동 주입을 지원합니다.
 // @author       User
 // @license      All Rights Reserved
@@ -70,7 +70,7 @@ const wrpmStorageMaintenanceV11 = (() => {
       const data = new TextEncoder().encode(encode(value));
       if (data.byteLength > LIMIT) throw new Error('항목이 처리 한도 128MiB를 넘습니다. 원본을 유지합니다.');
       const hash = await crypto.subtle.digest('SHA-256',data);
-      return Array.from(new Uint8Array(hash),n=>n.toString(16).padStart(2,'0')).join('');
+      return Array.from(structuredClone(new Uint8Array(hash)),n=>n.toString(16).padStart(2,'0')).join('');
     }
     function routeKey(key) { return PREFIX + 'route:' + encodeURIComponent(key); }
     function readRoute(key) {
@@ -587,11 +587,11 @@ const wrpmFullBackupV2 = (() => {
     const encoder=new TextEncoder();
     if(serialized.length<=1024*1024){
       const bytes=encoder.encode(serialized);
-      return {sha256:[...new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))].map(n=>n.toString(16).padStart(2,'0')).join(''),bytes:bytes.length};
+      return {sha256:[...structuredClone(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)))].map(n=>n.toString(16).padStart(2,'0')).join(''),bytes:bytes.length};
     }
     // Keep the existing SHA-256 manifest, without a second whole-backup byte buffer.
-    const k=new Uint32Array([0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2]);
-    const h=new Uint32Array([0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19]),w=new Uint32Array(64),tail=new Uint8Array(64);
+    const k=structuredClone(new Uint32Array([0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2]));
+    const h=structuredClone(new Uint32Array([0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19])),w=structuredClone(new Uint32Array(64)),tail=structuredClone(new Uint8Array(64));
     let used=0,total=0;
     const rotate=(x,n)=>(x>>>n)|(x<<(32-n));
     const block=(data,offset)=>{
@@ -614,7 +614,7 @@ const wrpmFullBackupV2 = (() => {
       for(let offset=0;offset<serialized.length;){
         let end=Math.min(offset+1024*1024,serialized.length);
         if(end<serialized.length){const high=serialized.charCodeAt(end-1),low=serialized.charCodeAt(end);if(high>=0xd800&&high<=0xdbff&&low>=0xdc00&&low<=0xdfff)end--;}
-        update(encoder.encode(serialized.slice(offset,end)));offset=end;
+        update(structuredClone(encoder.encode(serialized.slice(offset,end))));offset=end;
         if(offset<serialized.length&&Date.now()>=nextYield){await yieldWork();nextYield=Date.now()+24;}
       }
     }finally{channel?.port1.close();channel?.port2.close();}
@@ -1001,11 +1001,11 @@ const wrpmFullBackupV2 = (() => {
   async function wishRequestStorageLock(name,task) {
     if(typeof exportFunction!=='function'||typeof cloneInto!=='function')return navigator.locks.request(name,{mode:'exclusive'},task);
     let value,failure,failed=false;
-    // Firefox LockManager consumes the callback in the page realm. Export only
-    // a completion thenable; keep task results and errors in the userscript.
+    // Use the document's real page window: Tampermonkey's window is a wrapper.
+    // Export only completion; task results and errors stay in the userscript.
     const callback=exportFunction(()=>cloneInto({then(resolve){
       Promise.resolve().then(task).then(result=>{value=result;resolve();},error=>{failed=true;failure=error;resolve();});
-    }},window,{cloneFunctions:true}),window);
+    }},document.defaultView,{cloneFunctions:true}),document.defaultView);
     await navigator.locks.request(name,{mode:'exclusive'},callback);
     if(failed)throw failure;
     return value;
@@ -1034,7 +1034,7 @@ const wrpmFullBackupV2 = (() => {
         const style=document.createElement('style');
         style.textContent=':host{all:initial}section{box-sizing:border-box;width:280px;border:1px solid #d898ba;border-radius:12px;background:#fff4f9;color:#442d3b;padding:12px;font:13px/1.5 system-ui;box-shadow:0 4px 20px #0003}strong,span{display:block}span{white-space:pre-wrap;overflow-wrap:anywhere;margin-top:5px}button{font:inherit;margin-top:8px;padding:5px 9px;border:1px solid #b982a2;border-radius:6px;background:white;color:#442d3b;cursor:pointer}';
         const card=document.createElement('section');
-        card.innerHTML='<strong>WISH 0.17.96 · 실행 상태</strong><span role="status" aria-live="polite"></span><button type="button">닫기</button>';
+        card.innerHTML='<strong>WISH 0.17.97 · 실행 상태</strong><span role="status" aria-live="polite"></span><button type="button">닫기</button>';
         card.querySelector('button').onclick=()=>{dismissed=true;host?.remove();host=null;};
         root.append(style,card);document.documentElement.appendChild(host);
         for(const [key,value] of Object.entries({position:'fixed',right:'16px',top:'112px','z-index':'2147483647',display:'block',visibility:'visible',opacity:'1',width:'280px',height:'auto'}))host.style.setProperty(key,value,'important');
@@ -1057,13 +1057,13 @@ const wrpmFullBackupV2 = (() => {
     wishBoot.status('duplicate', '다른 RP Manager 실행이 감지됐습니다. 버전: '+String(window.__WISH_RP_MANAGER_LOADED__.version||'알 수 없음'));
     return;
   }
-  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.17.96', loadedAt: Date.now() };
+  window.__WISH_RP_MANAGER_LOADED__ = { version: '0.17.97', loadedAt: Date.now() };
   // 같은 페이지에 남아 있는 v0.8.10 복사본이 뒤늦게 시작되는 경우도 차단합니다.
   window.__RP_MANAGER_0810_LOADED__ = true;
 
   const APP = {
     name: '🪽위시 RP Manager',
-    version: '0.17.96',
+    version: '0.17.97',
     dbName: 'RPContextManagerDB',
     dbVersion: 2,
     storeName: 'rooms',
